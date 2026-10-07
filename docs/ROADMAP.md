@@ -8,7 +8,7 @@ Reference source: OpenJK at `260c59c2907187af555a676fe0cc798893bf7757` (2026-09-
 
 | # | Milestone | Done when |
 |---|-----------|-----------|
-| 0 | **Baseline and setup**: Rust workspace and local CI; measure the original game's FPS, frame-time spikes and load times on fixed scenes; screenshot-comparison tool | The original's numbers are recorded in `docs/BASELINE.md` and reproducible with one script |
+| 0 | **Baseline and setup** (multiplayer FPS and load time done, see BASELINE.md; frame-time spikes and single-player pending): Rust workspace and local CI; measure the original game's FPS, frame-time spikes and load times on fixed scenes; screenshot-comparison tool | The original's numbers are recorded in `docs/BASELINE.md` and reproducible with one script |
 | 1 | **Assets**: `.pk3` archives, virtual filesystem with the original's search order, `.bsp` maps, textures (TGA, JPEG, PNG), `.shader` scripts, cvars and configs | Every file in the retail `.pk3`s parses; tests pin the results |
 | 2 | **Map viewer**: Vulkan renderer for world geometry, lightmaps, shader stages, fog, sky | Fly-through matches the original's screenshots; faster than the original on the same scenes |
 | 3 | **Models**: Ghoul2 (`.glm`/`.gla`), MD3, skins, sabers and effects | Characters animate and match the original |

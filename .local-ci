@@ -9,6 +9,7 @@ cd "$(dirname "$0")"
 step() { echo; echo "== $*"; }
 
 step "format"; cargo fmt --all -- --check
+step "shell syntax"; for f in bench/*.sh scripts/*.sh .local-ci; do bash -n "$f"; done
 
 linux() {
 	cargo clippy --workspace --all-targets --locked -- -D warnings
