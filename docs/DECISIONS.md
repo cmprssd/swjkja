@@ -86,3 +86,16 @@ commands of OpenJK, which are the retail rules plus fixes. Left out on purpose:
 
 Single-player uses `helpUsObi` (default 0) to unlock cheat cvars and multiplayer
 `sv_cheats` (default 1, read-only, set by the server), as in the original.
+
+## 2026-10-07: Renderer stack (decided by Claude, pending review)
+
+- **`ash` (Vulkan directly), not `wgpu`.** The owner chose Vulkan for speed; `ash`
+  gives full control over memory, synchronisation and pipelines, with nothing in
+  between. Vulkan 1.3 with dynamic rendering and synchronization2 is required; the
+  Intel HD 630, the Steam Deck and Mesa's lavapipe all have it.
+- **Shaders in WGSL, compiled to SPIR-V by `naga` in build.rs.** Pure Rust, no
+  external tools. (naga 30's GLSL frontend does not build on its own, and WGSL is
+  naga's primary language.)
+- **`gpu-allocator` for GPU memory.**
+- **Tests render offscreen and read pixels back**, on the real GPU on Windows and on
+  lavapipe (CPU) under WSL, so renderer tests need no window.

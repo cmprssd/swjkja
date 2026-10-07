@@ -1,0 +1,18 @@
+[package]
+name = "swjkja-render"
+description = "The Vulkan renderer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ash = { version = "0.38.0", default-features = false, features = ["loaded", "std", "debug"] }
+gpu-allocator = { version = "0.28.0", default-features = false, features = ["std", "vulkan"] }
+
+[build-dependencies]
+naga = { version = "30.0.1", features = ["wgsl-in", "spv-out"] }
