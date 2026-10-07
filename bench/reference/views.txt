@@ -1,15 +1,24 @@
-# Reference views: map, name, eye x y z, pitch yaw roll (degrees). Eyes are 36 units
-# above spawn points. bench/capture-reference.sh renders each with the reference
+# Reference views: map, name, eye x y z, pitch yaw roll (degrees), game time (ms;
+# shader animation and light styles are frozen there). Spawn views have eyes 36
+# units above spawn points; fog views come from the fog_views example (swjkja-bsp). bench/capture-reference.sh renders each with the reference
 # engine; `cargo run --release -p swjkja-render --example render_world` renders the
 # same views with the new one, and compare.py compares them.
-mp/ffa3   ffa3_spawn1   -1208 -912 228   0 360 0
-mp/ffa3   ffa3_spawn2   728 1424 -20     0 270 0
-mp/ffa3   ffa3_spawn3   2432 -744 -4     0 90 0
-mp/ffa3   ffa3_down     560 -1440 -76    35 45 0
-mp/ffa3   ffa3_up       -176 624 284     -30 180 0
-mp/duel5  duel5_spawn1  -1920 -416 -268  0 315 0
-mp/duel5  duel5_spawn2  -688 1504 -276   0 270 0
-mp/duel5  duel5_down    0 704 -324       25 270 0
-mp/ctf4   ctf4_spawn1   -1280 1248 356   0 180 0
-mp/ctf4   ctf4_spawn2   -1488 2896 124   0 315 0
-mp/ctf4   ctf4_up       544 1824 -260    -25 270 0
+mp/ffa3   ffa3_spawn1   -1208 -912 228   0 360 0   12345
+mp/ffa3   ffa3_spawn2   728 1424 -20     0 270 0   12345
+mp/ffa3   ffa3_spawn3   2432 -744 -4     0 90 0   12345
+mp/ffa3   ffa3_down     560 -1440 -76    35 45 0   12345
+mp/ffa3   ffa3_up       -176 624 284     -30 180 0   12345
+mp/duel5  duel5_spawn1  -1920 -416 -268  0 315 0   12345
+mp/duel5  duel5_spawn2  -688 1504 -276   0 270 0   12345
+mp/duel5  duel5_down    0 704 -324       25 270 0   12345
+mp/ctf4   ctf4_spawn1   -1280 1248 356   0 180 0   12345
+mp/ctf4   ctf4_spawn2   -1488 2896 124   0 315 0   12345
+mp/ctf4   ctf4_up       544 1824 -260    -25 270 0   12345
+mp/ctf1   ctf1_fog_above   -960 -1216 -352     50 0 0    12345
+mp/duel2  duel2_fog_above  -4440 2088 -800     50 90 0   12345
+mp/duel3  duel3_fog_above  -4352 2048 -192     50 0 0    12345
+mp/duel9  duel9_fog_above  -32 1856 -384       50 0 0    12345
+mp/duel9  duel9_fog_in     -32 1856 -985.6     0 0 0     12345
+mp/ffa1   ffa1_fog_above   3776 832 864        50 90 0   12345
+mp/ffa1   ffa1_fog_in      3776 832 339.2      0 90 0    12345
+mp/ffa2   ffa2_fog_above   -1536 -288 0        50 0 0    12345

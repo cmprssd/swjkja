@@ -1,5 +1,19 @@
+diff --git a/codemp/cgame/cg_light.c b/codemp/cgame/cg_light.c
+index 976ae03..fd4daed 100644
+--- a/codemp/cgame/cg_light.c
++++ b/codemp/cgame/cg_light.c
+@@ -57,7 +57,8 @@ void CG_RunLightStyles (void)
+ 	int ofs, i;
+ 	clightstyle_t *ls;
+ 
+-	ofs = cg.time / 50;
++	// swjkja reference capture: a pinned time (ms) for light styles.
++	ofs = ( cg_swjkjaTime.string[0] ? cg_swjkjaTime.integer : cg.time ) / 50;
+ //	if ( ofs == lastofs )
+ //		return;
+ 	lastofs = ofs;
 diff --git a/codemp/cgame/cg_view.c b/codemp/cgame/cg_view.c
-index 0229760..8980e0d 100644
+index 0229760..936d639 100644
 --- a/codemp/cgame/cg_view.c
 +++ b/codemp/cgame/cg_view.c
 @@ -2612,6 +2612,15 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
@@ -18,15 +32,27 @@ index 0229760..8980e0d 100644
  	CG_SetupFrustum();
  
  	if (cg_linearFogOverride)
+@@ -2669,6 +2678,10 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
+ 	}
+ 
+ 	cg.refdef.time = cg.time;
++	// swjkja reference capture: a pinned time (ms) for shader animation.
++	if ( cg_swjkjaTime.string[0] ) {
++		cg.refdef.time = cg_swjkjaTime.integer;
++	}
+ 	memcpy( cg.refdef.areamask, cg.snap->areamask, sizeof( cg.refdef.areamask ) );
+ 
+ 	// warning sounds when powerup is wearing off
 diff --git a/codemp/cgame/cg_xcvar.h b/codemp/cgame/cg_xcvar.h
-index ceb9bd8..42c414b 100644
+index ceb9bd8..68f9317 100644
 --- a/codemp/cgame/cg_xcvar.h
 +++ b/codemp/cgame/cg_xcvar.h
-@@ -86,6 +86,7 @@ XCVAR_DEF( cg_fallingBob,						"1",					NULL,					CVAR_ARCHIVE )
+@@ -86,6 +86,8 @@ XCVAR_DEF( cg_fallingBob,						"1",					NULL,					CVAR_ARCHIVE )
  XCVAR_DEF( cg_footsteps,						"3",					NULL,					CVAR_ARCHIVE )
  XCVAR_DEF( cg_forceModel,						"0",					CG_ForceModelChange,	CVAR_ARCHIVE )
  XCVAR_DEF( cg_fov,								"80",					NULL,					CVAR_ARCHIVE )
 +XCVAR_DEF( cg_swjkjaView,						"",						NULL,					0 )
++XCVAR_DEF( cg_swjkjaTime,						"",						NULL,					0 )
  XCVAR_DEF( cg_fovAspectAdjust,					"0",					NULL,					CVAR_ARCHIVE )
  XCVAR_DEF( cg_fovViewmodel,						"0",					NULL,					CVAR_ARCHIVE )
  XCVAR_DEF( cg_fovViewmodelAdjust,				"1",					NULL,					CVAR_ARCHIVE )

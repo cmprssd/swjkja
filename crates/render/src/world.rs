@@ -3,7 +3,7 @@
 //! original's order (materials by sort value, then by creation order; each material's
 //! surfaces stage by stage).
 //!
-//! Not yet: normal and text deforms, light-style animation, distance LOD
+//! Not yet: normal and text deforms, distance LOD
 //! for patches, visibility culling, video maps (drawn white), noise waves (their
 //! base value), fog on sky layers.
 
@@ -54,6 +54,7 @@ struct FrameData {
     fog_color: [f32; 4],
     misc: [u32; 4],
     view_forward: [f32; 4],
+    styles: [[f32; 4]; swjkja_world::style::MAX_LIGHT_STYLES],
 }
 
 /// A map fog for the shader's `fogs` table (see `Fog` in world.wgsl).
@@ -188,6 +189,8 @@ pub struct WorldRenderer {
     frame_buffer: Buffer,
     _stage_buffer: Buffer,
     _fog_buffer: Buffer,
+    /// The map's light styles, animated each frame.
+    styles: swjkja_world::style::LightStyles,
     frame_layout: vk::DescriptorSetLayout,
     frame_pool: vk::DescriptorPool,
     frame_set: vk::DescriptorSet,
@@ -354,8 +357,7 @@ fn gpu_stage(s: &MaterialStage, env: Option<TexEnv>) -> GpuStage {
     g.constant = s.constant.map(f32::from);
     g.rgb_wave = rgb_wave;
     g.alpha_wave = alpha_wave;
-    // Light styles are not animated yet: every style shows full brightness.
-    g.style = [255.0; 4];
+    g.style = [f32::from(s.lightmap_style), 0.0, 0.0, 0.0];
     let bundles = [Some(&s.bundle), s.bundle2.as_ref()];
     let mut clamps = [0u32; 2];
     for (b, bundle) in bundles.iter().enumerate() {
@@ -1077,6 +1079,7 @@ impl WorldRenderer {
             frame_buffer,
             _stage_buffer: stage_buffer,
             _fog_buffer: fog_buffer,
+            styles: swjkja_world::style::LightStyles::spawn(&bsp.entities),
             frame_layout,
             frame_pool,
             frame_set,
@@ -1127,6 +1130,11 @@ impl WorldRenderer {
                 let f = camera.axes()[0];
                 [f[0], f[1], f[2], 0.0]
             },
+            // Game time in whole milliseconds, as cg.time.
+            styles: self
+                .styles
+                .colors((f64::from(time) * 1000.0).round() as i64)
+                .map(|c| c.map(f32::from)),
         };
         self.frame_buffer
             .mapped_mut()?

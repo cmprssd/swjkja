@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Captures reference screenshots with the reference OpenJK (built with the
-# cg_swjkjaView patch by bench/build-openjk.sh): every view in reference/views.txt,
+# cg_swjkjaView/cg_swjkjaTime patch by bench/build-openjk.sh): every view in
+# reference/views.txt at its pinned game time,
 # world only (r_drawentities 0, no HUD), full-quality textures, 1280x720.
 # Holocron mode (g_gametype 1) because free-for-all opens the force-power menu on
 # joining, over the view. Opens a game window per map; refuses while the PC is in
@@ -22,7 +23,7 @@ for map in $maps; do
 		echo "set cg_draw2D 0; set r_drawentities 0; set cg_drawGun 0"
 		echo "wait 300"
 		grep -v '^#' reference/views.txt | awk -v m="$map" '$1 == m {
-			printf "set cg_swjkjaView \"%s %s %s %s %s %s\"\nwait 200\nscreenshot_png %s\nwait 100\n", $3, $4, $5, $6, $7, $8, $2
+			printf "set cg_swjkjaView \"%s %s %s %s %s %s\"\nset cg_swjkjaTime %s\nwait 200\nscreenshot_png %s\nwait 100\n", $3, $4, $5, $6, $7, $8, $9, $2
 		}'
 		echo "quit"
 	} >"$cfg"
