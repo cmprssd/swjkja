@@ -106,7 +106,7 @@ their LOD group (identical results) took this from 1.84 s. `mp/ffa3`: 4,426 face
 (3 multiplayer maps) with the reference OpenJK, world only, full-quality textures
 (the owner's choice: `r_picmip 0`, no texture compression), 1280x720; the reference
 build has a test-only patch pinning the camera exactly (`cg_swjkjaView`).
-`render_preview --views` renders the same views with the new renderer and
+The `render_world` example renders the same views with the new renderer and
 `bench/reference/compare.py` compares them.
 
 First comparison, with stand-in shading (base texture x lightmap):
@@ -129,6 +129,26 @@ Geometry and camera line up exactly (edges match in every view). The large
 differences are surfaces whose shaders brighten or blend in extra stages (for
 example a `GL_DST_COLOR GL_SRC_COLOR` stage doubles brightness), plus the sky, which
 the preview does not draw: the shader-stage system is next.
+
+With the stage renderer (materials resolved and drawn stage by stage as the
+original does; no sky or fog yet), 2026-10-07:
+
+| View | Mean difference | Pixels off by > 16 |
+|------|------|------|
+| duel5_down | 0.08 | 0.0% |
+| ffa3_down | 0.16 | 0.0% |
+| ffa3_up | 0.21 | 0.1% |
+| duel5_spawn1 | 0.24 | 0.1% |
+| ffa3_spawn2 | 0.27 | 0.0% |
+| ffa3_spawn3 | 0.40 | 0.1% |
+| ffa3_spawn1 | 0.53 | 0.1% |
+| ctf4_spawn1 | 0.53 | 0.0% |
+| duel5_spawn2 | 1.29 | 2.1% |
+| ctf4_up | 4.17 | 12.0% |
+| ctf4_spawn2 | 7.42 | 28.7% |
+
+`ctf4` has global fog (a teal haze growing with distance), which is not drawn yet;
+the remaining `duel5_spawn2` difference is mostly sky (5.7% of the view undrawn).
 
 ## Not measured yet
 
