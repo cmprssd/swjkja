@@ -1,0 +1,17 @@
+[package]
+name = "swjkja-world"
+description = "The map's drawable surfaces, built from a .bsp the way the original renderer loads them"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+swjkja-bsp = { path = "../bsp" }
+
+[dev-dependencies]
+swjkja-fs = { path = "../fs" }
+
+[lints]
+workspace = true

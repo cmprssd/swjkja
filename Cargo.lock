@@ -402,6 +402,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "swjkja-world"
+version = "0.0.0"
+dependencies = [
+ "swjkja-bsp",
+ "swjkja-fs",
+]
+
+[[package]]
 name = "syn"
 version = "2.0.119"
 source = "registry+https://github.com/rust-lang/crates.io-index"
