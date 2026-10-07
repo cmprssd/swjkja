@@ -190,9 +190,39 @@ fog volumes are checked by unit tests and by eye only.
 Since 2026-10-07 every view in `views.txt` carries a game time (12345 ms). The
 reference engine's patch pins it with `cg_swjkjaTime` (shader time and light
 styles), and `render_world` renders at the same time, so animated stages and
-flickering lights can be compared. The eight fog-volume views (from the
-`fog_views` example) and the pinned times wait for a new reference capture; until
-then the eleven views above are compared against shots taken at an unknown time.
+flickering lights can be compared. 
+
+Recaptured at the pinned time, 2026-10-07, with the eight fog-volume views from the
+`fog_views` example: **all 19 views are within 0.53 mean difference, with at most
+0.1% of pixels off by more than 16.**
+
+| View | Mean difference | Pixels off by > 16 | Shows |
+|------|------|------|------|
+| ffa1_fog_in | 0.05 | 0.0% | inside a fog volume |
+| duel5_down | 0.08 | 0.0% | |
+| duel9_fog_above | 0.08 | 0.0% | above a fog volume |
+| duel9_fog_in | 0.08 | 0.0% | inside a fog volume |
+| duel3_fog_above | 0.10 | 0.0% | above a fog volume |
+| duel2_fog_above | 0.12 | 0.0% | above a black fog volume |
+| ffa1_fog_above | 0.13 | 0.0% | above a fog volume |
+| ctf4_spawn1 | 0.16 | 0.0% | global fog |
+| ffa2_fog_above | 0.16 | 0.0% | above a fog volume |
+| ffa3_down | 0.16 | 0.0% | |
+| duel5_spawn1 | 0.20 | 0.0% | |
+| ffa3_up | 0.21 | 0.1% | |
+| ctf4_spawn2 | 0.23 | 0.0% | global fog |
+| duel5_spawn2 | 0.24 | 0.0% | flares |
+| ffa3_spawn2 | 0.27 | 0.0% | |
+| ctf4_up | 0.32 | 0.0% | global fog |
+| ffa3_spawn3 | 0.40 | 0.1% | |
+| ctf1_fog_above | 0.42 | 0.0% | above a black fog volume |
+| ffa3_spawn1 | 0.53 | 0.1% | |
+
+The time pin works: on the pixels that animate in duel5_spawn2 and duel5_down (where
+a time-0 render and a 12.345 s render differ by more than 8), the new reference shots
+differ from the 12.345 s render by 0.54 and 0.80 on average, and from the time-0
+render by 19.2 and 21.7. In the fog views "undrawn" (pure black) pixels are the
+black fogs themselves, which the reference shows black too.
 
 ## Renderer frame times (swjkja-render), 2026-10-07
 
