@@ -1,0 +1,17 @@
+[package]
+name = "swjkja-shader"
+description = "Jedi Academy .shader scripts: loading, lookup and parsing like the original renderer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+swjkja-fs = { path = "../fs" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

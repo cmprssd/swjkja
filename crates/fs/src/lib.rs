@@ -115,11 +115,22 @@ enum Location {
 }
 
 /// The mounted game folders and an index of every file they provide.
+/// One entry of the original's search path.
+#[derive(Debug, Clone)]
+enum SearchPath {
+    /// A game folder's loose files.
+    Dir(PathBuf),
+    /// An index into [`Vfs::pk3s`].
+    Pk3(usize),
+}
+
 #[derive(Debug, Default)]
 pub struct Vfs {
     pk3s: Vec<Pk3>,
     index: HashMap<Box<str>, Location>,
     mounted: Vec<(PathBuf, String)>,
+    /// Lowest priority first, in the order the original builds it.
+    search: Vec<SearchPath>,
 }
 
 impl Vfs {
@@ -148,6 +159,7 @@ impl Vfs {
             return Ok(());
         }
         self.mounted.push((root.to_path_buf(), game.to_owned()));
+        self.search.push(SearchPath::Dir(dir.clone()));
 
         let mut loose = Vec::new();
         walk(&dir, &dir, &mut loose)?;
@@ -169,8 +181,61 @@ impl Vfs {
                     .insert(e.name.clone(), Location::Packed { pk3: id, entry });
             }
             self.pk3s.push(pk3);
+            self.search.push(SearchPath::Pk3(id));
         }
         Ok(())
+    }
+
+    /// Lists the files under `dir` ending in `extension`, in the order the original's
+    /// `FS_ListFiles` returns them, which is not sorted: search paths from highest
+    /// priority down, each archive in its own directory order, then a folder's loose
+    /// files; a name already listed is skipped. Archive entries one subfolder deep are
+    /// included (`sub/name.ext`), loose files only directly in `dir`. Names are
+    /// relative to `dir`.
+    ///
+    /// Some callers depend on this order: the shader scripts, for one, let the file
+    /// listed last win.
+    pub fn list(&self, dir: &str, extension: &str) -> Vec<String> {
+        let dir = normalize(dir).trim_end_matches('/').to_owned();
+        let extension = extension.to_ascii_lowercase();
+        let mut out: Vec<String> = Vec::new();
+        let add = |name: String, out: &mut Vec<String>| {
+            if !out.contains(&name) {
+                out.push(name);
+            }
+        };
+        for search in self.search.iter().rev() {
+            match search {
+                SearchPath::Pk3(id) => {
+                    for e in self.pk3s[*id].entries() {
+                        let Some(rest) =
+                            e.name.strip_prefix(&dir).and_then(|r| r.strip_prefix('/'))
+                        else {
+                            continue;
+                        };
+                        if rest.matches('/').count() <= 1 && rest.ends_with(&extension) {
+                            add(rest.to_owned(), &mut out);
+                        }
+                    }
+                }
+                SearchPath::Dir(root) => {
+                    let Ok(entries) = std::fs::read_dir(root.join(&dir)) else {
+                        continue;
+                    };
+                    let mut names: Vec<String> = entries
+                        .filter_map(|e| e.ok())
+                        .filter(|e| e.path().is_file())
+                        .map(|e| e.file_name().to_string_lossy().to_ascii_lowercase())
+                        .filter(|n| n.ends_with(&extension))
+                        .collect();
+                    names.sort();
+                    for name in names {
+                        add(name, &mut out);
+                    }
+                }
+            }
+        }
+        out
     }
 
     pub fn contains(&self, path: &str) -> bool {

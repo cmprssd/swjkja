@@ -59,3 +59,17 @@ is not exact either. Bit-exact output would need libjpeg-turbo, a C library, in 
 engine. Not worth it: the original renders textures re-compressed to S3TC/DXT by
 default, which moves pixels far more than this. TGA and PNG decoding are exact.
 If screenshot comparisons ever trace a visible difference to JPEG decoding, revisit.
+
+## 2026-10-07: Shader parsing is split from resolving (decided by Claude, pending review)
+
+The original parses a shader and loads its textures in one pass, failing the shader
+when a texture is missing. swjkja-shader only parses: it fails exactly where the
+original fails for a reason in the text, and returns texture names. The renderer
+resolves a parsed shader against the loaded map and applies the remaining failure
+rules (missing textures, `$lightmap` on a surface without a lightmap), which keeps
+both halves testable without game data.
+
+Not carried over: OpenJK's two hard-coded fixes for retail shaders (`gfx/2d/wedge`
+and `gfx/menus/radar/arrow_w`, recognised by a hash of their text). They change how
+those HUD elements look compared with the original; whether to keep them is a
+question for the renderer milestone.
