@@ -36,3 +36,17 @@ The port follows OpenJK (github.com/JACoders/OpenJK) rather than the raw 2013 Ra
 release: it is the same code with years of crash and portability fixes, and its
 `code/` (single-player) and `codemp/` (multiplayer) trees map directly to the two
 halves of the game. The reference revision is recorded in ROADMAP.md.
+
+## 2026-10-07: Benchmark reference is OpenJK, not the retail executables (decided by Claude, pending review)
+
+The retail `jamp.exe` crashes on every map load on the owner's PC (access violation
+at `jamp.exe+0x91666`, three times out of three, with or without bots): the Intel
+driver's GL_EXTENSIONS string is about 4 KB and overflows a fixed buffer in the 2003
+engine, which OpenJK fixed with `TruncateGLExtensionsString`. The baseline is
+therefore OpenJK built from the pinned source: the same engine and renderer with that
+fix. It also never writes to the Steam install: it reads the retail assets through
+`fs_cdpath` and keeps config, logs and demos under `%USERPROFILE%\.swjkja`.
+
+Launching the retail executables directly also needs `SteamAppId=6020` in the
+environment, or Steam's copy protection stops them with "Application load error
+5:0000065434".
