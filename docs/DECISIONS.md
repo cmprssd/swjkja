@@ -73,3 +73,16 @@ Not carried over: OpenJK's two hard-coded fixes for retail shaders (`gfx/2d/wedg
 and `gfx/menus/radar/arrow_w`, recognised by a hash of their text). They change how
 those HUD elements look compared with the original; whether to keep them is a
 question for the renderer milestone.
+
+## 2026-10-07: Console follows OpenJK's command and cvar rules (decided by Claude, pending review)
+
+swjkja-console reproduces the command buffer, tokenizer, cvar flags and built-in
+commands of OpenJK, which are the retail rules plus fixes. Left out on purpose:
+- OpenJK's range checks for some cvars (`Cvar_CheckRange`), which retail lacks;
+  individual systems clamp values where they read them.
+- The VM- and server-created cvar flags: there are no VMs (code mods are rewritten
+  in Rust), and multiplayer uses our own protocol.
+- The 128 KB command-buffer overflow limit.
+
+Single-player uses `helpUsObi` (default 0) to unlock cheat cvars and multiplayer
+`sv_cheats` (default 1, read-only, set by the server), as in the original.
