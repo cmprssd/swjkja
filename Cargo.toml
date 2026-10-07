@@ -15,6 +15,11 @@ unsafe_op_in_unsafe_fn = "deny"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 
+# Dependencies (inflate, later image decoding) are hot paths even in tests that read
+# the full 1.2 GB of retail assets; optimize them in dev builds too.
+[profile.dev.package."*"]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

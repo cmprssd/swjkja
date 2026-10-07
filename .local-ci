@@ -15,9 +15,18 @@ linux() {
 	cargo clippy --workspace --all-targets --locked -- -D warnings
 	cargo test --workspace --locked
 }
+# The retail-data tests read the owner's game install (Windows side). If it is not
+# reachable (USB drive unplugged), the run still checks everything else and says so.
+gamedata='D:\SteamLibrary\steamapps\common\Jedi Academy\GameData'
 windows() {
 	scripts/cargo-msvc.sh clippy --workspace --all-targets --locked -- -D warnings
-	scripts/cargo-msvc.sh test --workspace --locked
+	if (cd /mnt/c && powershell.exe -NoProfile -Command "exit !(Test-Path -LiteralPath '$gamedata\base')"); then
+		SWJKJA_GAMEDATA=$gamedata WSLENV="${WSLENV:-}:SWJKJA_GAMEDATA" \
+			scripts/cargo-msvc.sh test --workspace --locked
+	else
+		echo "WARNING: $gamedata not reachable; retail-data tests skipped"
+		scripts/cargo-msvc.sh test --workspace --locked
+	fi
 }
 
 logs=$(mktemp -d)

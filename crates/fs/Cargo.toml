@@ -1,0 +1,20 @@
+[package]
+name = "swjkja-fs"
+description = "Jedi Academy's virtual filesystem: .pk3 archives and game folders, searched in the original order"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+crc32fast = "1"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+crc32fast = "1"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
