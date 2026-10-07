@@ -31,6 +31,7 @@ use crate::pipeline::{Pipeline, State, spirv};
 use crate::resource::{Buffer, Frame};
 use crate::sky;
 use crate::texture::{Texture, TextureSet};
+use crate::vis;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -125,6 +126,22 @@ struct DrawMaterial {
     stages: Vec<DrawStage>,
     /// For materials with deforms: geometry rebuilt every frame.
     dynamic: Option<Dynamic>,
+    /// Static geometry whose index list is rebuilt each frame from the visible
+    /// surfaces (see draw()).
+    culled: bool,
+    /// Sky draws: drawn only if a surface of this sky gate is visible.
+    gate: Option<usize>,
+}
+
+/// Which vertex and index buffers a draw uses.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Bound {
+    /// Built once (sky).
+    Static,
+    /// Static vertices, indexes of the visible surfaces.
+    Visible,
+    /// Rebuilt every frame (deforms, flares).
+    Dynamic,
 }
 
 /// Geometry rebuilt every frame, and where it goes in the dynamic buffers.
@@ -168,6 +185,16 @@ pub struct WorldRenderer {
     pub material_count: usize,
     /// The global fog's colour and GL fog density, if the map has one.
     fog: Option<([f32; 3], f32)>,
+    /// Which surfaces each view draws.
+    vis: vis::WorldVis,
+    /// Per surface: its culled draw material and index range in `static_indexes`.
+    surface_draw: Vec<Option<(usize, u32, u32)>>,
+    /// Per surface: the sky it opens (drawn only when one of its surfaces is visible).
+    surface_gate: Vec<Option<usize>>,
+    gate_count: usize,
+    /// The static index list on the CPU, and the per-frame list of visible ranges.
+    static_indexes: Vec<u32>,
+    culled_indexes: Buffer,
 }
 
 /// The vertex attributes of [`Vertex`].
@@ -398,6 +425,7 @@ impl WorldRenderer {
         // Per material, its surfaces by fog number (the original's sort key orders draws
         // by material, then fog).
         let mut surfaces_of: Vec<std::collections::BTreeMap<usize, Vec<usize>>> = Vec::new();
+        let mut surface_cull = vec![vis::SurfaceCull::Never; bsp.surfaces.len()];
         for i in world_surfaces {
             let s = &world.surfaces[i];
             if matches!(s.geometry, Geometry::Skip) {
@@ -437,6 +465,25 @@ impl WorldRenderer {
                 }
             };
             surfaces_of[m].entry(s.fog).or_default().push(i);
+            // R_CullSurface's per-surface test, with the surface's material.
+            surface_cull[i] = match &s.geometry {
+                Geometry::Face { normal, dist, .. } if materials[m].cull != Cull::TwoSided => {
+                    vis::SurfaceCull::Plane {
+                        normal: *normal,
+                        dist: *dist,
+                        front_sided: materials[m].cull == Cull::Front,
+                    }
+                }
+                Geometry::Grid(g) => vis::SurfaceCull::Bounds {
+                    mins: g.mesh_bounds[0],
+                    maxs: g.mesh_bounds[1],
+                },
+                Geometry::Triangles { bounds, .. } => vis::SurfaceCull::Bounds {
+                    mins: bounds[0],
+                    maxs: bounds[1],
+                },
+                _ => vis::SurfaceCull::Never,
+            };
         }
 
         // The global fog (the one without a brush; fog numbers are 1-based) and its
@@ -563,10 +610,22 @@ impl WorldRenderer {
         let mut gpu_stages: Vec<GpuStage> = Vec::new();
         let mut states: Vec<State> = Vec::new();
         let mut draw_materials = Vec::new();
+        // Per surface: its draw material and index range in the static index list,
+        // or its sky gate.
+        let mut surface_draw: Vec<Option<(usize, u32, u32)>> = vec![None; bsp.surfaces.len()];
+        let mut surface_gate: Vec<Option<usize>> = vec![None; bsp.surfaces.len()];
+        let mut gates = 0usize;
         let (mut dynamic_vertices, mut dynamic_indexes) = (0u32, 0u32);
         for &m in &order {
             let material = &materials[m];
             if let Some(sky) = &material.sky {
+                let gate = gates;
+                gates += 1;
+                for group in surfaces_of[m].values() {
+                    for &i in group {
+                        surface_gate[i] = Some(gate);
+                    }
+                }
                 // RB_StageIteratorSky: the outer box, then the cloud layers drawn with
                 // the material's stages; the sky surfaces themselves are not drawn.
                 // (The original draws only the box blocks behind visible sky polygons;
@@ -639,6 +698,8 @@ impl WorldRenderer {
                                     slots: [slot, Slots::One(white)],
                                 }],
                                 dynamic: None,
+                                culled: false,
+                                gate: Some(gate),
                             });
                         }
                     }
@@ -674,6 +735,8 @@ impl WorldRenderer {
                         index_count,
                         stages,
                         dynamic: None,
+                        culled: false,
+                        gate: Some(gate),
                     });
                 }
                 continue;
@@ -749,7 +812,10 @@ impl WorldRenderer {
                 } else {
                     let first_index = indexes.len() as u32;
                     for &i in group {
+                        let start = indexes.len() as u32;
                         append(&world.surfaces[i].geometry, &mut vertices, &mut indexes);
+                        surface_draw[i] =
+                            Some((draw_materials.len(), start, indexes.len() as u32 - start));
                     }
                     let count = indexes.len() as u32 - first_index;
                     if count == 0 {
@@ -796,7 +862,9 @@ impl WorldRenderer {
                     first_index,
                     index_count,
                     stages,
+                    culled: dynamic.is_none(),
                     dynamic,
+                    gate: None,
                 });
             }
         }
@@ -883,6 +951,12 @@ impl WorldRenderer {
             (dynamic_vertices.max(1) as usize * size_of::<Vertex>()) as u64,
             MemoryLocation::CpuToGpu,
         )?;
+        let culled_indexes = Buffer::new(
+            gpu,
+            vk::BufferUsageFlags::INDEX_BUFFER,
+            indexes.len().max(1) as u64 * 4,
+            MemoryLocation::CpuToGpu,
+        )?;
         let dynamic_indexes_buffer = Buffer::new(
             gpu,
             vk::BufferUsageFlags::INDEX_BUFFER,
@@ -903,6 +977,7 @@ impl WorldRenderer {
                 vk::BufferUsageFlags::INDEX_BUFFER,
                 bytemuck::cast_slice(&indexes),
             )?,
+            static_indexes: indexes.clone(),
             frame_buffer,
             _stage_buffer: stage_buffer,
             frame_layout,
@@ -920,6 +995,11 @@ impl WorldRenderer {
                 )
             }),
             materials: draw_materials,
+            vis: vis::WorldVis::new(bsp, surface_cull),
+            surface_draw,
+            surface_gate,
+            gate_count: gates,
+            culled_indexes,
         })
     }
 
@@ -996,6 +1076,36 @@ impl WorldRenderer {
             m.index_count = indexes.len() as u32;
         }
 
+        // The visible surfaces' index ranges, grouped by material in the order the
+        // view found them (the original's sort is stable within a material).
+        let mut visible = Vec::new();
+        self.vis.visible(camera, &mut visible);
+        let mut gate_open = vec![false; self.gate_count];
+        let mut ranges: Vec<(usize, u32, u32)> = Vec::with_capacity(visible.len());
+        for &s in &visible {
+            if let Some(g) = self.surface_gate[s] {
+                gate_open[g] = true;
+            }
+            if let Some(r) = self.surface_draw[s] {
+                ranges.push(r);
+            }
+        }
+        ranges.sort_by_key(|r| r.0);
+        for m in self.materials.iter_mut().filter(|m| m.culled) {
+            m.index_count = 0;
+        }
+        let out = self.culled_indexes.mapped_mut()?;
+        let mut at = 0usize;
+        for (i, &(m, start, count)) in ranges.iter().enumerate() {
+            if i == 0 || ranges[i - 1].0 != m {
+                self.materials[m].first_index = at as u32;
+            }
+            self.materials[m].index_count += count;
+            let src = &self.static_indexes[start as usize..(start + count) as usize];
+            out[at * 4..(at + src.len()) * 4].copy_from_slice(bytemuck::cast_slice(src));
+            at += src.len();
+        }
+
         let Some(layout) = self.pipelines.first().map(|p| p.layout) else {
             return Ok(());
         };
@@ -1003,8 +1113,11 @@ impl WorldRenderer {
         let sets = [textures.set, self.frame_set];
         let mut depth_copied = false;
         let mut bound = usize::MAX;
-        let mut buffers_bound: Option<bool> = None;
+        let mut buffers_bound: Option<Bound> = None;
         for m in &self.materials {
+            if m.index_count == 0 || m.gate.is_some_and(|g| !gate_open[g]) {
+                continue;
+            }
             // The original reads the depth buffer for each flare as it draws it; with
             // flares sorting after the opaque world, one copy before the first does.
             let flare = matches!(
@@ -1029,14 +1142,20 @@ impl WorldRenderer {
                         &[],
                     );
                 }
-                // Switch between the static and the per-frame geometry.
-                let dynamic = m.dynamic.is_some();
-                if buffers_bound != Some(dynamic) {
-                    buffers_bound = Some(dynamic);
-                    let (v, i) = if dynamic {
-                        (self.dynamic_vertices.buffer, self.dynamic_indexes.buffer)
-                    } else {
-                        (self.vertices.buffer, self.indexes.buffer)
+                // Switch between the static, visible and per-frame geometry.
+                let geometry = match (&m.dynamic, m.culled) {
+                    (Some(_), _) => Bound::Dynamic,
+                    (None, true) => Bound::Visible,
+                    (None, false) => Bound::Static,
+                };
+                if buffers_bound != Some(geometry) {
+                    buffers_bound = Some(geometry);
+                    let (v, i) = match geometry {
+                        Bound::Dynamic => {
+                            (self.dynamic_vertices.buffer, self.dynamic_indexes.buffer)
+                        }
+                        Bound::Visible => (self.vertices.buffer, self.culled_indexes.buffer),
+                        Bound::Static => (self.vertices.buffer, self.indexes.buffer),
                     };
                     d.cmd_bind_vertex_buffers(cmd, 0, &[v], &[0]);
                     d.cmd_bind_index_buffer(cmd, i, 0, vk::IndexType::UINT32);

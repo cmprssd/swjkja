@@ -446,7 +446,29 @@ impl Target {
     /// reversed: 1 is nearest, 0 infinitely far), runs `draw`, and leaves the colour
     /// ready to read back.
     pub fn render(&self, gpu: &Gpu, clear: [f32; 4], draw: impl FnOnce(&mut Frame)) -> Result<()> {
-        gpu.submit_and_wait(|cmd| unsafe {
+        self.render_timed(gpu, clear, draw).map(|_| ())
+    }
+
+    /// [`Target::render`], returning the GPU's time for the frame in milliseconds,
+    /// from timestamps around everything recorded.
+    pub fn render_timed(
+        &self,
+        gpu: &Gpu,
+        clear: [f32; 4],
+        draw: impl FnOnce(&mut Frame),
+    ) -> Result<f64> {
+        let d = &gpu.device;
+        let pool = unsafe {
+            d.create_query_pool(
+                &vk::QueryPoolCreateInfo::default()
+                    .query_type(vk::QueryType::TIMESTAMP)
+                    .query_count(2),
+                None,
+            )?
+        };
+        let result = gpu.submit_and_wait(|cmd| unsafe {
+            d.cmd_reset_query_pool(cmd, pool, 0, 2);
+            d.cmd_write_timestamp2(cmd, vk::PipelineStageFlags2::TOP_OF_PIPE, pool, 0);
             transition(
                 gpu,
                 cmd,
@@ -478,7 +500,24 @@ impl Target {
                 vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
             );
-        })
+            d.cmd_write_timestamp2(cmd, vk::PipelineStageFlags2::BOTTOM_OF_PIPE, pool, 1);
+        });
+        let mut stamps = [0u64; 2];
+        let read = unsafe {
+            d.get_query_pool_results(
+                pool,
+                0,
+                &mut stamps,
+                vk::QueryResultFlags::TYPE_64 | vk::QueryResultFlags::WAIT,
+            )
+        };
+        unsafe { d.destroy_query_pool(pool, None) };
+        result?;
+        read?;
+        let period = unsafe { gpu.instance.get_physical_device_properties(gpu.physical) }
+            .limits
+            .timestamp_period;
+        Ok(stamps[1].wrapping_sub(stamps[0]) as f64 * f64::from(period) / 1e6)
     }
 
     /// Copies the colour image (after [`Target::render`]) to the CPU: RGBA8, top row
