@@ -23,3 +23,6 @@ cd /mnt/c
 	-DCMAKE_INSTALL_PREFIX="$WORK_WIN\\openjk"
 "$cmake" --build "$WORK_WIN\\openjk-build" --config Release --parallel
 "$cmake" --install "$WORK_WIN\\openjk-build" --config Release
+# The installed engine is all the benchmarks need; the copied source and the build
+# tree (about 150 MB) would otherwise stay behind.
+rm -rf "$work/openjk-src" "$work/openjk-build"

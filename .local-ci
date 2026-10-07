@@ -29,4 +29,5 @@ wstatus=0; wait $wpid || wstatus=$?
 
 step "linux (exit $lstatus)"; cat "$logs/linux"
 step "windows (exit $wstatus)"; cat "$logs/windows"
+step "disk budget"; scripts/disk.sh prune
 [ "$lstatus" -eq 0 ] && [ "$wstatus" -eq 0 ]

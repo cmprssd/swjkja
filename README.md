@@ -19,6 +19,10 @@ Status: early. See [docs/ROADMAP.md](docs/ROADMAP.md) for the milestones and
 
 Checks run locally with `local-ci` (see `.local-ci`), not on GitHub Actions.
 
+Build output and caches are kept bounded: `scripts/disk.sh` lists everything the
+project stores and where, `.local-ci` shrinks any Rust build folder over 3 GB after
+each run, and `scripts/disk.sh clean-all` deletes all of it.
+
 ## License
 
 GPLv2 (see [LICENSE](LICENSE)), as required for a work derived from the released
