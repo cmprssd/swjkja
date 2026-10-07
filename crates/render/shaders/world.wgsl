@@ -10,8 +10,10 @@ struct Frame {
     view_proj: mat4x4<f32>,
     // xyz: the view origin.
     view_origin: vec4<f32>,
-    // x: shader time in seconds, y: tr.identityLight.
+    // x: shader time in seconds, y: tr.identityLight, z: global fog density.
     params: vec4<f32>,
+    // The global fog's colour.
+    fog_color: vec4<f32>,
 }
 
 struct Stage {
@@ -34,6 +36,8 @@ struct Stage {
     tcmod: array<vec4<f32>, 16>,
     // The light style's colour (0-255) for rgbGen lightmapStyle.
     style: vec4<f32>,
+    // x: GL fog for this stage: 0 none, 1 towards the fog colour, 2 black, 3 white.
+    fog: vec4<u32>,
 }
 
 struct Push {
@@ -250,6 +254,8 @@ struct VertexOut {
     @location(0) tc0: vec2<f32>,
     @location(1) tc1: vec2<f32>,
     @location(2) color: vec4<f32>,
+    // Eye-space depth, for GL fog.
+    @location(3) eye_z: f32,
 }
 
 @vertex
@@ -264,6 +270,7 @@ fn vs_main(
     let s = stages[push.stage];
     var out: VertexOut;
     out.position = frame.view_proj * vec4<f32>(xyz, 1.0);
+    out.eye_z = out.position.w;
     out.tc0 = tc_mods(s, 0u, xyz, tc_gen(s, 0u, xyz, normal, st, lm01, lm23));
     out.tc1 = tc_mods(s, 1u, xyz, tc_gen(s, 1u, xyz, normal, st, lm01, lm23));
     out.color = colors(s, xyz, round(color * 255.0)) / 255.0;
@@ -291,6 +298,16 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         default: {}
     }
     c = clamp(c, vec4<f32>(0.0), vec4<f32>(1.0));
+    // GL_EXP2 fog on the fragment's colour, before alpha test and blending: the global
+    // fog for opaque materials (RB_IterateStagesGeneric with r_drawfog 2).
+    if s.fog.x != 0u {
+        let d = frame.params.z * in.eye_z;
+        let f = clamp(exp(-(d * d)), 0.0, 1.0);
+        var fog = frame.fog_color.rgb;
+        if s.fog.x == 2u { fog = vec3<f32>(0.0); }
+        if s.fog.x == 3u { fog = vec3<f32>(1.0); }
+        c = vec4<f32>(mix(fog, c.rgb, f), c.a);
+    }
     switch s.modes.w {
         case 1u: { if !(c.a > 0.0) { discard; } }
         case 2u: { if !(c.a < 0.5) { discard; } }

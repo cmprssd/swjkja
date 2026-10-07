@@ -150,3 +150,78 @@ fn the_camera_puts_up_at_the_top_and_left_at_the_left() {
         "+y (left) must be on the left: {white_at:?}"
     );
 }
+
+#[test]
+fn quake_front_faces_survive_front_sided_culling() {
+    use swjkja_render::{Camera, State, world};
+    use swjkja_shader::Cull;
+    let gpu = Gpu::new_headless().expect("a Vulkan 1.3 device");
+    let (w, h) = (32u32, 32u32);
+    // Looking straight down at a floor triangle (normal +z) at z = 0.
+    let camera = Camera::new([3.0, 3.0, 100.0], [90.0, 0.0, 0.0], w, h);
+    let m = camera.view_proj();
+    let clip = |p: [f32; 3]| {
+        let c = [0, 1, 2, 3].map(|r| m[0][r] * p[0] + m[1][r] * p[1] + m[2][r] * p[2] + m[3][r]);
+        [c[0] / c[3], c[1] / c[3], c[2] / c[3]]
+    };
+    // Quake's visible side is the one its vertices run clockwise around: seen from
+    // above (+z), (0,0) -> (0,90) -> (90,0) is clockwise, so this floor faces up.
+    let white = [255, 255, 255, 255];
+    let floor = [[0.0, 0.0, 0.0], [0.0, 90.0, 0.0], [90.0, 0.0, 0.0]];
+    let visible = |verts: [[f32; 3]; 3], cull: Cull| {
+        let target = Target::new(&gpu, w, h).unwrap();
+        let data: Vec<([f32; 3], [u8; 4])> = verts.iter().map(|&p| (clip(p), white)).collect();
+        let vb =
+            Buffer::with_data(&gpu, vk::BufferUsageFlags::VERTEX_BUFFER, &vertices(&data)).unwrap();
+        let state = State {
+            cull: world::cull_mode(cull),
+            front_face: world::FRONT_FACE,
+            ..State::default()
+        };
+        let pipeline = Pipeline::with_state(
+            &gpu,
+            spirv::FLAT_VERT,
+            spirv::FLAT_FRAG,
+            16,
+            &[
+                (0, vk::Format::R32G32B32_SFLOAT, 0),
+                (1, vk::Format::R8G8B8A8_UNORM, 12),
+            ],
+            0,
+            &[],
+            state,
+        )
+        .unwrap();
+        target
+            .render(&gpu, [0.0, 0.0, 0.0, 1.0], |cmd| unsafe {
+                gpu.device.cmd_bind_pipeline(
+                    cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    pipeline.pipeline,
+                );
+                gpu.device
+                    .cmd_bind_vertex_buffers(cmd, 0, &[vb.buffer], &[0]);
+                gpu.device.cmd_draw(cmd, 3, 1, 0, 0);
+            })
+            .unwrap();
+        target
+            .read_rgba(&gpu)
+            .unwrap()
+            .chunks(4)
+            .any(|p| p == white)
+    };
+    let reversed = [floor[0], floor[2], floor[1]];
+    assert!(
+        visible(floor, Cull::Front),
+        "a front face must survive front-sided culling"
+    );
+    assert!(
+        !visible(reversed, Cull::Front),
+        "a back face must be culled by front-sided culling"
+    );
+    assert!(
+        !visible(floor, Cull::Back),
+        "back-sided culling hides front faces"
+    );
+    assert!(visible(reversed, Cull::TwoSided));
+}

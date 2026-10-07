@@ -35,7 +35,7 @@ fn main() {
             let target = Target::new(&gpu, 1280, 720).unwrap();
             let t = Instant::now();
             target
-                .render(&gpu, [0.0, 0.0, 0.0, 1.0], |cmd| {
+                .render(&gpu, renderer.clear_color(), |cmd| {
                     renderer.draw(cmd, &textures, &camera, time).unwrap()
                 })
                 .unwrap();
