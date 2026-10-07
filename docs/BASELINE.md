@@ -50,6 +50,14 @@ and checks (CRC-32) every one of the 22,775 files: 3,049 MB uncompressed from th
   only the decompression over the cores.** Loading a map needs a few hundred MB, not
   all 3 GB; this is the full-read upper bound.
 
+## Parsing the retail maps (swjkja-bsp), 2026-10-07
+
+`cargo run --release -p swjkja-bsp --example parse_all -- <GameData>` reads and
+parses all 57 maps (521 MB) and checks every cross-reference in them: 15-24 ms per
+map to parse (3 runs), after 30-45 ms per map to read it from the USB drive. A
+first version took 67-85 ms per map because it formatted an error message for every
+check, not just failing ones.
+
 ## Not measured yet
 
 - **Frame-time spikes** (1% lows): `timedemo` reports only the average. Needs
