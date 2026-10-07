@@ -83,6 +83,15 @@ To rerun the comparison (Windows Python with Pillow and numpy in
     cargo run --release -p swjkja-image --example decode_all -- <GameData> > ours.tsv
     python bench/images/reference.py <GameData> > ref.tsv
 
+## Loading the retail shader scripts (swjkja-shader), 2026-10-07
+
+`cargo run --release -p swjkja-shader --example shader_report -- <GameData>`: 68
+files, 3,365 shader definitions (both counts cross-checked with a separate Python
+count). Loading and indexing all scripts takes 17-21 ms; parsing every definition
+9-11 ms (3 runs). The 40 the original rejects are all editor and compiler-only
+shaders (caulk, clip, hint, nodraw, ...) without drawing stages. An early version took
+1.8 s to parse: each parse rescanned the whole 2 MB text for NUL bytes.
+
 ## Not measured yet
 
 - **Frame-time spikes** (1% lows): `timedemo` reports only the average. Needs

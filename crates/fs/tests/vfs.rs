@@ -216,3 +216,42 @@ fn non_zip_files_are_rejected_on_open() {
         "{err}"
     );
 }
+
+#[test]
+fn list_follows_the_original_unsorted_search_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("base");
+    write_pk3(
+        &base.join("assets0.pk3"),
+        &[
+            ("shaders/zeta.shader", b"", false),
+            ("shaders/alpha.shader", b"", false),
+            ("shaders/sub/deep.shader", b"", false),
+            ("shaders/a/b/too_deep.shader", b"", false),
+            ("shaders/notes.txt", b"", false),
+        ],
+    );
+    write_pk3(
+        &base.join("assets1.pk3"),
+        &[
+            ("Shaders/Beta.shader", b"", false),
+            ("shaders/alpha.shader", b"", false),
+        ],
+    );
+    write_file(&base.join("shaders/loose.shader"), b"");
+    write_file(&base.join("shaders/aaa.shader"), b"");
+    let vfs = Vfs::mount_game(&[dir.path().to_path_buf()], &["base"]).unwrap();
+    // assets1 (higher priority) first, then assets0 in its directory order, then the
+    // loose folder; alpha is listed once, where it first appears.
+    assert_eq!(
+        vfs.list("shaders", ".shader"),
+        [
+            "beta.shader",
+            "alpha.shader",
+            "zeta.shader",
+            "sub/deep.shader",
+            "aaa.shader",
+            "loose.shader"
+        ]
+    );
+}
