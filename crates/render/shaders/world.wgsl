@@ -37,6 +37,8 @@ struct Stage {
     // The light style's colour (0-255) for rgbGen lightmapStyle.
     style: vec4<f32>,
     // x: GL fog for this stage: 0 none, 1 towards the fog colour, 2 black, 3 white.
+    // y: 1 for sky geometry: positions are offsets from the viewer, drawn at the far
+    // plane (the original's glDepthRange(1, 1)).
     fog: vec4<u32>,
 }
 
@@ -269,10 +271,17 @@ fn vs_main(
 ) -> VertexOut {
     let s = stages[push.stage];
     var out: VertexOut;
-    out.position = frame.view_proj * vec4<f32>(xyz, 1.0);
+    var world_xyz = xyz;
+    if s.fog.y == 1u {
+        world_xyz = frame.view_origin.xyz + xyz;
+    }
+    out.position = frame.view_proj * vec4<f32>(world_xyz, 1.0);
     out.eye_z = out.position.w;
-    out.tc0 = tc_mods(s, 0u, xyz, tc_gen(s, 0u, xyz, normal, st, lm01, lm23));
-    out.tc1 = tc_mods(s, 1u, xyz, tc_gen(s, 1u, xyz, normal, st, lm01, lm23));
+    if s.fog.y == 1u {
+        out.position.z = 0.0; // reversed depth: 0 is infinitely far
+    }
+    out.tc0 = tc_mods(s, 0u, world_xyz, tc_gen(s, 0u, world_xyz, normal, st, lm01, lm23));
+    out.tc1 = tc_mods(s, 1u, world_xyz, tc_gen(s, 1u, world_xyz, normal, st, lm01, lm23));
     out.color = colors(s, xyz, round(color * 255.0)) / 255.0;
     return out;
 }

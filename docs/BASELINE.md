@@ -155,6 +155,10 @@ colour), 2026-10-07: `ctf4_spawn1` 0.16, `ctf4_spawn2` 0.23 (from 7.42), `ctf4_u
 0.32 (from 4.17), all with 0.0% of pixels off by more than 16. Ten of the eleven
 views are now within 0.53 on average; `duel5_spawn2` (1.29) is the undrawn sky.
 
+With the sky (outer box and cloud layers), 2026-10-07: no view has more than 0.1%
+undrawn; `duel5_spawn2` 1.23 (2.0% of pixels off), where the rest is glow sprites
+(`deformVertexes autoSprite`), which come with deforms.
+
 ## Not measured yet
 
 - **Frame-time spikes** (1% lows): `timedemo` reports only the average. Needs
