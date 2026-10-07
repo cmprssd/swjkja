@@ -15,8 +15,9 @@ git -C "$src" -c advice.detachedHead=false checkout -q "$rev"
 work=$(wslpath "$WORK_WIN")
 mkdir -p "$work/openjk-src"
 rsync -a --delete --exclude .git "$src/" "$work/openjk-src/"
-# Test instrumentation only: a cg_swjkjaView cvar that pins the camera to an exact
-# view for reference screenshots. It changes nothing else.
+# Test instrumentation only: cg_swjkjaView pins the camera to an exact view and
+# cg_swjkjaTime the game time (shaders, light styles) for reference screenshots.
+# Both are off by default; nothing else changes.
 patch_file="$(pwd)/reference/openjk-view.patch"
 (cd "$work/openjk-src" && git apply -p1 "$patch_file")
 

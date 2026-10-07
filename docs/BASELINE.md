@@ -187,6 +187,13 @@ multiplayer maps have one (`fogs <GameData>` lists them with their bounds: ctf1,
 duel2, duel3, duel7, duel9, ffa1, ffa2), but no reference shot shows one yet, so
 fog volumes are checked by unit tests and by eye only.
 
+Since 2026-10-07 every view in `views.txt` carries a game time (12345 ms). The
+reference engine's patch pins it with `cg_swjkjaTime` (shader time and light
+styles), and `render_world` renders at the same time, so animated stages and
+flickering lights can be compared. The eight fog-volume views (from the
+`fog_views` example) and the pinned times wait for a new reference capture; until
+then the eleven views above are compared against shots taken at an unknown time.
+
 ## Renderer frame times (swjkja-render), 2026-10-07
 
 `bench_world <GameData> bench/reference/views.txt` renders each reference view 300

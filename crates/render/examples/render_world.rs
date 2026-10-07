@@ -1,6 +1,7 @@
 //! Renders views of maps with the stage renderer (materials drawn as the original
 //! does) to PNGs.
-//! Usage: render_world <GameData> <views.txt> <out folder> [time in seconds]
+//! Usage: render_world <GameData> <views.txt> <out folder>
+//! Each view renders at its game time (the views file's last column, in ms).
 use std::time::Instant;
 
 use swjkja_render::{Camera, Gpu, Target, TextureSet, WorldRenderer};
@@ -8,7 +9,6 @@ use swjkja_render::{Camera, Gpu, Target, TextureSet, WorldRenderer};
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (gamedata, views_file, out_dir) = (&args[0], &args[1], &args[2]);
-    let time: f32 = args.get(3).map_or(0.0, |t| t.parse().unwrap());
     let text = std::fs::read_to_string(views_file).unwrap();
     let lines: Vec<Vec<&str>> = text
         .lines()
@@ -35,6 +35,9 @@ fn main() {
         for l in lines.iter().filter(|l| l[0] == map) {
             let f: Vec<f32> = l[2..8].iter().map(|v| v.parse().unwrap()).collect();
             let camera = Camera::new([f[0], f[1], f[2]], [f[3], f[4], f[5]], 1280, 720);
+            let time = l
+                .get(8)
+                .map_or(0.0, |ms| ms.parse::<f32>().unwrap() / 1000.0);
             let t = Instant::now();
             target
                 .render(&gpu, renderer.clear_color(), |frame| {

@@ -9,6 +9,7 @@
 
 pub mod patch;
 pub mod stitch;
+pub mod style;
 
 use swjkja_bsp::{Bsp, DrawVert, SurfaceKind};
 

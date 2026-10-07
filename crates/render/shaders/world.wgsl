@@ -19,6 +19,8 @@ struct Frame {
     misc: vec4<u32>,
     // xyz: the view's forward axis.
     view_forward: vec4<f32>,
+    // Each light style's colour this frame (0-255), from LightStyles::colors.
+    styles: array<vec4<f32>, 64>,
 }
 
 // A map fog (fog.rs FogVolume): R_LoadFogs's colorInt, tcScale and surface plane.
@@ -49,7 +51,7 @@ struct Stage {
     tc_vector: array<vec4<f32>, 4>,
     // Two vec4 of parameters per tcMod: [bundle * 8 + index * 2 + 0..1].
     tcmod: array<vec4<f32>, 16>,
-    // The light style's colour (0-255) for rgbGen lightmapStyle.
+    // x: the light style for rgbGen lightmapStyle.
     style: vec4<f32>,
     // x: GL fog for this stage: 0 none, 1 towards the fog colour, 2 black, 3 white.
     // y: 1 for sky geometry: positions are offsets from the viewer, drawn at the far
@@ -274,7 +276,7 @@ fn colors(s: Stage, xyz: vec3<f32>, vertex: vec4<f32>) -> vec4<f32> {
         // No light grid for the world entity: ambient and directed light are zero.
         case 9u, 10u: { c = vec4<f32>(0.0, 0.0, 0.0, 255.0); }
         case 11u: { c = s.constant; }
-        case 12u: { c = s.style; }
+        case 12u: { c = frame.styles[u32(s.style.x)]; }
         // CGEN_FOG: the fog's colorInt (alpha included).
         case 13u: { c = fogs[s.fog.w & 0xffffu].color; }
         default: {}
