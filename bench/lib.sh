@@ -40,11 +40,28 @@ get() { # relative path
 	ps "Get-Content -Raw -LiteralPath '$HOME_WIN\\$BENCH_GAME\\$1'"
 }
 
+# Benchmarks open a game window, which takes over the screen. Refuse to start while
+# the owner is using the PC: keyboard or mouse input within SWJKJA_IDLE_SECONDS
+# (default 120). Set SWJKJA_ALLOW_WINDOW=1 once they have said a run may start now.
+require_idle() {
+	[ "${SWJKJA_ALLOW_WINDOW:-}" = 1 ] && return 0
+	local need=${SWJKJA_IDLE_SECONDS:-120} idle
+	idle=$(ps "Add-Type -Namespace W -Name U -MemberDefinition '[StructLayout(LayoutKind.Sequential)] public struct L { public uint cb; public uint t; } [DllImport(\"user32.dll\")] public static extern bool GetLastInputInfo(ref L l);'
+\$l=New-Object W.U+L; \$l.cb=8; [void][W.U]::GetLastInputInfo([ref]\$l)
+[int](([Environment]::TickCount - [int]\$l.t) / 1000)")
+	if [ "$idle" -lt "$need" ]; then
+		echo "The PC was used ${idle} s ago; not opening a game window. Ask first, then rerun" >&2
+		echo "with SWJKJA_ALLOW_WINDOW=1 (or wait until it has been idle for ${need} s)." >&2
+		return 3
+	fi
+}
+
 # Run an OpenJK executable with arguments, wait for it (killing it after timeout_s),
 # and print its wall time in ms. Arguments are passed as an array, so paths with
 # spaces are safe.
 run_timed() { # timeout_s exe args...
 	local timeout_s=$1 exe=$2; shift 2
+	require_idle || return
 	local list="" a
 	for a in "$@"; do list+="'${a//\'/\'\'}',"; done
 	ps "\$ErrorActionPreference='Stop'
@@ -59,6 +76,7 @@ if (-not \$p.WaitForExit(${timeout_s}000)) { Stop-Process -Id \$p.Id -Force; thr
 # instead of quitting). The log is removed first so an old result cannot match.
 run_until() { # timeout_s regex exe args...
 	local timeout_s=$1 regex=$2 exe=$3; shift 3
+	require_idle || return
 	local list="" a
 	for a in "$@"; do list+="'${a//\'/\'\'}',"; done
 	ps "\$ErrorActionPreference='Stop'
