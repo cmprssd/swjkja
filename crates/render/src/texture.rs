@@ -147,8 +147,8 @@ fn layers(level: u32) -> vk::ImageSubresourceLayers {
 
 /// The descriptor set every pipeline uses: binding 0 is an array of
 /// [`MAX_TEXTURES`] textures, binding 1 a repeating sampler with mipmaps
-/// (`GL_LINEAR_MIPMAP_NEAREST`, the original's default `r_textureMode`), binding 2 a
-/// clamping linear sampler without mipmaps (lightmaps).
+/// (`GL_LINEAR_MIPMAP_NEAREST`, the original's default `r_textureMode`), binding 2 the
+/// same clamping at the edges (`clampMap` textures and lightmaps, which have one level).
 pub struct TextureSet {
     gpu: Arc<Gpu>,
     pub layout: vk::DescriptorSetLayout,
@@ -236,7 +236,11 @@ impl TextureSet {
                     .address_mode_u(mode)
                     .address_mode_v(mode)
                     .address_mode_w(mode)
-                    .max_lod(if repeat { vk::LOD_CLAMP_NONE } else { 0.0 }),
+                    // r_ext_texture_filter_anisotropic 16, the original's default; it
+                    // applies to mipmapped images, the only ones with more than one level.
+                    .anisotropy_enable(true)
+                    .max_anisotropy(16.0)
+                    .max_lod(vk::LOD_CLAMP_NONE),
                 None,
             )
         };

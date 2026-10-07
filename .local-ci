@@ -11,6 +11,14 @@ step() { echo; echo "== $*"; }
 step "format"; cargo fmt --all -- --check
 step "shell syntax"; for f in bench/*.sh scripts/*.sh .local-ci; do bash -n "$f"; done
 
+# Build what is committed, not what happens to be in the working folder: a file
+# the whitelist .gitignore leaves out (it once hid every shader) fails here.
+step "committed tree builds"
+tree=$(mktemp -d)
+trap 'rm -rf "$tree"' EXIT
+git archive HEAD | tar -x -C "$tree"
+CARGO_TARGET_DIR="$PWD/target" cargo check --manifest-path "$tree/Cargo.toml" --workspace --all-targets --locked --quiet
+
 linux() {
 	cargo clippy --workspace --all-targets --locked -- -D warnings
 	cargo test --workspace --locked
@@ -30,7 +38,7 @@ windows() {
 }
 
 logs=$(mktemp -d)
-trap 'rm -rf "$logs"' EXIT
+trap 'rm -rf "$logs" "$tree"' EXIT
 linux >"$logs/linux" 2>&1 & lpid=$!
 windows >"$logs/windows" 2>&1 & wpid=$!
 lstatus=0; wait $lpid || lstatus=$?

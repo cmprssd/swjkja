@@ -14,6 +14,7 @@
 !*.md
 !*.sh
 !*.py
+!*.wgsl
 
 # Benchmark inputs we made ourselves: the config that records the demo, and the
 # demo (a recording of our own bot match, no game assets inside).

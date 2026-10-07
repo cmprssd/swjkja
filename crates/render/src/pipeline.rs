@@ -11,10 +11,8 @@ use crate::resource::Target;
 pub mod spirv {
     pub const FLAT_VERT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/flat.vert.spv"));
     pub const FLAT_FRAG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/flat.frag.spv"));
-    pub const WORLD_PREVIEW_VERT: &[u8] =
-        include_bytes!(concat!(env!("OUT_DIR"), "/world_preview.vert.spv"));
-    pub const WORLD_PREVIEW_FRAG: &[u8] =
-        include_bytes!(concat!(env!("OUT_DIR"), "/world_preview.frag.spv"));
+    pub const WORLD_VERT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/world.vert.spv"));
+    pub const WORLD_FRAG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/world.frag.spv"));
 }
 
 fn shader_module(gpu: &Gpu, spirv: &[u8]) -> Result<vk::ShaderModule> {
@@ -28,6 +26,37 @@ fn shader_module(gpu: &Gpu, spirv: &[u8]) -> Result<vk::ShaderModule> {
 
 /// A vertex attribute: location, format, byte offset.
 pub type Attribute = (u32, vk::Format, u32);
+
+/// Fixed-function state a pipeline is built with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct State {
+    /// Source and destination blend factors; `None` draws without blending.
+    pub blend: Option<(vk::BlendFactor, vk::BlendFactor)>,
+    pub depth_write: bool,
+    /// `None` turns the depth test off.
+    pub depth_compare: Option<vk::CompareOp>,
+    pub cull: vk::CullModeFlags,
+    pub front_face: vk::FrontFace,
+    /// Polygon offset (decals): pulls the surface towards the viewer.
+    pub depth_bias: bool,
+    /// Which colour channels are written.
+    pub write_mask: vk::ColorComponentFlags,
+}
+
+impl Default for State {
+    /// Depth test and write (reversed depth), no blending, no culling.
+    fn default() -> Self {
+        Self {
+            blend: None,
+            depth_write: true,
+            depth_compare: Some(vk::CompareOp::GREATER_OR_EQUAL),
+            cull: vk::CullModeFlags::NONE,
+            front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+            depth_bias: false,
+            write_mask: vk::ColorComponentFlags::RGBA,
+        }
+    }
+}
 
 pub struct Pipeline {
     gpu: Arc<Gpu>,
@@ -47,6 +76,30 @@ impl Pipeline {
         attributes: &[Attribute],
         push_size: u32,
         set_layouts: &[vk::DescriptorSetLayout],
+    ) -> Result<Self> {
+        Self::with_state(
+            gpu,
+            vert,
+            frag,
+            stride,
+            attributes,
+            push_size,
+            set_layouts,
+            State::default(),
+        )
+    }
+
+    /// Like [`Pipeline::new`], with the given fixed-function state.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_state(
+        gpu: &Arc<Gpu>,
+        vert: &[u8],
+        frag: &[u8],
+        stride: u32,
+        attributes: &[Attribute],
+        push_size: u32,
+        set_layouts: &[vk::DescriptorSetLayout],
+        state: State,
     ) -> Result<Self> {
         let d = &gpu.device;
         let (vs, fs) = (shader_module(gpu, vert)?, shader_module(gpu, frag)?);
@@ -99,16 +152,32 @@ impl Pipeline {
             .scissor_count(1);
         let raster = vk::PipelineRasterizationStateCreateInfo::default()
             .polygon_mode(vk::PolygonMode::FILL)
-            .cull_mode(vk::CullModeFlags::NONE)
+            .cull_mode(state.cull)
+            .front_face(state.front_face)
+            // r_offsetFactor -1, r_offsetUnits -2 in the original's depth direction.
+            .depth_bias_enable(state.depth_bias)
+            .depth_bias_slope_factor(1.0)
+            .depth_bias_constant_factor(2.0)
             .line_width(1.0);
         let multisample = vk::PipelineMultisampleStateCreateInfo::default()
             .rasterization_samples(vk::SampleCountFlags::TYPE_1);
         let depth = vk::PipelineDepthStencilStateCreateInfo::default()
-            .depth_test_enable(true)
-            .depth_write_enable(true)
-            .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL); // reversed depth
-        let blend_attachments = [vk::PipelineColorBlendAttachmentState::default()
-            .color_write_mask(vk::ColorComponentFlags::RGBA)];
+            .depth_test_enable(state.depth_compare.is_some())
+            .depth_write_enable(state.depth_write)
+            .depth_compare_op(state.depth_compare.unwrap_or(vk::CompareOp::ALWAYS));
+        let mut attachment =
+            vk::PipelineColorBlendAttachmentState::default().color_write_mask(state.write_mask);
+        if let Some((src, dst)) = state.blend {
+            attachment = attachment
+                .blend_enable(true)
+                .src_color_blend_factor(src)
+                .dst_color_blend_factor(dst)
+                .color_blend_op(vk::BlendOp::ADD)
+                .src_alpha_blend_factor(src)
+                .dst_alpha_blend_factor(dst)
+                .alpha_blend_op(vk::BlendOp::ADD);
+        }
+        let blend_attachments = [attachment];
         let blend =
             vk::PipelineColorBlendStateCreateInfo::default().attachments(&blend_attachments);
         let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];

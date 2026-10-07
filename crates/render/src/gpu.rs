@@ -143,7 +143,10 @@ impl Gpu {
                 &vk::DeviceCreateInfo::default()
                     .queue_create_infos(&queue_info)
                     .push_next(&mut features13)
-                    .push_next(&mut features12),
+                    .push_next(&mut features12)
+                    .enabled_features(
+                        &vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true),
+                    ),
                 None,
             )?
         };
