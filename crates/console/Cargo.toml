@@ -1,0 +1,17 @@
+[package]
+name = "swjkja-console"
+description = "Console commands, the command buffer, cvars and config files, as the original engine runs them"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+swjkja-fs = { path = "../fs" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

@@ -153,6 +153,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "swjkja-console"
+version = "0.0.0"
+dependencies = [
+ "swjkja-fs",
+ "tempfile",
+]
+
+[[package]]
 name = "swjkja-fs"
 version = "0.0.0"
 dependencies = [
