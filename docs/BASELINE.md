@@ -100,6 +100,36 @@ the slowest is `taspir2` at 141 ms (156 stitches). Comparing patches only within
 their LOD group (identical results) took this from 1.84 s. `mp/ffa3`: 4,426 faces,
 88 triangle soups, 526 patches (2 `nodraw`, skipped), 100 stitches.
 
+## Visual comparison with the reference, 2026-10-07
+
+`bench/capture-reference.sh` renders the 11 views in `bench/reference/views.txt`
+(3 multiplayer maps) with the reference OpenJK, world only, full-quality textures
+(the owner's choice: `r_picmip 0`, no texture compression), 1280x720; the reference
+build has a test-only patch pinning the camera exactly (`cg_swjkjaView`).
+`render_preview --views` renders the same views with the new renderer and
+`bench/reference/compare.py` compares them.
+
+First comparison, with stand-in shading (base texture x lightmap):
+
+| View | Mean difference (0-255) | Pixels off by > 16 |
+|------|------|------|
+| ffa3_down | 1.09 | 0.3% |
+| ctf4_spawn1 | 1.58 | 0.7% |
+| ffa3_spawn2 | 2.44 | 4.9% |
+| ffa3_up | 2.66 | 1.5% |
+| ctf4_up | 5.25 | 15.2% |
+| ffa3_spawn3 | 6.40 | 15.0% |
+| duel5_spawn1 | 6.72 | 20.6% |
+| duel5_spawn2 | 6.95 | 15.3% |
+| duel5_down | 8.18 | 25.3% |
+| ctf4_spawn2 | 8.51 | 30.1% |
+| ffa3_spawn1 | 18.07 | 42.7% |
+
+Geometry and camera line up exactly (edges match in every view). The large
+differences are surfaces whose shaders brighten or blend in extra stages (for
+example a `GL_DST_COLOR GL_SRC_COLOR` stage doubles brightness), plus the sky, which
+the preview does not draw: the shader-stage system is next.
+
 ## Not measured yet
 
 - **Frame-time spikes** (1% lows): `timedemo` reports only the average. Needs
