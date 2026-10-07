@@ -11,6 +11,8 @@ rust-version.workspace = true
 swjkja-fs = { path = "../fs" }
 
 [dev-dependencies]
+swjkja-bsp = { path = "../bsp" }
+swjkja-image = { path = "../image" }
 tempfile = "3"
 
 [lints]

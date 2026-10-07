@@ -8,6 +8,7 @@
 //! does not load, or uses the white image for `$lightmap` without a lightmap: that is
 //! the renderer's job when it resolves a `ShaderDef` against the loaded map.
 
+pub mod resolve;
 pub mod text;
 
 use std::collections::HashMap;
@@ -311,6 +312,8 @@ pub enum RgbGen {
     LightingDiffuse,
     LightingDiffuseEntity,
     Const,
+    /// The colour of the stage's light style (only on stages a light style adds).
+    LightmapStyle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

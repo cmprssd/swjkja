@@ -454,7 +454,9 @@ dependencies = [
 name = "swjkja-shader"
 version = "0.0.0"
 dependencies = [
+ "swjkja-bsp",
  "swjkja-fs",
+ "swjkja-image",
  "tempfile",
 ]
 
