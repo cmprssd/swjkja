@@ -1,0 +1,14 @@
+# Reference views: map, name, eye x y z, pitch yaw roll (degrees). Eyes are 36 units
+# above spawn points. bench/capture-reference.sh renders each with the reference
+# engine; the new renderer renders the same views to compare.
+mp/ffa3   ffa3_spawn1   -1208 -912 228   0 360 0
+mp/ffa3   ffa3_spawn2   728 1424 -20     0 270 0
+mp/ffa3   ffa3_spawn3   2432 -744 -4     0 90 0
+mp/ffa3   ffa3_down     560 -1440 -76    35 45 0
+mp/ffa3   ffa3_up       -176 624 284     -30 180 0
+mp/duel5  duel5_spawn1  -1920 -416 -268  0 315 0
+mp/duel5  duel5_spawn2  -688 1504 -276   0 270 0
+mp/duel5  duel5_down    0 704 -324       25 270 0
+mp/ctf4   ctf4_spawn1   -1280 1248 356   0 180 0
+mp/ctf4   ctf4_spawn2   -1488 2896 124   0 315 0
+mp/ctf4   ctf4_up       544 1824 -260    -25 270 0

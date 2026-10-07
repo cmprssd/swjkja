@@ -18,4 +18,6 @@
 # Benchmark inputs we made ourselves: the config that records the demo, and the
 # demo (a recording of our own bot match, no game assets inside).
 !bench/reference/*.cfg
+!bench/reference/*.patch
+!bench/reference/*.txt
 !bench/demos/*.dm_26
