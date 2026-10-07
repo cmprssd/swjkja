@@ -1,1 +1,21 @@
-/target
+# Whitelist: only the kinds of files this project writes can be committed, so game
+# data (.pk3, .bsp, textures, sounds, saves) never ends up in the repository by
+# accident. To track a new kind of file, add it here deliberately.
+*
+!*/
+/target/
+
+!.gitignore
+!.local-ci
+!LICENSE
+!Cargo.lock
+!*.toml
+!*.rs
+!*.md
+!*.sh
+!*.py
+
+# Benchmark inputs we made ourselves: the config that records the demo, and the
+# demo (a recording of our own bot match, no game assets inside).
+!bench/reference/*.cfg
+!bench/demos/*.dm_26

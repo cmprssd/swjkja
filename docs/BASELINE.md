@@ -2,7 +2,8 @@
 
 The numbers every milestone has to beat, measured on the reference engine. Re-measure
 with `bench/baseline.sh` (after `bench/build-openjk.sh`); it opens a game window for
-about 30 seconds per run.
+about 30 seconds per run, so it refuses to start while the PC is in use (input in
+the last 2 minutes) unless `SWJKJA_ALLOW_WINDOW=1` is set.
 
 ## Reference
 
