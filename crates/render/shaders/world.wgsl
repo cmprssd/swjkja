@@ -17,6 +17,18 @@ struct Frame {
     // x: the texture slot of the depth copy (for flares), y: the view width,
     // z: the view height.
     misc: vec4<u32>,
+    // xyz: the view's forward axis.
+    view_forward: vec4<f32>,
+}
+
+// A map fog (fog.rs FogVolume): R_LoadFogs's colorInt, tcScale and surface plane.
+struct Fog {
+    // 0-255.
+    color: vec4<f32>,
+    // xyz: normal into the fog, w: surface[3]; zero for the global fog.
+    surface: vec4<f32>,
+    // x: tcScale.
+    params: vec4<f32>,
 }
 
 struct Stage {
@@ -44,6 +56,8 @@ struct Stage {
     // plane (the original's glDepthRange(1, 1)).
     // z: 1 for flares: lm23.xyz holds the flare's origin, tested against the depth
     // copy (RB_TestZFlare).
+    // w: bits 0-15 the surface's fog number (0 none, else 1-based index into fogs),
+    // bits 16-17 adjustColorsForFog (0 none, 1 rgb, 2 alpha, 3 rgba).
     fog: vec4<u32>,
 }
 
@@ -61,6 +75,32 @@ var<immediate> push: Push;
 @group(0) @binding(2) var clamp_sampler: sampler;
 @group(1) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(1) var<storage, read> stages: array<Stage>;
+@group(1) @binding(2) var<storage, read> fogs: array<Fog>;
+
+// RB_CalcFogTexCoords (fog.rs fog_tex_coords) for fog number `n`.
+fn fog_tex_coords(n: u32, v: vec3<f32>) -> vec2<f32> {
+    let fog = fogs[n];
+    let eye = frame.view_origin.xyz;
+    let forward = frame.view_forward.xyz;
+    let eye_t = dot(eye, fog.surface.xyz) - fog.surface.w;
+    let s = (dot(v, forward) - dot(eye, forward)) * fog.params.x + 1.0 / 512.0;
+    var t = dot(v, fog.surface.xyz) - fog.surface.w;
+    if eye_t < 0.0 {
+        if t < 1.0 { t = 1.0 / 32.0; } else { t = 1.0 / 32.0 + 30.0 / 32.0 * t / (t - eye_t); }
+    } else {
+        if t < 0.0 { t = 1.0 / 32.0; } else { t = 31.0 / 32.0; }
+    }
+    return vec2<f32>(s, t);
+}
+
+// R_FogFactor (fog.rs fog_factor).
+fn fog_factor(st: vec2<f32>) -> f32 {
+    var s = st.x - 1.0 / 512.0;
+    if s < 0.0 || st.y < 1.0 / 32.0 { return 0.0; }
+    if st.y < 31.0 / 32.0 { s *= (st.y - 1.0 / 32.0) / (30.0 / 32.0); }
+    s = min(s * 8.0, 1.0);
+    return sqrt(floor(s * 255.0) / 255.0);
+}
 
 // Generator values, as the shader crate numbers them.
 const RGB_BAD: u32 = 0u;
@@ -156,6 +196,8 @@ fn tc_gen(s: Stage, bundle: u32, xyz: vec3<f32>, normal: vec3<f32>, st: vec2<f32
         case 3u: {
             return vec2<f32>(dot(xyz, s.tc_vector[bundle * 2u].xyz), dot(xyz, s.tc_vector[bundle * 2u + 1u].xyz));
         }
+        // TCGEN_FOG.
+        case 4u: { return fog_tex_coords(s.fog.w & 0xffffu, xyz); }
         default: { return st; }
     }
 }
@@ -233,6 +275,8 @@ fn colors(s: Stage, xyz: vec3<f32>, vertex: vec4<f32>) -> vec4<f32> {
         case 9u, 10u: { c = vec4<f32>(0.0, 0.0, 0.0, 255.0); }
         case 11u: { c = s.constant; }
         case 12u: { c = s.style; }
+        // CGEN_FOG: the fog's colorInt (alpha included).
+        case 13u: { c = fogs[s.fog.w & 0xffffu].color; }
         default: {}
     }
     switch s.modes.y {
@@ -309,7 +353,17 @@ fn vs_main(
     }
     out.tc0 = tc_mods(s, 0u, world_xyz, tc_gen(s, 0u, world_xyz, normal, st, lm01, lm23));
     out.tc1 = tc_mods(s, 1u, world_xyz, tc_gen(s, 1u, world_xyz, normal, st, lm01, lm23));
-    out.color = colors(s, xyz, round(color * 255.0)) / 255.0;
+    var c = colors(s, xyz, round(color * 255.0));
+    // adjustColorsForFog on a fogged surface: fade by the fog's opacity
+    // (RB_CalcModulate*ByFog), in bytes as the original.
+    let fog_num = s.fog.w & 0xffffu;
+    let adjust = (s.fog.w >> 16u) & 3u;
+    if fog_num != 0u && adjust != 0u {
+        let f = 1.0 - fog_factor(fog_tex_coords(fog_num, world_xyz));
+        if adjust == 1u || adjust == 3u { c = vec4<f32>(floor(c.rgb * f), c.a); }
+        if adjust == 2u || adjust == 3u { c.a = floor(c.a * f); }
+    }
+    out.color = c / 255.0;
     return out;
 }
 
