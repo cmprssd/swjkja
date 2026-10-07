@@ -5,6 +5,7 @@ pub mod camera;
 pub mod gpu;
 pub mod pipeline;
 pub mod resource;
+pub mod sky;
 pub mod texture;
 pub mod world;
 

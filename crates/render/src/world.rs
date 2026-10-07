@@ -3,8 +3,9 @@
 //! original's order (materials by sort value, then by creation order; each material's
 //! surfaces stage by stage).
 //!
-//! Not yet: sky, fog, deforms, light-style animation, distance LOD for patches,
-//! visibility culling, video maps (drawn white), noise waves (their base value).
+//! Not yet: fog volumes (brush fog), deforms, light-style animation, distance LOD
+//! for patches, visibility culling, video maps (drawn white), noise waves (their
+//! base value), fog on sky layers.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -27,6 +28,7 @@ use crate::camera::Camera;
 use crate::gpu::{Gpu, Result};
 use crate::pipeline::{Pipeline, State, spirv};
 use crate::resource::Buffer;
+use crate::sky;
 use crate::texture::{Texture, TextureSet};
 
 #[repr(C)]
@@ -534,8 +536,118 @@ impl WorldRenderer {
         let mut draw_materials = Vec::new();
         for &m in &order {
             let material = &materials[m];
-            // Not drawn yet: skies and fog volumes.
-            if material.sky.is_some() || material.stages.is_empty() {
+            if let Some(sky) = &material.sky {
+                // RB_StageIteratorSky: the outer box, then the cloud layers drawn with
+                // the material's stages; the sky surfaces themselves are not drawn.
+                // (The original draws only the box blocks behind visible sky polygons;
+                // this draws the whole box, which differs only through holes in a map.)
+                let sky_state = State {
+                    blend: None,
+                    depth_write: false,
+                    depth_compare: Some(vk::CompareOp::GREATER_OR_EQUAL),
+                    cull: vk::CullModeFlags::NONE,
+                    front_face: FRONT_FACE,
+                    depth_bias: false,
+                    write_mask: vk::ColorComponentFlags::R
+                        | vk::ColorComponentFlags::G
+                        | vk::ColorComponentFlags::B,
+                };
+                let pipeline_for = |st: State, states: &mut Vec<State>| {
+                    states.iter().position(|x| *x == st).unwrap_or_else(|| {
+                        states.push(st);
+                        states.len() - 1
+                    })
+                };
+                let push_sky = |verts: &[sky::SkyVertex],
+                                idx: &[u32],
+                                vertices: &mut Vec<Vertex>,
+                                indexes: &mut Vec<u32>| {
+                    let base = vertices.len() as u32;
+                    vertices.extend(verts.iter().map(|&(xyz, st)| Vertex {
+                        xyz,
+                        normal: [0.0; 3],
+                        st,
+                        lightmap: [[0.0; 2]; 4],
+                        color: [255; 4],
+                    }));
+                    let first = indexes.len() as u32;
+                    indexes.extend(idx.iter().map(|&i| base + i));
+                    (first, idx.len() as u32)
+                };
+                // The outer box, unless its first image is missing (then the original
+                // has the default image there and skips the box).
+                if let Some(outer) = &sky.outer_box {
+                    let mut slots: Vec<Option<Image>> = Vec::new();
+                    for suffix in sky::SIDE_SUFFIXES {
+                        let name = format!("{outer}_{suffix}");
+                        let image = swjkja_image::load(vfs, &name)
+                            .is_ok()
+                            .then_some(Image::Named { name, clamp: true });
+                        // A missing side uses the previous side's image.
+                        let image = image.or_else(|| slots.last().cloned().flatten());
+                        slots.push(image);
+                    }
+                    if slots[0].is_some() {
+                        let mut stage = GpuStage::zeroed();
+                        stage.modes = [1, 0, 0, 0]; // identity lighting: tr.identityLight
+                        stage.funcs[2] = 1; // clamp
+                        stage.fog[1] = 1;
+                        gpu_stages.push(stage);
+                        let gpu_stage = gpu_stages.len() as u32 - 1;
+                        let pipeline = pipeline_for(sky_state, &mut states);
+                        for (axis, image) in slots.iter().enumerate() {
+                            let (verts, idx) = sky::box_side(axis);
+                            let (first_index, index_count) =
+                                push_sky(&verts, &idx, &mut vertices, &mut indexes);
+                            let slot = slots_for(image.as_ref().unwrap(), textures)?;
+                            draw_materials.push(DrawMaterial {
+                                first_index,
+                                index_count,
+                                stages: vec![DrawStage {
+                                    gpu_stage,
+                                    pipeline,
+                                    slots: [slot, Slots::One(white)],
+                                }],
+                            });
+                        }
+                    }
+                }
+                if sky.cloud_height != 0.0 && !material.stages.is_empty() {
+                    let first_index = indexes.len() as u32;
+                    for axis in 0..5 {
+                        let (verts, idx) = sky::cloud_side(axis, sky.cloud_height);
+                        push_sky(&verts, &idx, &mut vertices, &mut indexes);
+                    }
+                    let index_count = indexes.len() as u32 - first_index;
+                    let mut stages = Vec::new();
+                    for st in &material.stages {
+                        let mut g = gpu_stage(st, material.multitexture);
+                        g.fog[1] = 1;
+                        gpu_stages.push(g);
+                        let state = State {
+                            cull: vk::CullModeFlags::NONE,
+                            ..state(material, st)
+                        };
+                        let slot1 = match &st.bundle2 {
+                            Some(b) => slots_for(&b.image, textures)?,
+                            None => Slots::One(white),
+                        };
+                        stages.push(DrawStage {
+                            gpu_stage: gpu_stages.len() as u32 - 1,
+                            pipeline: pipeline_for(state, &mut states),
+                            slots: [slots_for(&st.bundle.image, textures)?, slot1],
+                        });
+                    }
+                    draw_materials.push(DrawMaterial {
+                        first_index,
+                        index_count,
+                        stages,
+                    });
+                }
+                continue;
+            }
+            // Not drawn yet: fog volumes.
+            if material.stages.is_empty() {
                 continue;
             }
             const FORCESIGHT: u32 = 0x200_0000;
