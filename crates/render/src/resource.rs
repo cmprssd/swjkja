@@ -239,10 +239,89 @@ pub fn transition(
     };
 }
 
-/// An offscreen colour (RGBA8) and depth target that can be read back to the CPU.
+/// An offscreen colour (RGBA8) and depth target that can be read back to the CPU,
+/// plus a sampleable copy of the depth (for flares' occlusion test).
 pub struct Target {
     pub color: Image,
     pub depth: Image,
+    /// Depth as it was at the last [`Frame::copy_depth`].
+    pub depth_copy: Image,
+}
+
+/// One frame being recorded into a [`Target`].
+pub struct Frame<'a> {
+    pub cmd: vk::CommandBuffer,
+    gpu: &'a Gpu,
+    target: &'a Target,
+}
+
+impl Frame<'_> {
+    /// Pauses rendering, copies the depth buffer to [`Target::depth_copy`] and resumes
+    /// with the colour and depth so far, like the original reading the depth buffer
+    /// in the middle of a frame.
+    pub fn copy_depth(&mut self) {
+        let (gpu, t, cmd) = (self.gpu, self.target, self.cmd);
+        let depth = vk::ImageAspectFlags::DEPTH;
+        unsafe {
+            gpu.device.cmd_end_rendering(cmd);
+            transition(
+                gpu,
+                cmd,
+                t.depth.image,
+                depth,
+                vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            );
+            transition(
+                gpu,
+                cmd,
+                t.depth_copy.image,
+                depth,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            );
+            let layers = vk::ImageSubresourceLayers {
+                aspect_mask: depth,
+                mip_level: 0,
+                base_array_layer: 0,
+                layer_count: 1,
+            };
+            gpu.device.cmd_copy_image(
+                cmd,
+                t.depth.image,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                t.depth_copy.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[vk::ImageCopy {
+                    src_subresource: layers,
+                    dst_subresource: layers,
+                    extent: vk::Extent3D {
+                        width: t.depth.extent.width,
+                        height: t.depth.extent.height,
+                        depth: 1,
+                    },
+                    ..Default::default()
+                }],
+            );
+            transition(
+                gpu,
+                cmd,
+                t.depth_copy.image,
+                depth,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            );
+            transition(
+                gpu,
+                cmd,
+                t.depth.image,
+                depth,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+            );
+            t.begin(gpu, cmd, None);
+        }
+    }
 }
 
 impl Target {
@@ -251,7 +330,7 @@ impl Target {
 
     pub fn new(gpu: &Arc<Gpu>, width: u32, height: u32) -> Result<Self> {
         let extent = vk::Extent2D { width, height };
-        Ok(Self {
+        let target = Self {
             color: Image::new(
                 gpu,
                 extent,
@@ -263,22 +342,110 @@ impl Target {
                 gpu,
                 extent,
                 Self::DEPTH_FORMAT,
-                vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
                 vk::ImageAspectFlags::DEPTH,
             )?,
-        })
+            depth_copy: Image::new(
+                gpu,
+                extent,
+                Self::DEPTH_FORMAT,
+                vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+                vk::ImageAspectFlags::DEPTH,
+            )?,
+        };
+        // The copy starts out at the far plane (depth 0) and stays readable.
+        gpu.submit_and_wait(|cmd| unsafe {
+            let depth = vk::ImageAspectFlags::DEPTH;
+            transition(
+                gpu,
+                cmd,
+                target.depth_copy.image,
+                depth,
+                vk::ImageLayout::UNDEFINED,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            );
+            gpu.device.cmd_clear_depth_stencil_image(
+                cmd,
+                target.depth_copy.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &vk::ClearDepthStencilValue {
+                    depth: 0.0,
+                    stencil: 0,
+                },
+                &[subresource(depth)],
+            );
+            transition(
+                gpu,
+                cmd,
+                target.depth_copy.image,
+                depth,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            );
+        })?;
+        Ok(target)
+    }
+
+    /// Begins rendering into the target: clearing to `clear` (and depth to 0) if
+    /// given, else keeping what is there.
+    fn begin(&self, gpu: &Gpu, cmd: vk::CommandBuffer, clear: Option<[f32; 4]>) {
+        let extent = self.color.extent;
+        let load = if clear.is_some() {
+            vk::AttachmentLoadOp::CLEAR
+        } else {
+            vk::AttachmentLoadOp::LOAD
+        };
+        let color = [vk::RenderingAttachmentInfo::default()
+            .image_view(self.color.view)
+            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .load_op(load)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .clear_value(vk::ClearValue {
+                color: vk::ClearColorValue {
+                    float32: clear.unwrap_or_default(),
+                },
+            })];
+        let depth = vk::RenderingAttachmentInfo::default()
+            .image_view(self.depth.view)
+            .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+            .load_op(load)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .clear_value(vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue {
+                    depth: 0.0,
+                    stencil: 0,
+                },
+            });
+        let area = vk::Rect2D {
+            offset: vk::Offset2D::default(),
+            extent,
+        };
+        unsafe {
+            gpu.device.cmd_begin_rendering(
+                cmd,
+                &vk::RenderingInfo::default()
+                    .render_area(area)
+                    .layer_count(1)
+                    .color_attachments(&color)
+                    .depth_attachment(&depth),
+            );
+            let viewport = [vk::Viewport {
+                x: 0.0,
+                y: 0.0,
+                width: extent.width as f32,
+                height: extent.height as f32,
+                min_depth: 0.0,
+                max_depth: 1.0,
+            }];
+            gpu.device.cmd_set_viewport(cmd, 0, &viewport);
+            gpu.device.cmd_set_scissor(cmd, 0, &[area]);
+        }
     }
 
     /// Renders into the target: clears it to `clear` (RGBA, 0-1) and depth 0 (depth is
-    /// reversed: 1 is nearest, 0 infinitely far), runs
-    /// `draw` inside dynamic rendering, and leaves the colour ready to read back.
-    pub fn render(
-        &self,
-        gpu: &Gpu,
-        clear: [f32; 4],
-        draw: impl FnOnce(vk::CommandBuffer),
-    ) -> Result<()> {
-        let extent = self.color.extent;
+    /// reversed: 1 is nearest, 0 infinitely far), runs `draw`, and leaves the colour
+    /// ready to read back.
+    pub fn render(&self, gpu: &Gpu, clear: [f32; 4], draw: impl FnOnce(&mut Frame)) -> Result<()> {
         gpu.submit_and_wait(|cmd| unsafe {
             transition(
                 gpu,
@@ -296,54 +463,12 @@ impl Target {
                 vk::ImageLayout::UNDEFINED,
                 vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
             );
-            let color = [vk::RenderingAttachmentInfo::default()
-                .image_view(self.color.view)
-                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                .load_op(vk::AttachmentLoadOp::CLEAR)
-                .store_op(vk::AttachmentStoreOp::STORE)
-                .clear_value(vk::ClearValue {
-                    color: vk::ClearColorValue { float32: clear },
-                })];
-            let depth = vk::RenderingAttachmentInfo::default()
-                .image_view(self.depth.view)
-                .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
-                .load_op(vk::AttachmentLoadOp::CLEAR)
-                .store_op(vk::AttachmentStoreOp::DONT_CARE)
-                .clear_value(vk::ClearValue {
-                    depth_stencil: vk::ClearDepthStencilValue {
-                        depth: 0.0,
-                        stencil: 0,
-                    },
-                });
-            gpu.device.cmd_begin_rendering(
+            self.begin(gpu, cmd, Some(clear));
+            draw(&mut Frame {
                 cmd,
-                &vk::RenderingInfo::default()
-                    .render_area(vk::Rect2D {
-                        offset: vk::Offset2D::default(),
-                        extent,
-                    })
-                    .layer_count(1)
-                    .color_attachments(&color)
-                    .depth_attachment(&depth),
-            );
-            let viewport = [vk::Viewport {
-                x: 0.0,
-                y: 0.0,
-                width: extent.width as f32,
-                height: extent.height as f32,
-                min_depth: 0.0,
-                max_depth: 1.0,
-            }];
-            gpu.device.cmd_set_viewport(cmd, 0, &viewport);
-            gpu.device.cmd_set_scissor(
-                cmd,
-                0,
-                &[vk::Rect2D {
-                    offset: vk::Offset2D::default(),
-                    extent,
-                }],
-            );
-            draw(cmd);
+                gpu,
+                target: self,
+            });
             gpu.device.cmd_end_rendering(cmd);
             transition(
                 gpu,

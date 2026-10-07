@@ -10,10 +10,13 @@ struct Frame {
     view_proj: mat4x4<f32>,
     // xyz: the view origin.
     view_origin: vec4<f32>,
-    // x: shader time in seconds, y: tr.identityLight, z: global fog density.
+    // x: shader time in seconds, y: tr.identityLight, z: global fog density, w: r_znear.
     params: vec4<f32>,
     // The global fog's colour.
     fog_color: vec4<f32>,
+    // x: the texture slot of the depth copy (for flares), y: the view width,
+    // z: the view height.
+    misc: vec4<u32>,
 }
 
 struct Stage {
@@ -39,6 +42,8 @@ struct Stage {
     // x: GL fog for this stage: 0 none, 1 towards the fog colour, 2 black, 3 white.
     // y: 1 for sky geometry: positions are offsets from the viewer, drawn at the far
     // plane (the original's glDepthRange(1, 1)).
+    // z: 1 for flares: lm23.xyz holds the flare's origin, tested against the depth
+    // copy (RB_TestZFlare).
     fog: vec4<u32>,
 }
 
@@ -251,6 +256,25 @@ fn colors(s: Stage, xyz: vec3<f32>, vertex: vec4<f32>) -> vec4<f32> {
     return c;
 }
 
+// RB_TestZFlare: on screen, and no more than 24 units behind what the depth buffer
+// held when flares started drawing.
+fn flare_visible(origin: vec3<f32>) -> bool {
+    let clip = frame.view_proj * vec4<f32>(origin, 1.0);
+    // The original's near/far test: here, in front of the near plane.
+    if clip.w <= frame.params.w || abs(clip.x) >= clip.w || abs(clip.y) >= clip.w {
+        return false;
+    }
+    let size = vec2<f32>(f32(frame.misc.y), f32(frame.misc.z));
+    let pixel = vec2<i32>((clip.xy / clip.w * 0.5 + 0.5) * size);
+    let depth = textureLoad(textures[frame.misc.x], pixel, 0).r;
+    // Reversed depth is z_near / distance; 0 is nothing drawn.
+    var buffer_distance = 1.0e30;
+    if depth > 0.0 {
+        buffer_distance = frame.params.w / depth;
+    }
+    return clip.w - buffer_distance < 24.0;
+}
+
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
     @location(0) tc0: vec2<f32>,
@@ -279,6 +303,9 @@ fn vs_main(
     out.eye_z = out.position.w;
     if s.fog.y == 1u {
         out.position.z = 0.0; // reversed depth: 0 is infinitely far
+    }
+    if s.fog.z == 1u && !flare_visible(lm23.xyz) {
+        out.position = vec4<f32>(2.0, 2.0, 2.0, 1.0); // outside the view: not drawn
     }
     out.tc0 = tc_mods(s, 0u, world_xyz, tc_gen(s, 0u, world_xyz, normal, st, lm01, lm23));
     out.tc1 = tc_mods(s, 1u, world_xyz, tc_gen(s, 1u, world_xyz, normal, st, lm01, lm23));
