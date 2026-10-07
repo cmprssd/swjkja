@@ -11,6 +11,10 @@ use crate::resource::Target;
 pub mod spirv {
     pub const FLAT_VERT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/flat.vert.spv"));
     pub const FLAT_FRAG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/flat.frag.spv"));
+    pub const WORLD_PREVIEW_VERT: &[u8] =
+        include_bytes!(concat!(env!("OUT_DIR"), "/world_preview.vert.spv"));
+    pub const WORLD_PREVIEW_FRAG: &[u8] =
+        include_bytes!(concat!(env!("OUT_DIR"), "/world_preview.frag.spv"));
 }
 
 fn shader_module(gpu: &Gpu, spirv: &[u8]) -> Result<vk::ShaderModule> {
@@ -33,8 +37,8 @@ pub struct Pipeline {
 
 impl Pipeline {
     /// A triangle-list pipeline drawing into a [`Target`], with depth test and write,
-    /// no blending and no culling, and push constants of `push_size` bytes for both
-    /// stages.
+    /// no blending and no culling, push constants of `push_size` bytes for both
+    /// stages, and the given descriptor set layouts.
     pub fn new(
         gpu: &Arc<Gpu>,
         vert: &[u8],
@@ -42,6 +46,7 @@ impl Pipeline {
         stride: u32,
         attributes: &[Attribute],
         push_size: u32,
+        set_layouts: &[vk::DescriptorSetLayout],
     ) -> Result<Self> {
         let d = &gpu.device;
         let (vs, fs) = (shader_module(gpu, vert)?, shader_module(gpu, frag)?);
@@ -50,14 +55,14 @@ impl Pipeline {
             offset: 0,
             size: push_size,
         }];
-        let layout =
-            unsafe {
-                d.create_pipeline_layout(
-                    &vk::PipelineLayoutCreateInfo::default()
-                        .push_constant_ranges(if push_size > 0 { &ranges } else { &[] }),
-                    None,
-                )?
-            };
+        let layout = unsafe {
+            d.create_pipeline_layout(
+                &vk::PipelineLayoutCreateInfo::default()
+                    .push_constant_ranges(if push_size > 0 { &ranges } else { &[] })
+                    .set_layouts(set_layouts),
+                None,
+            )?
+        };
         let stages = [
             vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::VERTEX)
@@ -101,7 +106,7 @@ impl Pipeline {
         let depth = vk::PipelineDepthStencilStateCreateInfo::default()
             .depth_test_enable(true)
             .depth_write_enable(true)
-            .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL);
+            .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL); // reversed depth
         let blend_attachments = [vk::PipelineColorBlendAttachmentState::default()
             .color_write_mask(vk::ColorComponentFlags::RGBA)];
         let blend =

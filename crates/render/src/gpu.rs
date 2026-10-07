@@ -56,8 +56,8 @@ pub struct Gpu {
 
 impl Gpu {
     /// A device for rendering without a window (offscreen). Requires Vulkan 1.3 with
-    /// dynamic rendering and synchronization2, which every target (Intel HD 600
-    /// series and newer, Steam Deck, lavapipe) has. `SWJKJA_GPU` picks a device whose
+    /// dynamic rendering and synchronization2, and partially bound descriptors, which
+    /// every target (Intel HD 600 series and newer, Steam Deck, lavapipe) has. `SWJKJA_GPU` picks a device whose
     /// name contains the given text.
     pub fn new_headless() -> Result<Arc<Self>> {
         let entry =
@@ -82,6 +82,17 @@ impl Gpu {
             let name = unsafe { CStr::from_ptr(props.device_name.as_ptr()) }
                 .to_string_lossy()
                 .into_owned();
+            // The texture array needs this many images per stage; drivers allow far
+            // more in update-after-bind sets (the Intel HD 630: 200 normally, 1048576
+            // update-after-bind).
+            let mut p12 = vk::PhysicalDeviceVulkan12Properties::default();
+            let mut props2 = vk::PhysicalDeviceProperties2::default().push_next(&mut p12);
+            unsafe { instance.get_physical_device_properties2(physical, &mut props2) };
+            if p12.max_per_stage_descriptor_update_after_bind_sampled_images
+                < crate::texture::MAX_TEXTURES
+            {
+                continue;
+            }
             if props.api_version < vk::API_VERSION_1_3
                 || wanted
                     .as_ref()
@@ -109,7 +120,10 @@ impl Gpu {
         candidates.sort_by_key(|c| c.0);
         let Some((kind, physical, queue_family, name)) = candidates.into_iter().next() else {
             unsafe { instance.destroy_instance(None) };
-            return Err(Error("no Vulkan 1.3 device with a graphics queue".into()));
+            return Err(Error(
+                "no Vulkan 1.3 device with a graphics queue and update-after-bind texture arrays"
+                    .into(),
+            ));
         };
 
         let priorities = [1.0];
@@ -119,12 +133,17 @@ impl Gpu {
         let mut features13 = vk::PhysicalDeviceVulkan13Features::default()
             .dynamic_rendering(true)
             .synchronization2(true);
+        // One big texture array, indexed by a push constant; unused slots stay empty.
+        let mut features12 = vk::PhysicalDeviceVulkan12Features::default()
+            .descriptor_binding_partially_bound(true)
+            .descriptor_binding_sampled_image_update_after_bind(true);
         let device = unsafe {
             instance.create_device(
                 physical,
                 &vk::DeviceCreateInfo::default()
                     .queue_create_infos(&queue_info)
-                    .push_next(&mut features13),
+                    .push_next(&mut features13)
+                    .push_next(&mut features12),
                 None,
             )?
         };

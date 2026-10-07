@@ -107,3 +107,18 @@ When `R_StitchPatches` walks an edge backwards, it passes the LOD error at index
 reads whatever memory follows. swjkja-world uses the entry at `k - 1` in that one case
 (the value the code evidently meant) and `k + 1` everywhere else, as the original
 does. It only affects at what distance one inserted vertex row may be dropped.
+
+## 2026-10-07: Renderer conventions (decided by Claude, pending review)
+
+- **Reversed, infinite depth**: depth is `z_near / distance` (1 at the near plane,
+  0 at infinity), compared with greater-or-equal. More precise than the original's
+  near/far range over big maps; it changes no visible ordering by itself.
+- **The camera follows the original exactly**: `AngleVectors` axes, horizontal FOV
+  fixed (`cg_fov`, 80) and the vertical one from the aspect ratio (cgame `CalcFov`;
+  OpenJK's optional widescreen adjustment is off by default and not used).
+- **One texture array for everything**, in an update-after-bind descriptor set: the
+  Intel HD 630's driver allows only 200 images per shader stage in a normal set but
+  1,048,576 in an update-after-bind one. Devices without that are refused at start-up
+  with a clear message instead of crashing in the driver.
+- **naga's y flip is off**: shaders work in Vulkan's clip space directly. A GPU test
+  checks that up is at the top and left at the left.

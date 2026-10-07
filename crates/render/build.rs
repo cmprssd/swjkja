@@ -23,6 +23,12 @@ fn main() {
         .validate(&module)
         .unwrap_or_else(|e| panic!("{}: {}", path.display(), e.emit_to_string(&source)));
         let stem = path.file_stem().unwrap().to_str().unwrap();
+        // Shaders already work in Vulkan's clip space (y down); naga would otherwise flip
+        // y, converting from WebGPU's convention.
+        let mut spv_options = naga::back::spv::Options::default();
+        spv_options
+            .flags
+            .remove(naga::back::spv::WriterFlags::ADJUST_COORDINATE_SPACE);
         for (stage, entry, suffix) in [
             (naga::ShaderStage::Vertex, "vs_main", "vert"),
             (naga::ShaderStage::Fragment, "fs_main", "frag"),
@@ -30,7 +36,7 @@ fn main() {
             let words = naga::back::spv::write_vec(
                 &module,
                 &info,
-                &naga::back::spv::Options::default(),
+                &spv_options,
                 Some(&naga::back::spv::PipelineOptions {
                     shader_stage: stage,
                     entry_point: entry.into(),
