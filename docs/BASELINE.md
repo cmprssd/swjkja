@@ -31,6 +31,25 @@ Intel Core i5-7400T (4 cores, 2.4 GHz), Intel HD Graphics 630 (driver
   and textures until the first frame. The cold run is the first after building; warm
   runs reuse the OS file cache.
 
+## Reading the retail assets (swjkja-fs), 2026-10-07
+
+`cargo run --release -p swjkja-fs --example read_all -- <GameData> <threads>` reads
+and checks (CRC-32) every one of the 22,775 files: 3,049 MB uncompressed from the
+1.2 GB of `.pk3` archives. Indexing all four archives takes 30-170 ms.
+
+| Archives on | 1 thread | 4 threads |
+|-------------|----------|-----------|
+| Internal NVMe (C:) | 9.0, 9.7 s | 4.6, 5.1 s |
+| USB drive (D:, Sabrent) | 9.7, 20.4 s | 12.2, 14.3 s |
+
+- From NVMe, one thread is limited by decompression (about 330 MB/s of output on
+  this 2.4 GHz CPU); four threads give about 2x, not 4x.
+- From the USB drive, parallel reads at scattered offsets are slower than one
+  thread, and the 7.9 GB of RAM cannot keep all 1.2 GB cached between runs.
+- **So the loader should read each archive in offset order on one thread and spread
+  only the decompression over the cores.** Loading a map needs a few hundred MB, not
+  all 3 GB; this is the full-read upper bound.
+
 ## Not measured yet
 
 - **Frame-time spikes** (1% lows): `timedemo` reports only the average. Needs
