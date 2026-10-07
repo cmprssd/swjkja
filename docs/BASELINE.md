@@ -181,6 +181,12 @@ These are still single moments: the reference shots were taken at an unknown gam
 time, so animated stages (waves, scrolls, animMaps) can only match by chance; the
 next reference capture should pin the time.
 
+Fog volumes (`RB_FogPass`, the fog generators and the fog fade of blended stages)
+leave these eleven views unchanged: none of them shows a fog volume. Seven
+multiplayer maps have one (`fogs <GameData>` lists them with their bounds: ctf1,
+duel2, duel3, duel7, duel9, ffa1, ffa2), but no reference shot shows one yet, so
+fog volumes are checked by unit tests and by eye only.
+
 ## Renderer frame times (swjkja-render), 2026-10-07
 
 `bench_world <GameData> bench/reference/views.txt` renders each reference view 300

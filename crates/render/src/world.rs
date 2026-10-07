@@ -3,7 +3,7 @@
 //! original's order (materials by sort value, then by creation order; each material's
 //! surfaces stage by stage).
 //!
-//! Not yet: fog volumes (brush fog), normal and text deforms, light-style animation, distance LOD
+//! Not yet: normal and text deforms, light-style animation, distance LOD
 //! for patches, visibility culling, video maps (drawn white), noise waves (their
 //! base value), fog on sky layers.
 
@@ -16,7 +16,8 @@ use gpu_allocator::MemoryLocation;
 use swjkja_bsp::Bsp;
 use swjkja_fs::Vfs;
 use swjkja_shader::resolve::{
-    FogColor, FogPass, Image, Images, Material, MaterialStage, TexEnv, resolve_map_shader,
+    FogAdjust, FogColor, FogPass, Image, Images, Material, MaterialStage, TexEnv,
+    resolve_map_shader,
 };
 use swjkja_shader::{
     AlphaGen, AlphaTest, Cull, Deform, DepthTest, DstBlend, Func, RgbGen, ShaderText, SrcBlend,
@@ -26,6 +27,7 @@ use swjkja_world::{Geometry, World};
 
 use crate::camera::Camera;
 use crate::deform;
+use crate::fog;
 use crate::gpu::{Gpu, Result};
 use crate::pipeline::{Pipeline, State, spirv};
 use crate::resource::{Buffer, Frame};
@@ -51,6 +53,16 @@ struct FrameData {
     params: [f32; 4],
     fog_color: [f32; 4],
     misc: [u32; 4],
+    view_forward: [f32; 4],
+}
+
+/// A map fog for the shader's `fogs` table (see `Fog` in world.wgsl).
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuFog {
+    color: [f32; 4],
+    surface: [f32; 4],
+    params: [f32; 4],
 }
 
 /// Mirrors `Stage` in shaders/world.wgsl (std430, 480 bytes).
@@ -175,6 +187,7 @@ pub struct WorldRenderer {
     dynamic_indexes: Buffer,
     frame_buffer: Buffer,
     _stage_buffer: Buffer,
+    _fog_buffer: Buffer,
     frame_layout: vk::DescriptorSetLayout,
     frame_pool: vk::DescriptorPool,
     frame_set: vk::DescriptorSet,
@@ -490,7 +503,7 @@ impl WorldRenderer {
         // parameters, from its shader's fogParms (red at 250 units if it has none, as
         // in R_LoadFogs).
         let global_fog = bsp.fogs.iter().position(|f| f.brush == -1).map(|i| i + 1);
-        let fog_parms = global_fog.map(|n| {
+        let parms_of = |n: usize| {
             let name = swjkja_shader::resolve::strip_extension(bsp.fogs[n - 1].shader());
             match shaders.parse(name) {
                 Some(Ok(def)) if def.fog_parms.is_some() => def.fog_parms.unwrap(),
@@ -499,7 +512,18 @@ impl WorldRenderer {
                     depth_for_opaque: 250.0,
                 },
             }
-        });
+        };
+        let fog_parms = global_fog.map(parms_of);
+        // The fogs table, indexed by fog number (entry 0 unused).
+        let mut gpu_fogs = vec![GpuFog::zeroed()];
+        for n in 1..=bsp.fogs.len() {
+            let f = fog::FogVolume::load(bsp, n - 1, &parms_of(n));
+            gpu_fogs.push(GpuFog {
+                color: f.color.map(f32::from),
+                surface: f.surface,
+                params: [f.tc_scale, 0.0, 0.0, 0.0],
+            });
+        }
 
         // Textures.
         let default_image: Vec<u8> = (0..16 * 16)
@@ -514,6 +538,13 @@ impl WorldRenderer {
             .collect();
         let default_slot = textures.add(Texture::new(gpu, 16, 16, &default_image, true)?);
         let white = textures.add(Texture::new(gpu, 8, 8, &[255; 8 * 8 * 4], true)?);
+        let fog_image = textures.add(Texture::new(
+            gpu,
+            fog::FOG_S as u32,
+            fog::FOG_T as u32,
+            &fog::fog_image(),
+            false,
+        )?);
         let lightmaps: Vec<u32> = bsp
             .lightmaps
             .chunks(swjkja_bsp::LIGHTMAP_BYTES)
@@ -586,6 +617,11 @@ impl WorldRenderer {
                 .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT),
             vk::DescriptorSetLayoutBinding::default()
                 .binding(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(2)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT),
@@ -827,10 +863,12 @@ impl WorldRenderer {
                     dynamic.as_ref().map(|d| &d.source),
                     Some(DynamicSource::Flares { .. })
                 );
-                // GL fog for the global fog on fogged (opaque and see-through) materials.
-                // Fog volumes (brush fog) are not drawn yet.
+                // GL fog for the global fog on fogged (opaque and see-through) materials;
+                // a fog pass for the other fogs (RB_FogPass, with r_drawfog 2).
                 let gl_fog =
                     fog != 0 && Some(fog) == global_fog && material.fog_pass != FogPass::None;
+                let fog_pass =
+                    fog != 0 && Some(fog) != global_fog && material.fog_pass != FogPass::None;
                 let mut stages = Vec::new();
                 for s in &material.stages {
                     let st = state(material, s);
@@ -840,6 +878,13 @@ impl WorldRenderer {
                     });
                     let mut g = gpu_stage(s, material.multitexture);
                     g.fog[2] = u32::from(is_flare);
+                    g.fog[3] = fog as u32
+                        | (match s.fog_adjust {
+                            FogAdjust::None => 0,
+                            FogAdjust::ModulateRgb => 1,
+                            FogAdjust::ModulateAlpha => 2,
+                            FogAdjust::ModulateRgba => 3,
+                        }) << 16;
                     if gl_fog {
                         g.fog[0] = match s.fog_color {
                             FogColor::Fog => 1,
@@ -856,6 +901,42 @@ impl WorldRenderer {
                         gpu_stage: gpu_stages.len() as u32 - 1,
                         pipeline,
                         slots: [slots_for(&s.bundle.image, textures)?, slot1],
+                    });
+                }
+                if fog_pass {
+                    // RB_FogPass: the fog image over the surface, coloured with the fog
+                    // (alpha blended, no depth write; depth equal for opaque materials).
+                    let mut g = GpuStage::zeroed();
+                    g.modes = [13, 1, 0, 0];
+                    g.tcgen = [4, 0, 0, 0];
+                    g.funcs = [0, 0, 1, 0];
+                    g.fog = [0, 0, u32::from(is_flare), fog as u32];
+                    gpu_stages.push(g);
+                    let st = State {
+                        blend: Some((
+                            vk::BlendFactor::SRC_ALPHA,
+                            vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+                        )),
+                        depth_write: false,
+                        depth_compare: Some(if material.fog_pass == FogPass::Equal {
+                            vk::CompareOp::EQUAL
+                        } else {
+                            vk::CompareOp::GREATER_OR_EQUAL
+                        }),
+                        cull: cull_mode(material.cull),
+                        front_face: FRONT_FACE,
+                        depth_bias: material.polygon_offset,
+                        write_mask: vk::ColorComponentFlags::R
+                            | vk::ColorComponentFlags::G
+                            | vk::ColorComponentFlags::B,
+                    };
+                    stages.push(DrawStage {
+                        gpu_stage: gpu_stages.len() as u32 - 1,
+                        pipeline: states.iter().position(|x| *x == st).unwrap_or_else(|| {
+                            states.push(st);
+                            states.len() - 1
+                        }),
+                        slots: [Slots::One(fog_image), Slots::One(white)],
                     });
                 }
                 draw_materials.push(DrawMaterial {
@@ -896,6 +977,11 @@ impl WorldRenderer {
             vk::BufferUsageFlags::STORAGE_BUFFER,
             bytemuck::cast_slice(&gpu_stages),
         )?;
+        let fog_buffer = Buffer::with_data(
+            gpu,
+            vk::BufferUsageFlags::STORAGE_BUFFER,
+            bytemuck::cast_slice(&gpu_fogs),
+        )?;
         let sizes = [
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
@@ -903,7 +989,7 @@ impl WorldRenderer {
             },
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: 1,
+                descriptor_count: 2,
             },
         ];
         let frame_pool = unsafe {
@@ -931,6 +1017,11 @@ impl WorldRenderer {
             offset: 0,
             range: vk::WHOLE_SIZE,
         }];
+        let fog_info = [vk::DescriptorBufferInfo {
+            buffer: fog_buffer.buffer,
+            offset: 0,
+            range: vk::WHOLE_SIZE,
+        }];
         let writes = [
             vk::WriteDescriptorSet::default()
                 .dst_set(frame_set)
@@ -942,6 +1033,11 @@ impl WorldRenderer {
                 .dst_binding(1)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(&ssbo),
+            vk::WriteDescriptorSet::default()
+                .dst_set(frame_set)
+                .dst_binding(2)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(&fog_info),
         ];
         unsafe { d.update_descriptor_sets(&writes, &[]) };
 
@@ -980,6 +1076,7 @@ impl WorldRenderer {
             static_indexes: indexes.clone(),
             frame_buffer,
             _stage_buffer: stage_buffer,
+            _fog_buffer: fog_buffer,
             frame_layout,
             frame_pool,
             frame_set,
@@ -1026,6 +1123,10 @@ impl WorldRenderer {
             params: [time, 1.0, self.fog.map_or(0.0, |f| f.1), camera.z_near],
             fog_color: self.fog.map_or([0.0; 4], |f| [f.0[0], f.0[1], f.0[2], 1.0]),
             misc: [depth_slot, camera.width, camera.height, 0],
+            view_forward: {
+                let f = camera.axes()[0];
+                [f[0], f[1], f[2], 0.0]
+            },
         };
         self.frame_buffer
             .mapped_mut()?
