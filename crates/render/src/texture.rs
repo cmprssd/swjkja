@@ -282,6 +282,25 @@ impl TextureSet {
         slot
     }
 
+    /// Puts an image view the caller owns (such as a target's depth copy, in
+    /// `SHADER_READ_ONLY_OPTIMAL`) into a slot. The view must outlive this set.
+    pub fn add_view(&mut self, view: vk::ImageView) -> u32 {
+        let slot = self.textures.len() as u32;
+        assert!(slot < MAX_TEXTURES, "texture array full");
+        let info = [vk::DescriptorImageInfo::default()
+            .image_view(view)
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+        let write = vk::WriteDescriptorSet::default()
+            .dst_set(self.set)
+            .dst_binding(0)
+            .dst_array_element(slot)
+            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+            .image_info(&info);
+        unsafe { self.gpu.device.update_descriptor_sets(&[write], &[]) };
+        self.textures.push(None);
+        slot
+    }
+
     pub fn len(&self) -> usize {
         self.textures.len()
     }

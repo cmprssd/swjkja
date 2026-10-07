@@ -42,7 +42,8 @@ fn renders_offscreen_with_depth_test() {
     ]);
     let vb = Buffer::with_data(&gpu, vk::BufferUsageFlags::VERTEX_BUFFER, &data).unwrap();
     target
-        .render(&gpu, [0.0, 0.0, 1.0, 1.0], |cmd| unsafe {
+        .render(&gpu, [0.0, 0.0, 1.0, 1.0], |frame| unsafe {
+            let cmd = frame.cmd;
             gpu.device
                 .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
             gpu.device
@@ -119,7 +120,8 @@ fn the_camera_puts_up_at_the_top_and_left_at_the_left() {
     .unwrap();
     let vb = Buffer::with_data(&gpu, vk::BufferUsageFlags::VERTEX_BUFFER, &vertices(&v)).unwrap();
     target
-        .render(&gpu, [0.0, 0.0, 0.0, 1.0], |cmd| unsafe {
+        .render(&gpu, [0.0, 0.0, 0.0, 1.0], |frame| unsafe {
+            let cmd = frame.cmd;
             gpu.device
                 .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
             gpu.device
@@ -193,7 +195,8 @@ fn quake_front_faces_survive_front_sided_culling() {
         )
         .unwrap();
         target
-            .render(&gpu, [0.0, 0.0, 0.0, 1.0], |cmd| unsafe {
+            .render(&gpu, [0.0, 0.0, 0.0, 1.0], |frame| unsafe {
+                let cmd = frame.cmd;
                 gpu.device.cmd_bind_pipeline(
                     cmd,
                     vk::PipelineBindPoint::GRAPHICS,

@@ -159,6 +159,28 @@ With the sky (outer box and cloud layers), 2026-10-07: no view has more than 0.1
 undrawn; `duel5_spawn2` 1.23 (2.0% of pixels off), where the rest is glow sprites
 (`deformVertexes autoSprite`), which come with deforms.
 
+With flares (screen-facing glows with the original's depth test), 2026-10-07:
+`duel5_spawn2` 0.24 with 0.0% of pixels off. **All eleven views are within 0.53 on
+average, with at most 0.1% of pixels off by more than 16.**
+
+| View | Mean difference | Pixels off by > 16 |
+|------|------|------|
+| duel5_down | 0.08 | 0.0% |
+| ctf4_spawn1 | 0.16 | 0.0% |
+| ffa3_down | 0.16 | 0.0% |
+| duel5_spawn1 | 0.20 | 0.0% |
+| ffa3_up | 0.21 | 0.1% |
+| ctf4_spawn2 | 0.23 | 0.0% |
+| duel5_spawn2 | 0.24 | 0.0% |
+| ffa3_spawn2 | 0.27 | 0.0% |
+| ctf4_up | 0.32 | 0.0% |
+| ffa3_spawn3 | 0.40 | 0.1% |
+| ffa3_spawn1 | 0.53 | 0.1% |
+
+These are still single moments: the reference shots were taken at an unknown game
+time, so animated stages (waves, scrolls, animMaps) can only match by chance; the
+next reference capture should pin the time.
+
 ## Not measured yet
 
 - **Frame-time spikes** (1% lows): `timedemo` reports only the average. Needs

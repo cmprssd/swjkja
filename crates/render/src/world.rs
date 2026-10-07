@@ -28,7 +28,7 @@ use crate::camera::Camera;
 use crate::deform;
 use crate::gpu::{Gpu, Result};
 use crate::pipeline::{Pipeline, State, spirv};
-use crate::resource::Buffer;
+use crate::resource::{Buffer, Frame};
 use crate::sky;
 use crate::texture::{Texture, TextureSet};
 
@@ -49,6 +49,7 @@ struct FrameData {
     view_origin: [f32; 4],
     params: [f32; 4],
     fog_color: [f32; 4],
+    misc: [u32; 4],
 }
 
 /// Mirrors `Stage` in shaders/world.wgsl (std430, 480 bytes).
@@ -126,14 +127,26 @@ struct DrawMaterial {
     dynamic: Option<Dynamic>,
 }
 
-/// A deformed material's base geometry and where its per-frame result goes in the
-/// dynamic buffers.
+/// Geometry rebuilt every frame, and where it goes in the dynamic buffers.
 struct Dynamic {
-    verts: Vec<deform::DeformVertex>,
-    indexes: Vec<u32>,
-    deforms: Vec<swjkja_shader::Deform>,
+    source: DynamicSource,
     vertex_offset: u32,
     index_offset: u32,
+}
+
+enum DynamicSource {
+    /// A material with deforms: its base geometry.
+    Deformed {
+        verts: Vec<deform::DeformVertex>,
+        indexes: Vec<u32>,
+        deforms: Vec<swjkja_shader::Deform>,
+    },
+    /// Flare surfaces (origin, normal), and the flare radius (the shader's
+    /// portalRange, or 30).
+    Flares {
+        flares: Vec<([f32; 3], [f32; 3])>,
+        radius: f32,
+    },
 }
 
 pub struct WorldRenderer {
@@ -387,7 +400,7 @@ impl WorldRenderer {
         let mut surfaces_of: Vec<std::collections::BTreeMap<usize, Vec<usize>>> = Vec::new();
         for i in world_surfaces {
             let s = &world.surfaces[i];
-            if matches!(s.geometry, Geometry::Skip | Geometry::Flare { .. }) {
+            if matches!(s.geometry, Geometry::Skip) {
                 continue;
             }
             let shader_name = bsp.shaders[s.shader].name().to_owned();
@@ -684,36 +697,70 @@ impl WorldRenderer {
                 )
             });
             for (&fog, group) in &surfaces_of[m] {
-                let (first_index, index_count, dynamic) = if deformed {
+                let flares: Vec<([f32; 3], [f32; 3])> = group
+                    .iter()
+                    .filter_map(|&i| match world.surfaces[i].geometry {
+                        Geometry::Flare { origin, normal, .. } => Some((origin, normal)),
+                        _ => None,
+                    })
+                    .collect();
+                let (first_index, index_count, dynamic) = if !flares.is_empty() {
+                    // Built each frame from the view (RB_SurfaceFlare).
+                    let n = flares.len() as u32;
+                    let dynamic = Dynamic {
+                        vertex_offset: dynamic_vertices,
+                        index_offset: dynamic_indexes,
+                        source: DynamicSource::Flares {
+                            radius: material.portal_range.filter(|r| *r != 0.0).unwrap_or(30.0),
+                            flares,
+                        },
+                    };
+                    dynamic_vertices += n * 4;
+                    dynamic_indexes += n * 6;
+                    (0, 0, Some(dynamic))
+                } else if deformed {
                     // Kept on the CPU and rebuilt each frame (see draw()).
                     let mut dv = Vec::new();
                     let mut di = Vec::new();
                     for &i in group {
                         append_deformable(&world.surfaces[i].geometry, &mut dv, &mut di);
                     }
+                    if di.is_empty() {
+                        continue;
+                    }
+                    // Deforms keep the vertex and index counts (autoSprite rebuilds
+                    // whole quads, 4 vertices and 6 indexes each).
+                    let (nv, ni) = (
+                        dv.len() as u32,
+                        (di.len() as u32).max(dv.len() as u32 / 4 * 6),
+                    );
                     let dynamic = Dynamic {
                         vertex_offset: dynamic_vertices,
                         index_offset: dynamic_indexes,
-                        verts: dv,
-                        indexes: di,
-                        deforms: material.deforms.clone(),
+                        source: DynamicSource::Deformed {
+                            verts: dv,
+                            indexes: di,
+                            deforms: material.deforms.clone(),
+                        },
                     };
-                    // Deforms keep the vertex and index counts (autoSprite rebuilds
-                    // whole quads, 4 vertices and 6 indexes each).
-                    dynamic_vertices += dynamic.verts.len() as u32;
-                    dynamic_indexes +=
-                        (dynamic.indexes.len() as u32).max(dynamic.verts.len() as u32 / 4 * 6);
+                    dynamic_vertices += nv;
+                    dynamic_indexes += ni;
                     (0, 0, Some(dynamic))
                 } else {
                     let first_index = indexes.len() as u32;
                     for &i in group {
                         append(&world.surfaces[i].geometry, &mut vertices, &mut indexes);
                     }
-                    (first_index, indexes.len() as u32 - first_index, None)
+                    let count = indexes.len() as u32 - first_index;
+                    if count == 0 {
+                        continue;
+                    }
+                    (first_index, count, None)
                 };
-                if index_count == 0 && dynamic.as_ref().is_none_or(|d| d.indexes.is_empty()) {
-                    continue;
-                }
+                let is_flare = matches!(
+                    dynamic.as_ref().map(|d| &d.source),
+                    Some(DynamicSource::Flares { .. })
+                );
                 // GL fog for the global fog on fogged (opaque and see-through) materials.
                 // Fog volumes (brush fog) are not drawn yet.
                 let gl_fog =
@@ -726,6 +773,7 @@ impl WorldRenderer {
                         states.len() - 1
                     });
                     let mut g = gpu_stage(s, material.multitexture);
+                    g.fog[2] = u32::from(is_flare);
                     if gl_fog {
                         g.fog[0] = match s.fog_color {
                             FogColor::Fog => 1,
@@ -882,26 +930,29 @@ impl WorldRenderer {
     }
 
     /// Records the world for one view at `time` seconds (inside [`crate::Target::render`]).
+    /// `depth_slot` is the texture slot of the target's depth copy, for flares.
     pub fn draw(
         &mut self,
-        cmd: vk::CommandBuffer,
+        frame: &mut Frame,
         textures: &TextureSet,
         camera: &Camera,
         time: f32,
+        depth_slot: u32,
     ) -> Result<()> {
-        let frame = FrameData {
+        let data = FrameData {
             view_proj: camera.view_proj(),
             view_origin: [camera.origin[0], camera.origin[1], camera.origin[2], 1.0],
             // tr.identityLight is 1 without overbright bits (the original's default).
-            params: [time, 1.0, self.fog.map_or(0.0, |f| f.1), 0.0],
+            params: [time, 1.0, self.fog.map_or(0.0, |f| f.1), camera.z_near],
             fog_color: self.fog.map_or([0.0; 4], |f| [f.0[0], f.0[1], f.0[2], 1.0]),
+            misc: [depth_slot, camera.width, camera.height, 0],
         };
         self.frame_buffer
             .mapped_mut()?
-            .copy_from_slice(bytemuck::bytes_of(&frame));
+            .copy_from_slice(bytemuck::bytes_of(&data));
 
-        // Deforms: rebuild each deformed material's geometry for this view and time
-        // (RB_DeformTessGeometry), into the dynamic buffers.
+        // Geometry that depends on the view and time: deforms (RB_DeformTessGeometry)
+        // and flares (RB_SurfaceFlare), into the dynamic buffers.
         let [forward, right, up] = camera.axes();
         let view = deform::View {
             forward,
@@ -912,16 +963,20 @@ impl WorldRenderer {
         let ib = self.dynamic_indexes.mapped_mut()?;
         for m in &mut self.materials {
             let Some(dynamic) = &m.dynamic else { continue };
-            let mut verts = dynamic.verts.clone();
-            let mut indexes = dynamic.indexes.clone();
-            deform::apply(
-                &dynamic.deforms,
-                &mut verts,
-                &mut indexes,
-                &view,
-                time,
-                time * 1000.0,
-            );
+            let (verts, indexes) = match &dynamic.source {
+                DynamicSource::Deformed {
+                    verts,
+                    indexes,
+                    deforms,
+                } => {
+                    let (mut v, mut i) = (verts.clone(), indexes.clone());
+                    deform::apply(deforms, &mut v, &mut i, &view, time, time * 1000.0);
+                    (v, i)
+                }
+                DynamicSource::Flares { flares, radius } => {
+                    flare_quads(flares, *radius, camera, &view)
+                }
+            };
             let out: Vec<Vertex> = verts
                 .iter()
                 .map(|v| Vertex {
@@ -941,27 +996,44 @@ impl WorldRenderer {
             m.index_count = indexes.len() as u32;
         }
 
+        let Some(layout) = self.pipelines.first().map(|p| p.layout) else {
+            return Ok(());
+        };
         let d = &self.gpu.device;
-        let layout = self.pipelines.first().map(|p| p.layout);
-        let Some(layout) = layout else { return Ok(()) };
-        unsafe {
-            d.cmd_bind_descriptor_sets(
-                cmd,
-                vk::PipelineBindPoint::GRAPHICS,
-                layout,
-                0,
-                &[textures.set, self.frame_set],
-                &[],
+        let sets = [textures.set, self.frame_set];
+        let mut depth_copied = false;
+        let mut bound = usize::MAX;
+        let mut buffers_bound: Option<bool> = None;
+        for m in &self.materials {
+            // The original reads the depth buffer for each flare as it draws it; with
+            // flares sorting after the opaque world, one copy before the first does.
+            let flare = matches!(
+                m.dynamic.as_ref().map(|d| &d.source),
+                Some(DynamicSource::Flares { .. })
             );
-            d.cmd_bind_vertex_buffers(cmd, 0, &[self.vertices.buffer], &[0]);
-            d.cmd_bind_index_buffer(cmd, self.indexes.buffer, 0, vk::IndexType::UINT32);
-            let mut bound = usize::MAX;
-            let mut dynamic_bound = false;
-            for m in &self.materials {
-                // Switch between the static and the per-frame (deformed) geometry.
-                if m.dynamic.is_some() != dynamic_bound {
-                    dynamic_bound = m.dynamic.is_some();
-                    let (v, i) = if dynamic_bound {
+            if flare && !depth_copied {
+                frame.copy_depth();
+                depth_copied = true;
+                bound = usize::MAX;
+                buffers_bound = None;
+            }
+            let cmd = frame.cmd;
+            unsafe {
+                if buffers_bound.is_none() {
+                    d.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        layout,
+                        0,
+                        &sets,
+                        &[],
+                    );
+                }
+                // Switch between the static and the per-frame geometry.
+                let dynamic = m.dynamic.is_some();
+                if buffers_bound != Some(dynamic) {
+                    buffers_bound = Some(dynamic);
+                    let (v, i) = if dynamic {
                         (self.dynamic_vertices.buffer, self.dynamic_indexes.buffer)
                     } else {
                         (self.vertices.buffer, self.indexes.buffer)
@@ -998,6 +1070,56 @@ impl WorldRenderer {
         }
         Ok(())
     }
+}
+
+/// `RB_SurfaceFlare` without its depth test (the shader does that): a quad 3 units in
+/// front of each flare, facing the viewer, dimmed as the flare turns away, radius
+/// shrinking within 512 units (never below 5). The flare origin goes in the vertices'
+/// lightmap sets 2-3 for the depth test.
+fn flare_quads(
+    flares: &[([f32; 3], [f32; 3])],
+    radius: f32,
+    camera: &Camera,
+    view: &deform::View,
+) -> (Vec<deform::DeformVertex>, Vec<u32>) {
+    let (mut verts, mut indexes) = (Vec::new(), Vec::new());
+    for &(origin, normal) in flares {
+        let center = [0, 1, 2].map(|k| origin[k] + 3.0 * normal[k]);
+        let dir = [0, 1, 2].map(|k| center[k] - camera.origin[k]);
+        let dist = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+        let dir = if dist > 0.0 {
+            dir.map(|x| x / dist)
+        } else {
+            dir
+        };
+        let d = -(dir[0] * normal[0] + dir[1] * normal[1] + dir[2] * normal[2]);
+        let d = d.abs();
+        let gray = (d * 255.0) as u8;
+        let mut r = radius;
+        if dist < 512.0 {
+            r = r * dist / 512.0;
+        }
+        let r = r.max(5.0);
+        let (left, up) = (view.left.map(|x| x * r), view.up.map(|x| x * r));
+        let n = verts.len() as u32;
+        let corner = |sl: f32, su: f32| [0, 1, 2].map(|k| center[k] + sl * left[k] + su * up[k]);
+        for (xyz, st) in [
+            (corner(1.0, 1.0), [0.0, 0.0]),
+            (corner(-1.0, 1.0), [1.0, 0.0]),
+            (corner(-1.0, -1.0), [1.0, 1.0]),
+            (corner(1.0, -1.0), [0.0, 1.0]),
+        ] {
+            verts.push(deform::DeformVertex {
+                xyz,
+                normal: view.forward.map(|x| -x),
+                st,
+                lightmap: [st, [0.0; 2], [origin[0], origin[1]], [origin[2], 0.0]],
+                color: [gray, gray, gray, 255],
+            });
+        }
+        indexes.extend([n, n + 1, n + 3, n + 3, n + 1, n + 2]);
+    }
+    (verts, indexes)
 }
 
 impl Drop for WorldRenderer {

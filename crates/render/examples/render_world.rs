@@ -29,14 +29,18 @@ fn main() {
         let mut renderer =
             WorldRenderer::new(&gpu, &mut textures, &vfs, &shaders, &bsp, &world).unwrap();
         let load = t.elapsed();
+        // One target per map; its depth copy sits in the texture array for flares.
+        let target = Target::new(&gpu, 1280, 720).unwrap();
+        let depth_slot = textures.add_view(target.depth_copy.view);
         for l in lines.iter().filter(|l| l[0] == map) {
             let f: Vec<f32> = l[2..8].iter().map(|v| v.parse().unwrap()).collect();
             let camera = Camera::new([f[0], f[1], f[2]], [f[3], f[4], f[5]], 1280, 720);
-            let target = Target::new(&gpu, 1280, 720).unwrap();
             let t = Instant::now();
             target
-                .render(&gpu, renderer.clear_color(), |cmd| {
-                    renderer.draw(cmd, &textures, &camera, time).unwrap()
+                .render(&gpu, renderer.clear_color(), |frame| {
+                    renderer
+                        .draw(frame, &textures, &camera, time, depth_slot)
+                        .unwrap()
                 })
                 .unwrap();
             let draw = t.elapsed();

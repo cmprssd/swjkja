@@ -14,6 +14,6 @@ pub use ash::vk;
 pub use camera::Camera;
 pub use gpu::{DeviceKind, Error, Gpu, Result};
 pub use pipeline::{Pipeline, State, spirv};
-pub use resource::{Buffer, Image, Target};
+pub use resource::{Buffer, Frame, Image, Target};
 pub use texture::{MAX_TEXTURES, Texture, TextureSet};
 pub use world::WorldRenderer;

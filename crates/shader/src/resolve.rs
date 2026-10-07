@@ -130,6 +130,8 @@ pub struct Material {
     pub sky: Option<Sky>,
     pub fog_parms: Option<FogParms>,
     pub fog_pass: FogPass,
+    /// `alphaGen portal`'s range, which flares also use as their size.
+    pub portal_range: Option<f32>,
     pub no_mipmaps: bool,
     pub no_picmip: bool,
     pub entity_mergable: bool,
@@ -243,6 +245,7 @@ impl Material {
             sky: None,
             fog_parms: None,
             fog_pass: FogPass::None,
+            portal_range: None,
             no_mipmaps: false,
             no_picmip: false,
             entity_mergable: false,
@@ -396,6 +399,7 @@ fn from_script(
     m.deforms = def.deforms.clone();
     m.sky = def.sky.clone();
     m.fog_parms = def.fog_parms;
+    m.portal_range = def.portal_range;
     m.no_mipmaps = def.no_mipmaps;
     m.no_picmip = def.no_picmip;
     m.entity_mergable = def.entity_mergable;
