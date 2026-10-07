@@ -56,6 +56,11 @@ fn main() {
             println!("{count:5} {key}: sort {} | {}", m.sort, blends.join(" ; "));
         }
     }
+    for (key, (count, m)) in &seen {
+        if !m.deforms.is_empty() {
+            println!("deforms: {count:5} {key}: {:?}", m.deforms);
+        }
+    }
     println!(
         "{} materials: {default} default, {collapsed} collapsed to one pass, {multi} with several passes",
         seen.len()
