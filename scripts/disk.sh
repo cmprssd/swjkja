@@ -22,6 +22,7 @@ places=(
 	"Windows build|$work/target-msvc|cargo output (MSVC)"
 	"OpenJK reference|$work/openjk|benchmark reference engine (bench/build-openjk.sh)"
 	"OpenJK runtime|$work/openjk-home|benchmark config, logs, demos"
+	"Image reference|$work/venv|Python + Pillow for image decoder comparisons"
 	"OpenJK source|$HOME/.cache/swjkja-ref|pinned reference source (git clone)"
 	"local-ci logs|$HOME/.cache/local-ci/cmprssd/swjkja|one log per checked commit"
 )
@@ -63,7 +64,7 @@ case "${1:-status}" in
 	clean-all)
 		(cd "$ROOT" && cargo clean)
 		"$ROOT/scripts/cargo-msvc.sh" clean
-		rm -rf "$work/openjk-home" "$work/openjk-src" "$work/openjk-build"
+		rm -rf "$work/openjk-home" "$work/openjk-src" "$work/openjk-build" "$work/venv"
 		rm -rf "$HOME/.cache/local-ci/cmprssd/swjkja"
 		status
 		;;
