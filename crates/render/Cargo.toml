@@ -12,7 +12,16 @@ workspace = true
 
 [dependencies]
 ash = { version = "0.38.0", default-features = false, features = ["loaded", "std", "debug"] }
+bytemuck = { version = "1.25.2", features = ["derive"] }
 gpu-allocator = { version = "0.28.0", default-features = false, features = ["std", "vulkan"] }
+swjkja-bsp = { version = "0.0.0", path = "../bsp" }
+swjkja-world = { version = "0.0.0", path = "../world" }
 
 [build-dependencies]
 naga = { version = "30.0.1", features = ["wgsl-in", "spv-out"] }
+
+[dev-dependencies]
+png = "0.18.1"
+swjkja-fs = { path = "../fs" }
+swjkja-image = { path = "../image" }
+swjkja-shader = { path = "../shader" }

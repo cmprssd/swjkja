@@ -104,6 +104,35 @@ impl Image {
         usage: vk::ImageUsageFlags,
         aspect: vk::ImageAspectFlags,
     ) -> Result<Self> {
+        Self::create(gpu, extent, format, 1, usage, aspect)
+    }
+
+    /// A colour image with `mip_levels` levels (the view covers all of them).
+    pub fn new_mipmapped(
+        gpu: &Arc<Gpu>,
+        extent: vk::Extent2D,
+        format: vk::Format,
+        mip_levels: u32,
+        usage: vk::ImageUsageFlags,
+    ) -> Result<Self> {
+        Self::create(
+            gpu,
+            extent,
+            format,
+            mip_levels,
+            usage,
+            vk::ImageAspectFlags::COLOR,
+        )
+    }
+
+    fn create(
+        gpu: &Arc<Gpu>,
+        extent: vk::Extent2D,
+        format: vk::Format,
+        mip_levels: u32,
+        usage: vk::ImageUsageFlags,
+        aspect: vk::ImageAspectFlags,
+    ) -> Result<Self> {
         let d = &gpu.device;
         let image = unsafe {
             d.create_image(
@@ -115,7 +144,7 @@ impl Image {
                         height: extent.height,
                         depth: 1,
                     })
-                    .mip_levels(1)
+                    .mip_levels(mip_levels)
                     .array_layers(1)
                     .samples(vk::SampleCountFlags::TYPE_1)
                     .tiling(vk::ImageTiling::OPTIMAL)
@@ -144,7 +173,10 @@ impl Image {
                     .image(image)
                     .view_type(vk::ImageViewType::TYPE_2D)
                     .format(format)
-                    .subresource_range(subresource(aspect)),
+                    .subresource_range(vk::ImageSubresourceRange {
+                        level_count: mip_levels,
+                        ..subresource(aspect)
+                    }),
                 None,
             )?
         };
@@ -237,7 +269,8 @@ impl Target {
         })
     }
 
-    /// Renders into the target: clears it to `clear` (RGBA, 0-1) and depth 1, runs
+    /// Renders into the target: clears it to `clear` (RGBA, 0-1) and depth 0 (depth is
+    /// reversed: 1 is nearest, 0 infinitely far), runs
     /// `draw` inside dynamic rendering, and leaves the colour ready to read back.
     pub fn render(
         &self,
@@ -278,7 +311,7 @@ impl Target {
                 .store_op(vk::AttachmentStoreOp::DONT_CARE)
                 .clear_value(vk::ClearValue {
                     depth_stencil: vk::ClearDepthStencilValue {
-                        depth: 1.0,
+                        depth: 0.0,
                         stencil: 0,
                     },
                 });
