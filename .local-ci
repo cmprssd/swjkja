@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# The checks every PR must pass, run on this machine by `local-ci` (claude-toolkit) in
+# place of GitHub Actions. Run it directly to check without posting a status.
+# Linux (WSL) and Windows (MSVC, via scripts/cargo-msvc.sh) run in parallel; each
+# writes to its own target directory.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+step() { echo; echo "== $*"; }
+
+step "format"; cargo fmt --all -- --check
+
+linux() {
+	cargo clippy --workspace --all-targets --locked -- -D warnings
+	cargo test --workspace --locked
+}
+windows() {
+	scripts/cargo-msvc.sh clippy --workspace --all-targets --locked -- -D warnings
+	scripts/cargo-msvc.sh test --workspace --locked
+}
+
+logs=$(mktemp -d)
+trap 'rm -rf "$logs"' EXIT
+linux >"$logs/linux" 2>&1 & lpid=$!
+windows >"$logs/windows" 2>&1 & wpid=$!
+lstatus=0; wait $lpid || lstatus=$?
+wstatus=0; wait $wpid || wstatus=$?
+
+step "linux (exit $lstatus)"; cat "$logs/linux"
+step "windows (exit $wstatus)"; cat "$logs/windows"
+[ "$lstatus" -eq 0 ] && [ "$wstatus" -eq 0 ]
