@@ -8,6 +8,7 @@ pub mod pipeline;
 pub mod resource;
 pub mod sky;
 pub mod texture;
+pub mod vis;
 pub mod world;
 
 pub use ash::vk;

@@ -181,6 +181,36 @@ These are still single moments: the reference shots were taken at an unknown gam
 time, so animated stages (waves, scrolls, animMaps) can only match by chance; the
 next reference capture should pin the time.
 
+## Renderer frame times (swjkja-render), 2026-10-07
+
+`bench_world <GameData> bench/reference/views.txt` renders each reference view 300
+times (after 20 warm-up frames) at 1280x720 on the Intel HD Graphics 630. "GPU ms" is
+the GPU's own time between timestamps around the frame; "frame ms" adds recording,
+submitting and waiting for each frame (the loop waits every frame, so this is not a
+pipelined frame rate). Frame times vary by up to 1.6x between runs when the machine
+is busy (42% CPU load from other work during these runs); GPU times stay within 10%.
+
+| View | GPU ms, everything drawn | GPU ms, with the original's culling |
+|------|------|------|
+| ffa3_spawn1 | 5.92 | 3.97-4.67 |
+| ffa3_spawn2 | 5.00 | 3.35-4.06 |
+| ffa3_spawn3 | 4.84 | 3.38-4.12 |
+| ffa3_down | 4.35 | 1.15-1.27 |
+| ffa3_up | 4.87 | 2.08-2.23 |
+| duel5_spawn1 | 4.53 | 4.29-4.54 |
+| duel5_spawn2 | 4.17 | 4.18-4.67 |
+| duel5_down | 5.58 | 4.26-5.33 |
+| ctf4_spawn1 | 3.55 | 1.55-1.73 |
+| ctf4_spawn2 | 4.51 | 3.03-3.59 |
+| ctf4_up | 4.69 | 2.83-3.56 |
+
+Culling (PVS, view frustum, face planes, as `R_MarkLeaves`, `R_RecursiveWorldNode`
+and `R_CullSurface` do it) leaves every reference render identical to before, and
+cuts GPU time by up to 3.8x where the view sees little of the map. duel5 is one open
+arena, so nearly everything is in view and culling saves nothing. In the quiet run
+the whole frame took 2.4-5.8 ms (170-420 FPS): 1-1.5 ms more than the GPU time,
+spent recording and waiting.
+
 ## Not measured yet
 
 - **Frame-time spikes** (1% lows): `timedemo` reports only the average. Needs
