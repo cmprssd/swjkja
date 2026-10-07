@@ -1,0 +1,21 @@
+[package]
+name = "swjkja-image"
+description = "Texture loading for Jedi Academy: TGA, JPEG and PNG to RGBA, resolved like the original"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+swjkja-fs = { path = "../fs" }
+zune-core = "0.5"
+zune-jpeg = "0.5"
+zune-png = "0.5"
+
+[dev-dependencies]
+crc32fast = "1"
+tempfile = "3"
+
+[lints]
+workspace = true

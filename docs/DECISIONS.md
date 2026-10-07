@@ -50,3 +50,12 @@ fix. It also never writes to the Steam install: it reads the retail assets throu
 Launching the retail executables directly also needs `SteamAppId=6020` in the
 environment, or Steam's copy protection stops them with "Application load error
 5:0000065434".
+
+## 2026-10-07: JPEG decoding is close, not bit-exact (decided by Claude, pending review)
+
+zune-jpeg (pure Rust) decodes the retail JPEGs within 5 of 255 levels of libjpeg
+(mean 0.077, 13% of pixels touched); the other pure-Rust decoder, `jpeg-decoder`,
+is not exact either. Bit-exact output would need libjpeg-turbo, a C library, in the
+engine. Not worth it: the original renders textures re-compressed to S3TC/DXT by
+default, which moves pixels far more than this. TGA and PNG decoding are exact.
+If screenshot comparisons ever trace a visible difference to JPEG decoding, revisit.

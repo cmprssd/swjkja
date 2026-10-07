@@ -58,6 +58,30 @@ map to parse (3 runs), after 30-45 ms per map to read it from the USB drive. A
 first version took 67-85 ms per map because it formatted an error message for every
 check, not just failing ones.
 
+## Decoding the retail textures (swjkja-image), 2026-10-07
+
+All 5,875 textures decode: 4,271 JPEG, 1,134 PNG, 470 TGA. Compared with reference
+decodes (`bench/images/reference.py`: Pillow 12.3 with libjpeg-turbo and libpng, and
+a hand-written TGA decoder that follows the original's rules):
+
+| Format | Files | Identical pixels | Largest difference |
+|--------|-------|------------------|--------------------|
+| TGA | 470 | 470 | none |
+| PNG | 1,134 | 1,134 | none |
+| JPEG | 4,271 | 35 | 5 of 255 levels; mean 0.077, 13% of pixels differ (sample of 303 files) |
+
+The JPEG differences come from the decoder's inverse DCT and chroma upsampling;
+`jpeg-decoder` differs too (4,238 files). They are below what the original shows
+anyway: with its default `r_ext_compress_textures 1`, the original has the driver
+re-compress every texture to S3TC/DXT, which changes pixels far more. See
+DECISIONS.md.
+
+To rerun the comparison (Windows Python with Pillow and numpy in
+`%USERPROFILE%\.swjkja\venv`):
+
+    cargo run --release -p swjkja-image --example decode_all -- <GameData> > ours.tsv
+    python bench/images/reference.py <GameData> > ref.tsv
+
 ## Not measured yet
 
 - **Frame-time spikes** (1% lows): `timedemo` reports only the average. Needs
