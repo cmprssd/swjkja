@@ -1,0 +1,17 @@
+[package]
+name = "swjkja-bsp"
+description = "Jedi Academy map files (RBSP version 1)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bytemuck = { version = "1", features = ["derive", "extern_crate_alloc"] }
+
+[dev-dependencies]
+swjkja-fs = { path = "../fs" }
+
+[lints]
+workspace = true
