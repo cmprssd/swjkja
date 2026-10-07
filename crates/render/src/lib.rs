@@ -2,6 +2,7 @@
 //! target with readback, buffers and pipelines.
 
 pub mod camera;
+pub mod deform;
 pub mod gpu;
 pub mod pipeline;
 pub mod resource;

@@ -3,7 +3,7 @@
 //! original's order (materials by sort value, then by creation order; each material's
 //! surfaces stage by stage).
 //!
-//! Not yet: fog volumes (brush fog), deforms, light-style animation, distance LOD
+//! Not yet: fog volumes (brush fog), normal and text deforms, light-style animation, distance LOD
 //! for patches, visibility culling, video maps (drawn white), noise waves (their
 //! base value), fog on sky layers.
 
@@ -19,12 +19,13 @@ use swjkja_shader::resolve::{
     FogColor, FogPass, Image, Images, Material, MaterialStage, TexEnv, resolve_map_shader,
 };
 use swjkja_shader::{
-    AlphaGen, AlphaTest, Cull, DepthTest, DstBlend, Func, RgbGen, ShaderText, SrcBlend, TcGen,
-    TexMod,
+    AlphaGen, AlphaTest, Cull, Deform, DepthTest, DstBlend, Func, RgbGen, ShaderText, SrcBlend,
+    TcGen, TexMod,
 };
 use swjkja_world::{Geometry, World};
 
 use crate::camera::Camera;
+use crate::deform;
 use crate::gpu::{Gpu, Result};
 use crate::pipeline::{Pipeline, State, spirv};
 use crate::resource::Buffer;
@@ -121,12 +122,27 @@ struct DrawMaterial {
     first_index: u32,
     index_count: u32,
     stages: Vec<DrawStage>,
+    /// For materials with deforms: geometry rebuilt every frame.
+    dynamic: Option<Dynamic>,
+}
+
+/// A deformed material's base geometry and where its per-frame result goes in the
+/// dynamic buffers.
+struct Dynamic {
+    verts: Vec<deform::DeformVertex>,
+    indexes: Vec<u32>,
+    deforms: Vec<swjkja_shader::Deform>,
+    vertex_offset: u32,
+    index_offset: u32,
 }
 
 pub struct WorldRenderer {
     gpu: Arc<Gpu>,
     vertices: Buffer,
     indexes: Buffer,
+    /// Deformed geometry, rewritten every frame.
+    dynamic_vertices: Buffer,
+    dynamic_indexes: Buffer,
     frame_buffer: Buffer,
     _stage_buffer: Buffer,
     frame_layout: vk::DescriptorSetLayout,
@@ -534,6 +550,7 @@ impl WorldRenderer {
         let mut gpu_stages: Vec<GpuStage> = Vec::new();
         let mut states: Vec<State> = Vec::new();
         let mut draw_materials = Vec::new();
+        let (mut dynamic_vertices, mut dynamic_indexes) = (0u32, 0u32);
         for &m in &order {
             let material = &materials[m];
             if let Some(sky) = &material.sky {
@@ -608,6 +625,7 @@ impl WorldRenderer {
                                     pipeline,
                                     slots: [slot, Slots::One(white)],
                                 }],
+                                dynamic: None,
                             });
                         }
                     }
@@ -642,6 +660,7 @@ impl WorldRenderer {
                         first_index,
                         index_count,
                         stages,
+                        dynamic: None,
                     });
                 }
                 continue;
@@ -654,13 +673,45 @@ impl WorldRenderer {
             if material.surface_flags & FORCESIGHT != 0 {
                 continue; // hidden unless force sight is on
             }
+            let deformed = material.deforms.iter().any(|d| {
+                matches!(
+                    d,
+                    Deform::Wave { .. }
+                        | Deform::Bulge { .. }
+                        | Deform::Move { .. }
+                        | Deform::AutoSprite
+                        | Deform::AutoSprite2
+                )
+            });
             for (&fog, group) in &surfaces_of[m] {
-                let first_index = indexes.len() as u32;
-                for &i in group {
-                    append(&world.surfaces[i].geometry, &mut vertices, &mut indexes);
-                }
-                let index_count = indexes.len() as u32 - first_index;
-                if index_count == 0 {
+                let (first_index, index_count, dynamic) = if deformed {
+                    // Kept on the CPU and rebuilt each frame (see draw()).
+                    let mut dv = Vec::new();
+                    let mut di = Vec::new();
+                    for &i in group {
+                        append_deformable(&world.surfaces[i].geometry, &mut dv, &mut di);
+                    }
+                    let dynamic = Dynamic {
+                        vertex_offset: dynamic_vertices,
+                        index_offset: dynamic_indexes,
+                        verts: dv,
+                        indexes: di,
+                        deforms: material.deforms.clone(),
+                    };
+                    // Deforms keep the vertex and index counts (autoSprite rebuilds
+                    // whole quads, 4 vertices and 6 indexes each).
+                    dynamic_vertices += dynamic.verts.len() as u32;
+                    dynamic_indexes +=
+                        (dynamic.indexes.len() as u32).max(dynamic.verts.len() as u32 / 4 * 6);
+                    (0, 0, Some(dynamic))
+                } else {
+                    let first_index = indexes.len() as u32;
+                    for &i in group {
+                        append(&world.surfaces[i].geometry, &mut vertices, &mut indexes);
+                    }
+                    (first_index, indexes.len() as u32 - first_index, None)
+                };
+                if index_count == 0 && dynamic.as_ref().is_none_or(|d| d.indexes.is_empty()) {
                     continue;
                 }
                 // GL fog for the global fog on fogged (opaque and see-through) materials.
@@ -697,6 +748,7 @@ impl WorldRenderer {
                     first_index,
                     index_count,
                     stages,
+                    dynamic,
                 });
             }
         }
@@ -777,8 +829,22 @@ impl WorldRenderer {
         ];
         unsafe { d.update_descriptor_sets(&writes, &[]) };
 
+        let dynamic_vertices_buffer = Buffer::new(
+            gpu,
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+            (dynamic_vertices.max(1) as usize * size_of::<Vertex>()) as u64,
+            MemoryLocation::CpuToGpu,
+        )?;
+        let dynamic_indexes_buffer = Buffer::new(
+            gpu,
+            vk::BufferUsageFlags::INDEX_BUFFER,
+            dynamic_indexes.max(1) as u64 * 4,
+            MemoryLocation::CpuToGpu,
+        )?;
         Ok(Self {
             gpu: gpu.clone(),
+            dynamic_vertices: dynamic_vertices_buffer,
+            dynamic_indexes: dynamic_indexes_buffer,
             vertices: Buffer::with_data(
                 gpu,
                 vk::BufferUsageFlags::VERTEX_BUFFER,
@@ -833,6 +899,48 @@ impl WorldRenderer {
         self.frame_buffer
             .mapped_mut()?
             .copy_from_slice(bytemuck::bytes_of(&frame));
+
+        // Deforms: rebuild each deformed material's geometry for this view and time
+        // (RB_DeformTessGeometry), into the dynamic buffers.
+        let [forward, right, up] = camera.axes();
+        let view = deform::View {
+            forward,
+            left: [-right[0], -right[1], -right[2]],
+            up,
+        };
+        let vb = self.dynamic_vertices.mapped_mut()?;
+        let ib = self.dynamic_indexes.mapped_mut()?;
+        for m in &mut self.materials {
+            let Some(dynamic) = &m.dynamic else { continue };
+            let mut verts = dynamic.verts.clone();
+            let mut indexes = dynamic.indexes.clone();
+            deform::apply(
+                &dynamic.deforms,
+                &mut verts,
+                &mut indexes,
+                &view,
+                time,
+                time * 1000.0,
+            );
+            let out: Vec<Vertex> = verts
+                .iter()
+                .map(|v| Vertex {
+                    xyz: v.xyz,
+                    normal: v.normal,
+                    st: v.st,
+                    lightmap: v.lightmap,
+                    color: v.color,
+                })
+                .collect();
+            let vstart = dynamic.vertex_offset as usize * size_of::<Vertex>();
+            vb[vstart..vstart + out.len() * size_of::<Vertex>()]
+                .copy_from_slice(bytemuck::cast_slice(&out));
+            let istart = dynamic.index_offset as usize * 4;
+            ib[istart..istart + indexes.len() * 4].copy_from_slice(bytemuck::cast_slice(&indexes));
+            m.first_index = dynamic.index_offset;
+            m.index_count = indexes.len() as u32;
+        }
+
         let d = &self.gpu.device;
         let layout = self.pipelines.first().map(|p| p.layout);
         let Some(layout) = layout else { return Ok(()) };
@@ -848,7 +956,20 @@ impl WorldRenderer {
             d.cmd_bind_vertex_buffers(cmd, 0, &[self.vertices.buffer], &[0]);
             d.cmd_bind_index_buffer(cmd, self.indexes.buffer, 0, vk::IndexType::UINT32);
             let mut bound = usize::MAX;
+            let mut dynamic_bound = false;
             for m in &self.materials {
+                // Switch between the static and the per-frame (deformed) geometry.
+                if m.dynamic.is_some() != dynamic_bound {
+                    dynamic_bound = m.dynamic.is_some();
+                    let (v, i) = if dynamic_bound {
+                        (self.dynamic_vertices.buffer, self.dynamic_indexes.buffer)
+                    } else {
+                        (self.vertices.buffer, self.indexes.buffer)
+                    };
+                    d.cmd_bind_vertex_buffers(cmd, 0, &[v], &[0]);
+                    d.cmd_bind_index_buffer(cmd, i, 0, vk::IndexType::UINT32);
+                }
+                let vertex_offset = m.dynamic.as_ref().map_or(0, |d| d.vertex_offset as i32);
                 for s in &m.stages {
                     if s.pipeline != bound {
                         d.cmd_bind_pipeline(
@@ -871,7 +992,7 @@ impl WorldRenderer {
                         0,
                         bytemuck::bytes_of(&push),
                     );
-                    d.cmd_draw_indexed(cmd, m.index_count, 1, m.first_index, 0, 0);
+                    d.cmd_draw_indexed(cmd, m.index_count, 1, m.first_index, vertex_offset, 0);
                 }
             }
         }
@@ -891,6 +1012,26 @@ impl Drop for WorldRenderer {
                 .destroy_descriptor_set_layout(self.frame_layout, None);
         }
     }
+}
+
+/// Appends a surface's vertices and triangles for CPU deforms, in the same order as
+/// [`append`] (so autoSprite sees each 4-vertex face as one quad).
+fn append_deformable(
+    geometry: &Geometry,
+    verts: &mut Vec<deform::DeformVertex>,
+    indexes: &mut Vec<u32>,
+) {
+    let (mut v, mut i) = (Vec::new(), Vec::new());
+    append(geometry, &mut v, &mut i);
+    let base = verts.len() as u32;
+    indexes.extend(i.iter().map(|&i| base + i));
+    verts.extend(v.iter().map(|v| deform::DeformVertex {
+        xyz: v.xyz,
+        normal: v.normal,
+        st: v.st,
+        lightmap: v.lightmap,
+        color: v.color,
+    }));
 }
 
 /// Appends a surface's triangles (patch grids at full detail, as `RB_SurfaceGrid`
