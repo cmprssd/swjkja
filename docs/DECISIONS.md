@@ -99,3 +99,11 @@ Single-player uses `helpUsObi` (default 0) to unlock cheat cvars and multiplayer
 - **`gpu-allocator` for GPU memory.**
 - **Tests render offscreen and read pixels back**, on the real GPU on Windows and on
   lavapipe (CPU) under WSL, so renderer tests need no window.
+
+## 2026-10-07: One unreadable value in patch stitching (decided by Claude, pending review)
+
+When `R_StitchPatches` walks an edge backwards, it passes the LOD error at index
+`k + 1`; on the first step that is one past the end of the array, so the original
+reads whatever memory follows. swjkja-world uses the entry at `k - 1` in that one case
+(the value the code evidently meant) and `k + 1` everywhere else, as the original
+does. It only affects at what distance one inserted vertex row may be dropped.

@@ -92,6 +92,14 @@ count). Loading and indexing all scripts takes 17-21 ms; parsing every definitio
 shaders (caulk, clip, hint, nodraw, ...) without drawing stages. An early version took
 1.8 s to parse: each parse rescanned the whole 2 MB text for NUL bytes.
 
+## Building map surfaces (swjkja-world), 2026-10-07
+
+`cargo run --release -p swjkja-world --example build_all -- <GameData>` builds the
+drawable surfaces of all 57 maps (patch subdivision, stitching, LOD sync) in 1.20 s;
+the slowest is `taspir2` at 141 ms (156 stitches). Comparing patches only within
+their LOD group (identical results) took this from 1.84 s. `mp/ffa3`: 4,426 faces,
+88 triangle soups, 526 patches (2 `nodraw`, skipped), 100 stitches.
+
 ## Not measured yet
 
 - **Frame-time spikes** (1% lows): `timedemo` reports only the average. Needs
