@@ -14,7 +14,9 @@ use bytemuck::{Pod, Zeroable};
 use gpu_allocator::MemoryLocation;
 use swjkja_bsp::Bsp;
 use swjkja_fs::Vfs;
-use swjkja_shader::resolve::{Image, Images, Material, MaterialStage, TexEnv, resolve_map_shader};
+use swjkja_shader::resolve::{
+    FogColor, FogPass, Image, Images, Material, MaterialStage, TexEnv, resolve_map_shader,
+};
 use swjkja_shader::{
     AlphaGen, AlphaTest, Cull, DepthTest, DstBlend, Func, RgbGen, ShaderText, SrcBlend, TcGen,
     TexMod,
@@ -43,9 +45,10 @@ struct FrameData {
     view_proj: [[f32; 4]; 4],
     view_origin: [f32; 4],
     params: [f32; 4],
+    fog_color: [f32; 4],
 }
 
-/// Mirrors `Stage` in shaders/world.wgsl (std430, 464 bytes).
+/// Mirrors `Stage` in shaders/world.wgsl (std430, 480 bytes).
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GpuStage {
@@ -59,6 +62,7 @@ struct GpuStage {
     tc_vector: [[f32; 4]; 4],
     tcmod: [[f32; 4]; 16],
     style: [f32; 4],
+    fog: [u32; 4],
 }
 
 #[repr(C)]
@@ -131,6 +135,8 @@ pub struct WorldRenderer {
     materials: Vec<DrawMaterial>,
     pub triangles: usize,
     pub material_count: usize,
+    /// The global fog's colour and GL fog density, if the map has one.
+    fog: Option<([f32; 3], f32)>,
 }
 
 /// The vertex attributes of [`Vertex`].
@@ -145,10 +151,11 @@ const ATTRIBUTES: [(u32, vk::Format, u32); 6] = [
 
 /// Culling. Quake 3 winds its polygons opposite to OpenGL's default, so "front-sided"
 /// materials cull what OpenGL calls front faces (`GL_Cull`). The GPU test
-/// `world_front_faces` pins this mapping for Vulkan.
+/// `quake_front_faces_survive_front_sided_culling` pins this mapping for Vulkan.
 pub const FRONT_FACE: vk::FrontFace = vk::FrontFace::COUNTER_CLOCKWISE;
 
-fn cull_mode(cull: Cull) -> vk::CullModeFlags {
+/// The Vulkan cull mode for a material's `cull` setting.
+pub fn cull_mode(cull: Cull) -> vk::CullModeFlags {
     match cull {
         Cull::Front => vk::CullModeFlags::FRONT,
         Cull::Back => vk::CullModeFlags::BACK,
@@ -357,7 +364,9 @@ impl WorldRenderer {
             model.first_surface as usize..(model.first_surface + model.num_surfaces) as usize;
         let mut material_index: HashMap<(String, [i32; 4], [u8; 4]), usize> = HashMap::new();
         let mut materials: Vec<Material> = Vec::new();
-        let mut surfaces_of: Vec<Vec<usize>> = Vec::new();
+        // Per material, its surfaces by fog number (the original's sort key orders draws
+        // by material, then fog).
+        let mut surfaces_of: Vec<std::collections::BTreeMap<usize, Vec<usize>>> = Vec::new();
         for i in world_surfaces {
             let s = &world.surfaces[i];
             if matches!(s.geometry, Geometry::Skip | Geometry::Flare { .. }) {
@@ -391,13 +400,28 @@ impl WorldRenderer {
                         )
                     };
                     materials.push(material);
-                    surfaces_of.push(Vec::new());
+                    surfaces_of.push(Default::default());
                     material_index.insert(key, materials.len() - 1);
                     materials.len() - 1
                 }
             };
-            surfaces_of[m].push(i);
+            surfaces_of[m].entry(s.fog).or_default().push(i);
         }
+
+        // The global fog (the one without a brush; fog numbers are 1-based) and its
+        // parameters, from its shader's fogParms (red at 250 units if it has none, as
+        // in R_LoadFogs).
+        let global_fog = bsp.fogs.iter().position(|f| f.brush == -1).map(|i| i + 1);
+        let fog_parms = global_fog.map(|n| {
+            let name = swjkja_shader::resolve::strip_extension(bsp.fogs[n - 1].shader());
+            match shaders.parse(name) {
+                Some(Ok(def)) if def.fog_parms.is_some() => def.fog_parms.unwrap(),
+                _ => swjkja_shader::FogParms {
+                    color: [1.0, 0.0, 0.0],
+                    depth_for_opaque: 250.0,
+                },
+            }
+        });
 
         // Textures.
         let default_image: Vec<u8> = (0..16 * 16)
@@ -518,37 +542,51 @@ impl WorldRenderer {
             if material.surface_flags & FORCESIGHT != 0 {
                 continue; // hidden unless force sight is on
             }
-            let first_index = indexes.len() as u32;
-            for &i in &surfaces_of[m] {
-                append(&world.surfaces[i].geometry, &mut vertices, &mut indexes);
-            }
-            let index_count = indexes.len() as u32 - first_index;
-            if index_count == 0 {
-                continue;
-            }
-            let mut stages = Vec::new();
-            for s in &material.stages {
-                let st = state(material, s);
-                let pipeline = states.iter().position(|x| *x == st).unwrap_or_else(|| {
-                    states.push(st);
-                    states.len() - 1
+            for (&fog, group) in &surfaces_of[m] {
+                let first_index = indexes.len() as u32;
+                for &i in group {
+                    append(&world.surfaces[i].geometry, &mut vertices, &mut indexes);
+                }
+                let index_count = indexes.len() as u32 - first_index;
+                if index_count == 0 {
+                    continue;
+                }
+                // GL fog for the global fog on fogged (opaque and see-through) materials.
+                // Fog volumes (brush fog) are not drawn yet.
+                let gl_fog =
+                    fog != 0 && Some(fog) == global_fog && material.fog_pass != FogPass::None;
+                let mut stages = Vec::new();
+                for s in &material.stages {
+                    let st = state(material, s);
+                    let pipeline = states.iter().position(|x| *x == st).unwrap_or_else(|| {
+                        states.push(st);
+                        states.len() - 1
+                    });
+                    let mut g = gpu_stage(s, material.multitexture);
+                    if gl_fog {
+                        g.fog[0] = match s.fog_color {
+                            FogColor::Fog => 1,
+                            FogColor::Black => 2,
+                            FogColor::White => 3,
+                        };
+                    }
+                    gpu_stages.push(g);
+                    let slot1 = match &s.bundle2 {
+                        Some(b) => slots_for(&b.image, textures)?,
+                        None => Slots::One(white),
+                    };
+                    stages.push(DrawStage {
+                        gpu_stage: gpu_stages.len() as u32 - 1,
+                        pipeline,
+                        slots: [slots_for(&s.bundle.image, textures)?, slot1],
+                    });
+                }
+                draw_materials.push(DrawMaterial {
+                    first_index,
+                    index_count,
+                    stages,
                 });
-                gpu_stages.push(gpu_stage(s, material.multitexture));
-                let slot1 = match &s.bundle2 {
-                    Some(b) => slots_for(&b.image, textures)?,
-                    None => Slots::One(white),
-                };
-                stages.push(DrawStage {
-                    gpu_stage: gpu_stages.len() as u32 - 1,
-                    pipeline,
-                    slots: [slots_for(&s.bundle.image, textures)?, slot1],
-                });
             }
-            draw_materials.push(DrawMaterial {
-                first_index,
-                index_count,
-                stages,
-            });
         }
         let layouts = [textures.layout, frame_layout];
         let pipelines = states
@@ -647,8 +685,22 @@ impl WorldRenderer {
             pipelines,
             triangles: indexes.len() / 3,
             material_count: draw_materials.len(),
+            // GL_EXP2 with density sqrt(-ln(1/255)) / depthForOpaque: the fog reaches
+            // 1/255 of the surface colour at depthForOpaque.
+            fog: fog_parms.map(|f| {
+                (
+                    f.color,
+                    (-(1.0f32 / 255.0).ln()).sqrt() / f.depth_for_opaque,
+                )
+            }),
             materials: draw_materials,
         })
+    }
+
+    /// The colour to clear the view to: the global fog's colour, or black.
+    pub fn clear_color(&self) -> [f32; 4] {
+        self.fog
+            .map_or([0.0, 0.0, 0.0, 1.0], |f| [f.0[0], f.0[1], f.0[2], 1.0])
     }
 
     /// Records the world for one view at `time` seconds (inside [`crate::Target::render`]).
@@ -663,7 +715,8 @@ impl WorldRenderer {
             view_proj: camera.view_proj(),
             view_origin: [camera.origin[0], camera.origin[1], camera.origin[2], 1.0],
             // tr.identityLight is 1 without overbright bits (the original's default).
-            params: [time, 1.0, 0.0, 0.0],
+            params: [time, 1.0, self.fog.map_or(0.0, |f| f.1), 0.0],
+            fog_color: self.fog.map_or([0.0; 4], |f| [f.0[0], f.0[1], f.0[2], 1.0]),
         };
         self.frame_buffer
             .mapped_mut()?

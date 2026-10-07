@@ -150,6 +150,11 @@ original does; no sky or fog yet), 2026-10-07:
 `ctf4` has global fog (a teal haze growing with distance), which is not drawn yet;
 the remaining `duel5_spawn2` difference is mostly sky (5.7% of the view undrawn).
 
+With global fog (GL_EXP2 on eye-space depth, per-stage fog colours, clear to the fog
+colour), 2026-10-07: `ctf4_spawn1` 0.16, `ctf4_spawn2` 0.23 (from 7.42), `ctf4_up`
+0.32 (from 4.17), all with 0.0% of pixels off by more than 16. Ten of the eleven
+views are now within 0.53 on average; `duel5_spawn2` (1.29) is the undrawn sky.
+
 ## Not measured yet
 
 - **Frame-time spikes** (1% lows): `timedemo` reports only the average. Needs

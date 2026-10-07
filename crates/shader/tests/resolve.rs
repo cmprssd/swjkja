@@ -204,3 +204,61 @@ fn names_lose_their_extension_and_out_of_range_lightmaps_become_vertex_lighting(
     );
     assert_eq!(m.stages[0].bundle.image, Image::White);
 }
+
+#[test]
+fn fog_colors_and_fog_pass_follow_finish_shader() {
+    // The implicit lightmap material: one collapsed stage, fogged with the fog colour.
+    let m = resolve("", "textures/a", [2, -1, -1, -1], NO_STYLES);
+    assert_eq!(
+        (m.stages[0].fog_color, m.fog_pass),
+        (FogColor::Fog, FogPass::Equal)
+    );
+    // Lightmap then a doubling blend: the second stage fades to black.
+    let m = resolve(
+        "s { { map $lightmap } { map b\nblendFunc GL_DST_COLOR GL_SRC_COLOR } }",
+        "s",
+        [2, -1, -1, -1],
+        NO_STYLES,
+    );
+    assert_eq!(
+        (m.stages[0].fog_color, m.stages[1].fog_color),
+        (FogColor::Fog, FogColor::Fog)
+    );
+    // Additive glow over a texture: black, so the glow fades out instead of tinting.
+    let m = resolve(
+        "s { { map a } { map b\nblendFunc add } }",
+        "s",
+        [LIGHTMAP_NONE; 4],
+        NO_STYLES,
+    );
+    assert_eq!(
+        (m.stages[0].fog_color, m.stages[1].fog_color),
+        (FogColor::Fog, FogColor::Black)
+    );
+    // A lightmap multiplied in: white (multiplying by white changes nothing).
+    let m = resolve(
+        "s { { map a } { map $lightmap\nblendFunc filter } }",
+        "s",
+        [2, -1, -1, -1],
+        NO_STYLES,
+    );
+    assert_eq!(m.stages.len(), 1); // collapsed
+    // Translucent materials are not fogged; fog volumes fog with less-or-equal.
+    assert_eq!(
+        resolve(
+            "s { { map a\nblendFunc blend } }",
+            "s",
+            [LIGHTMAP_NONE; 4],
+            NO_STYLES
+        )
+        .fog_pass,
+        FogPass::None
+    );
+    let m = resolve(
+        "s { surfaceparm fog\nfogparms ( 1 1 1 ) 100\n}",
+        "s",
+        [LIGHTMAP_NONE; 4],
+        NO_STYLES,
+    );
+    assert_eq!(m.fog_pass, FogPass::LessEqual);
+}

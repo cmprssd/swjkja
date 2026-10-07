@@ -66,6 +66,26 @@ pub enum FogAdjust {
     ModulateRgba,
 }
 
+/// The colour GL fog fades a stage towards (`mGLFogColorOverride`): the fog's own,
+/// or black or white so that additive and multiplying stages fade correctly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FogColor {
+    #[default]
+    Fog,
+    Black,
+    White,
+}
+
+/// Whether and how a material is fogged (`fogPass`, set by `GeneratePermanentShader`
+/// from the final sort).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FogPass {
+    #[default]
+    None,
+    Equal,
+    LessEqual,
+}
+
 /// How the second bundle combines with the first in a collapsed stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TexEnv {
@@ -93,6 +113,7 @@ pub struct MaterialStage {
     /// False for a stage without an image; drawing stops at the first one.
     pub active: bool,
     pub fog_adjust: FogAdjust,
+    pub fog_color: FogColor,
     pub surface_sprites: Vec<String>,
 }
 
@@ -108,6 +129,7 @@ pub struct Material {
     pub deforms: Vec<Deform>,
     pub sky: Option<Sky>,
     pub fog_parms: Option<FogParms>,
+    pub fog_pass: FogPass,
     pub no_mipmaps: bool,
     pub no_picmip: bool,
     pub entity_mergable: bool,
@@ -163,6 +185,7 @@ fn stage_from(s: &Stage, bundle: Bundle) -> MaterialStage {
         lightmap_style: 0,
         active: true,
         fog_adjust: FogAdjust::None,
+        fog_color: FogColor::Fog,
         surface_sprites: s.surface_sprites.clone(),
     }
 }
@@ -202,6 +225,7 @@ fn plain(
         lightmap_style: 0,
         active: true,
         fog_adjust: FogAdjust::None,
+        fog_color: FogColor::Fog,
         surface_sprites: Vec::new(),
     }
 }
@@ -218,6 +242,7 @@ impl Material {
             deforms: Vec::new(),
             sky: None,
             fog_parms: None,
+            fog_pass: FogPass::None,
             no_mipmaps: false,
             no_picmip: false,
             entity_mergable: false,
@@ -510,11 +535,15 @@ fn finish(mut m: Material, is_default: bool) -> Material {
     // still processed); default texture coordinates; sort and fog adjustments.
     let first_blended = m.stages.first().is_some_and(blended);
     let mut has_lightmap_stage = false;
-    for s in &mut m.stages {
+    let next_is_lightmap: Vec<bool> = (0..m.stages.len())
+        .map(|i| m.stages.get(i + 1).is_some_and(|n| n.bundle.is_lightmap))
+        .collect();
+    for (index, s) in m.stages.iter_mut().enumerate() {
         if s.bundle.image == Image::None {
             s.active = false;
             continue;
         }
+        s.fog_color = fog_color(s, index, next_is_lightmap[index]);
         if s.bundle.tc_gen == TcGen::Default {
             s.bundle.tc_gen = if s.bundle.is_lightmap {
                 TcGen::Lightmap
@@ -567,7 +596,42 @@ fn finish(mut m: Material, is_default: bool) -> Material {
     if processed == 0 && m.sky.is_none() {
         m.sort = SORT_FOG;
     }
+    // GeneratePermanentShader: opaque and see-through materials get fogged; this
+    // overrides even `noglfog`, as in the original.
+    m.fog_pass = if m.sort <= sort::SEE_THROUGH {
+        FogPass::Equal
+    } else if m.content_flags & crate::contents::FOG != 0 {
+        FogPass::LessEqual
+    } else {
+        FogPass::None
+    };
     m
+}
+
+/// `FinishShader`'s `mGLFogColorOverride` rules, in their order.
+fn fog_color(s: &MaterialStage, index: usize, next_is_lightmap: bool) -> FogColor {
+    use DstBlend as D;
+    use SrcBlend as S;
+    match (s.blend_src, s.blend_dst) {
+        (Some(S::One), Some(D::One)) => FogColor::Black,
+        (Some(S::SrcAlpha), Some(D::One))
+            if s.alpha_gen == AlphaGen::LightingSpecular && index > 0 =>
+        {
+            FogColor::Black
+        }
+        (Some(S::Zero), Some(D::Zero)) | (Some(S::One), Some(D::Zero)) => FogColor::White,
+        (None, None) if index > 0 => FogColor::White,
+        (None, None)
+            if s.bundle.is_lightmap && index < crate::MAX_STAGES - 1 && next_is_lightmap =>
+        {
+            FogColor::White
+        }
+        (Some(S::DstColor), Some(D::Zero)) if s.bundle.is_lightmap => FogColor::White,
+        (Some(S::DstColor), Some(D::Zero)) | (Some(S::One), Some(D::OneMinusSrcColor)) => {
+            FogColor::Black
+        }
+        _ => FogColor::Fog,
+    }
 }
 
 /// `CollapseMultitexture`: two stages into one where the blend pair is in the
