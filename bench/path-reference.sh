@@ -6,7 +6,7 @@
 # are the result. Every run must follow the same path (only the timestamps differ),
 # which this checks.
 # Opens a game window for about 30 seconds per run; refuses while the PC is in use
-# (see lib.sh).
+# (see lib.sh). FULLSCREEN=1 runs it in exclusive fullscreen at 1280x720 instead.
 #
 # Writes paths/<demo>-<n>.txt under the bench mod folder and copies them to OUT
 # (default: the scratch folder bench/out, not committed). The path itself (every
@@ -20,11 +20,13 @@ cd "$(dirname "$0")"
 runs=${RUNS:-3}
 demo=${DEMO:-ffa3}
 out=${OUT:-out}
+full=()
+[ "${FULLSCREEN:-}" = 1 ] && full=(+set r_fullscreen 1)
 mkdir -p "$out"
 put "demos/$demo.dm_26" "demos/$demo.dm_26"
 
 one() { # name
-	run_until 300 "swjkja path: [0-9]+ frames written" openjk.x86_64.exe "${OPENJK_SETTINGS[@]}" \
+	run_until 300 "swjkja path: [0-9]+ frames written" openjk.x86_64.exe "${OPENJK_SETTINGS[@]}" "${full[@]}" \
 		+set r_picmip 0 +set r_ext_compress_textures 0 +set r_DynamicGlow 0 \
 		+set cg_fov 80 +set r_textureMode GL_LINEAR_MIPMAP_NEAREST \
 		+set cg_draw2D 0 +set r_drawentities 0 +set cg_drawGun 0 \

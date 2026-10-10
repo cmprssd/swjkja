@@ -15,7 +15,7 @@ use winit::dpi::PhysicalSize;
 use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{CursorGrabMode, Window, WindowId};
+use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
 use crate::fly::{self, Keys};
 
@@ -24,6 +24,9 @@ pub struct Options {
     /// As the original names it, e.g. `mp/ffa3`.
     pub map: String,
     pub vsync: bool,
+    /// Exclusive fullscreen at [`SIZE`] (the screen switches to that mode), so the
+    /// desktop compositor is out of the way.
+    pub fullscreen: bool,
     /// Replay this path once instead of flying, then write it with this viewer's
     /// timestamps to `out` and quit.
     pub replay: Option<(Vec<PathFrame>, PathBuf)>,
@@ -76,12 +79,22 @@ struct View {
 impl App {
     fn open(&self, event_loop: &ActiveEventLoop) -> Result<View, String> {
         let o = &self.options;
+        let mut attributes = Window::default_attributes()
+            .with_title(format!("swjkja: {}", o.map))
+            .with_inner_size(PhysicalSize::new(SIZE.0, SIZE.1));
+        if o.fullscreen {
+            // The fastest refresh rate the monitor has at that size.
+            let mode = event_loop
+                .primary_monitor()
+                .into_iter()
+                .flat_map(|m| m.video_modes())
+                .filter(|m| (m.size().width, m.size().height) == SIZE)
+                .max_by_key(|m| (m.bit_depth(), m.refresh_rate_millihertz()))
+                .ok_or(format!("the monitor has no {}x{} mode", SIZE.0, SIZE.1))?;
+            attributes = attributes.with_fullscreen(Some(Fullscreen::Exclusive(mode)));
+        }
         let window = event_loop
-            .create_window(
-                Window::default_attributes()
-                    .with_title(format!("swjkja: {}", o.map))
-                    .with_inner_size(PhysicalSize::new(SIZE.0, SIZE.1)),
-            )
+            .create_window(attributes)
             .map_err(|e| e.to_string())?;
         let (gpu, surface) = Gpu::new_for_window(
             window.display_handle().map_err(|e| e.to_string())?.as_raw(),
