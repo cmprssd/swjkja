@@ -29,13 +29,18 @@ for map in $maps; do
 		# A single-player map may open with a cutscene: skip it as Esc would. The
 		# renderer draws only the areas the player's snapshot marks visible and
 		# single player never clears the screen, so the player is moved to each
-		# view (noclip, setviewpos) or other views' stale pixels stay on screen.
+		# view (noclip, setviewpos) or other views' stale pixels stay on screen. The
+		# player stands 128 units behind the eye: holding a saber, single player
+		# draws the player's body in third person, around the eye.
 		sp=0
 		case $map in mp/*) ;; *) sp=1; echo "exitview"; echo "wait 300"; echo "noclip" ;; esac
+		# Frozen NPCs leave the map as it spawned (one capture without it found
+		# t3_stamp's crates already broken).
+		if [ "$sp" = 1 ]; then echo "set d_npcfreeze 1"; fi
 		echo "set cg_draw2D 0; set r_drawentities $entities; set cg_drawGun 0"
 		echo "wait 300"
 		grep -v '^#' "$views" | awk -v m="$map" -v sp="$sp" '$1 == m {
-			if (sp) printf "setviewpos %s %s %s %s\nwait 100\n", $3, $4, $5, $7
+			if (sp) printf "setviewpos %.0f %.0f %s %s\nwait 100\n", $3 - 128 * cos($7 * 3.14159265 / 180), $4 - 128 * sin($7 * 3.14159265 / 180), $5, $7
 			printf "set cg_swjkjaView \"%s %s %s %s %s %s\"\nset cg_swjkjaTime %s\nwait 200\nscreenshot_png %s\nwait 100\n", $3, $4, $5, $6, $7, $8, $9, $2
 		}'
 		echo "quit"

@@ -247,6 +247,28 @@ also shows one world flare near the floor that the original does not draw.
 The 19 world views (references taken with `r_drawentities 0`) are unchanged by the
 models: all within 0.41 mean difference, at most 0.1% of pixels off by more than 16.
 
+## Single-player breakables compared with the reference, 2026-10-10
+
+Two t3_stamp views in `bench/reference/model-views.txt`, looking at breakables
+(`misc_model_breakable`) 350 units away, captured like the single-player static-model
+views, with two changes to `bench/capture-reference.sh`: the player stands 128 units
+behind the eye (t3_stamp starts the player with a saber, and single player draws a
+saber holder in third person, so the player's body stood around the eye), and NPCs
+are frozen (`d_npcfreeze 1`; one capture without it found the barrels already
+broken). Two captures with the final script gave the same numbers.
+
+| View | Mean difference | Pixels off by > 16 | Shows |
+|------|------|------|------|
+| stamp_barrels | 0.16 | 0.1% | barrels (`crate_02`) and small crates (`crate1`) by a wall, a control station |
+| stamp_crates | 5.00 | 13.8% | crates by a container, a corridor |
+
+stamp_barrels differs only by an ammo rack on the wall (`misc_model_ammo_rack`, not
+drawn yet). stamp_crates differs on its left, where the original draws brush
+entities (stacked containers and stairs: `func_breakable`, `func_static`), which this
+renderer does not draw yet, and the corridor behind them shows instead. The four
+single-player static-model views were captured before the script changes and not
+captured again.
+
 ## Single-player static models compared with the reference, 2026-10-10
 
 Four single-player views in `bench/reference/model-views.txt`, captured with OpenJK's

@@ -75,9 +75,9 @@ fn ffa5_static_models_cull_like_the_original() {
 
 /// Single player's fog choice depends on the view's fog when a model's box straddles
 /// fogs; the renderer bakes the choice seen from outside any fog, which is right only
-/// if no retail model's choice changes with the view.
+/// if no retail model's choice changes with the view. One does (a known difference).
 #[test]
-fn no_single_player_model_fog_depends_on_the_view() {
+fn only_one_single_player_model_fog_depends_on_the_view() {
     let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
         eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
         return;
@@ -105,7 +105,12 @@ fn no_single_player_model_fog_depends_on_the_view() {
                 FogVolume::load(&bsp, i, &parms)
             })
             .collect();
-        for p in swjkja_world::static_model::static_models(&bsp.entities, rules) {
+        let mut placements = swjkja_world::static_model::breakables(&bsp.entities, rules);
+        placements.extend(swjkja_world::static_model::static_models(
+            &bsp.entities,
+            rules,
+        ));
+        for p in placements {
             let model = md3s
                 .entry(p.model.to_ascii_lowercase())
                 .or_insert_with(|| swjkja_model::md3::Md3Model::load(&vfs, &p.model).ok());
@@ -115,6 +120,15 @@ fn no_single_player_model_fog_depends_on_the_view() {
                 let outside = sp_fog_num(&fogs, p.origin, md3, 0);
                 fogged += usize::from(outside != 0);
                 for view_fog in 1..=fogs.len() {
+                    // The one exception: taspir1's Raven's Claw (a breakable)
+                    // straddles fogs 1 and 2, and takes fog 1 from a view inside it.
+                    if name == "maps/taspir1.bsp"
+                        && p.origin == [-1808.0, -1400.0, 624.0]
+                        && view_fog == 1
+                    {
+                        assert_eq!((outside, sp_fog_num(&fogs, p.origin, md3, 1)), (2, 1));
+                        continue;
+                    }
                     assert_eq!(
                         sp_fog_num(&fogs, p.origin, md3, view_fog),
                         outside,
@@ -126,7 +140,7 @@ fn no_single_player_model_fog_depends_on_the_view() {
             }
         }
     }
-    eprintln!("{placed} single-player static models, {fogged} fogged levels");
+    eprintln!("{placed} single-player models, {fogged} fogged levels");
     assert!(placed > 0);
 }
 
@@ -169,4 +183,58 @@ fn single_player_draws_no_models_from_a_view_in_solid() {
     let tree_cluster = models.instances[tree].cull_cluster;
     assert!(tree_cluster >= 0);
     assert!(drawn(tree_cluster) > 0);
+}
+
+/// t3_stamp's breakables (crates and barrels) in the stamp_barrels view
+/// (bench/reference/model-views.txt): the server sends those whose box touches a
+/// cluster the view sees, the renderer culls them by the frustum.
+#[test]
+fn t3_stamp_breakables_cull_like_the_original() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t3_stamp.bsp").unwrap()).unwrap();
+    let mut models = StaticModels::load(&vfs, &bsp, &[], Rules::for_map("maps/t3_stamp.bsp"));
+    let vis = WorldVis::new(&bsp, vec![SurfaceCull::Never; bsp.surfaces.len()]);
+    models.locate(&vis);
+    let breakables = models
+        .instances
+        .iter()
+        .take_while(|m| m.entity_box.is_some())
+        .count();
+    assert_eq!(breakables, 193);
+    // The eye 350 units south of the barrels, looking north.
+    let camera = Camera::new([352.0, 342.0, 124.0], [10.0, 90.0, 0.0], 1280, 720);
+    let frustum = Frustum::new(&camera);
+    let cluster = vis.cluster(camera.origin);
+    let find = |origin: [f32; 3]| {
+        models
+            .instances
+            .iter()
+            .position(|m| m.origin == origin)
+            .unwrap()
+    };
+    let sent = |n: usize| vis.sends(cluster, models.instances[n].link.as_ref().unwrap());
+    let drawn = |n| models.visible(n, &camera, &frustum, cluster, &vis);
+    // The barrels ahead, at their most detailed level.
+    for barrels in [
+        [352.0, 692.0, 64.0],
+        [312.0, 720.0, 64.0],
+        [280.0, 704.0, 64.0],
+    ] {
+        assert_eq!(drawn(find(barrels)), Some(0), "{barrels:?}");
+    }
+    // In the same hangar, so sent, but behind the view.
+    let behind = find([-152.0, -1392.0, 64.0]);
+    assert!(sent(behind));
+    assert_eq!(drawn(behind), None);
+    // In another room the view's clusters cannot see.
+    let elsewhere = find([-1578.0, -1742.0, 152.0]);
+    assert!(!sent(elsewhere));
+    assert_eq!(drawn(elsewhere), None);
+    let count = |f: &dyn Fn(usize) -> bool| (0..breakables).filter(|&n| f(n)).count();
+    assert_eq!(count(&sent), 77);
+    assert_eq!(count(&|n| drawn(n).is_some()), 10);
 }

@@ -263,3 +263,29 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   patched like the multiplayer one to pin the view and game time
   (`bench/reference/openjk-view.patch`), in first person so the player stays out of
   sight.
+
+## 2026-10-10: Single player's breakables (decided by Claude, pending review)
+
+- **Breakables join the static models**, baked into world space the same way: the
+  game spawns them standing still, and until something damages or uses them they
+  do not move. They come first in the entity table, as cgame adds packet entities
+  before the static models.
+- **Culled as the server sends them**: a breakable is drawn when its linked box
+  (origin plus mins and maxs, an epsilon larger) touches a cluster the view's
+  cluster can see (`SV_AddEntitiesToPacket`), including the original's slip past 16
+  clusters, then culled by the renderer like a single-player static model, and lit
+  at its origin.
+- **Initial state only**: START_OFF breakables are not drawn, and animated ones
+  (AUTOANIMATE, 46 placements) draw their first frame, where the original cycles
+  their frames by game time.
+- **Breakables with "gravity" are left out** (4 on taspir2): the original drops them
+  to the floor with a box trace at spawn, which needs collision (brushes, patches,
+  terrain, solid entities). Three of them hang 2000 units above any floor, so drawn
+  where placed they would float.
+- **One model's fog depends on the view** (taspir1's Raven's Claw, a breakable that
+  straddles fogs 1 and 2, takes fog 1 from a view inside it): its fog stays the one
+  chosen from outside any fog, a known difference.
+- **Reference captures in single player stand the player 128 units behind the eye
+  and freeze NPCs** (`bench/capture-reference.sh`): a saber holder is drawn in third
+  person, around the eye, and one capture with NPCs free found t3_stamp's crates
+  already broken.
