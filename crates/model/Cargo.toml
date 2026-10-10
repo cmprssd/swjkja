@@ -1,0 +1,17 @@
+[package]
+name = "swjkja-model"
+description = "Jedi Academy models: MD3 meshes (Ghoul2 to come)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+swjkja-fs = { path = "../fs" }
+
+[dev-dependencies]
+swjkja-bsp = { path = "../bsp" }
+
+[lints]
+workspace = true

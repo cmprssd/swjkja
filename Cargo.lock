@@ -1498,6 +1498,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "swjkja-model"
+version = "0.0.0"
+dependencies = [
+ "swjkja-bsp",
+ "swjkja-fs",
+]
+
+[[package]]
 name = "swjkja-render"
 version = "0.0.0"
 dependencies = [
