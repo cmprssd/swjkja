@@ -276,11 +276,58 @@ Lesson from this measurement: mip chains must be built in ordinary memory and
 written once to the staging buffer. Building them in place in the staging memory
 (write-combined, very slow to read back) made loading 3x slower.
 
+## Same camera path, both engines (world only), 2026-10-10
+
+The reference's timedemo includes bots, models, effects and the HUD, which the new
+engine does not draw yet. To compare like with like, `bench/path-reference.sh` plays
+the ffa3 demo in the reference with entities and HUD off (`r_drawentities 0`,
+`cg_draw2D 0`) at the screenshot comparison's settings (`r_picmip 0`, uncompressed
+textures, no dynamic glow), and its `cg_swjkjaPath` patch logs every frame's view,
+game time and a microsecond timestamp. Every run followed the identical path (the
+script checks), which is committed as `bench/reference/ffa3.path` (1182 frames).
+`bench_path` renders that path with the new renderer at the same game times. Both
+frame times are the interval between the same point in consecutive frames, and both
+sets of statistics come from the same code (`bench_path --stats`). The FPS computed
+from the reference's timestamps matches its own timedemo result to 0.3 FPS.
+
+Alternating runs, three each, 1280x720 on the Intel HD Graphics 630 (Windows, other
+programs running: Chrome, Steam, GeForce NOW; 20-40% CPU load):
+
+| Engine | FPS (each run) | Median ms | p99 ms | 1% low FPS | Max ms |
+|------|------|------|------|------|------|
+| Reference (OpenJK) | 240.3, 241.9, 232.6 | 3.81-4.02 | 11.4-15.2 | 49-61 | 28.5-30.1 |
+| New renderer | 246.0, 248.6, 249.2 | 3.68-3.85 | 11.1-13.5 | 61-69 | 20.6-23.5 |
+
+**The new renderer is 3-6% faster on average, with better 1% lows and worst frames,
+on the same scenes.** That is not yet a convincing margin, and the reason is known:
+the bench loop waits for every frame before recording the next, so a frame costs
+recording (0.2-0.4 ms) plus GPU (2.8 ms on average) plus the wait, about 3.7 ms.
+The reference overlaps CPU and GPU work. The new renderer's GPU time alone allows
+about 350 FPS; a presentation loop with frames in flight (the next milestone step)
+removes the serial wait.
+
+Frame-time spikes on our side: in frames over 7 ms the recording took 0.2-0.9 ms and
+the GPU 2-5 ms, yet the frame took 7-23 ms. The lost time is in the per-frame submit
+and fence wait (the thread sleeps and wakes late), and in a few frames in preemption
+by other programs (recording 7-14 ms instead of 0.3). The serial loop causes the
+first; background load the second.
+
+Background load matters more than anything measured here: two earlier reference runs
+in the same session ran at 135 and 143 FPS (p99 43-45 ms) and then 231-233 FPS
+with nothing changed. Comparisons are therefore made with alternating runs.
+
+To rerun (opens a game window per run; see `bench/lib.sh`):
+
+    bench/path-reference.sh        # reference; RUNS=3, writes to bench/out
+    cargo run --release -p swjkja-render --example bench_path -- --stats bench/out/ffa3-*.txt
+    scripts/cargo-msvc.sh run --release -p swjkja-render --example bench_path -- \
+        <GameData> mp/ffa3 bench/reference/ffa3.path 3
+
 ## Not measured yet
 
-- **Frame-time spikes** (1% lows): `timedemo` reports only the average. Needs
-  per-frame timing, either PresentMon (requires admin rights) or a frame-time log
-  added to the reference build.
+- **Frame-time spikes** (1% lows) **of the full game**: the path benchmark above has
+  per-frame times for the world only; the reference with bots, models and effects
+  still reports only the timedemo average.
 - **Single-player**: the SP engine has no `timedemo`; it needs a scripted camera
   path or save-game route.
 - **Linux**: the reference runs on Windows only so far.

@@ -21,4 +21,6 @@
 !bench/reference/*.cfg
 !bench/reference/*.patch
 !bench/reference/*.txt
+# A camera path recorded from that demo (views only, no timings).
+!bench/reference/*.path
 !bench/demos/*.dm_26

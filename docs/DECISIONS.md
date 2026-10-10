@@ -122,3 +122,19 @@ does. It only affects at what distance one inserted vertex row may be dropped.
   with a clear message instead of crashing in the driver.
 - **naga's y flip is off**: shaders work in Vulkan's clip space directly. A GPU test
   checks that up is at the top and left at the left.
+
+## 2026-10-10: "Faster than the original" is measured on the same camera path (decided by Claude, pending review)
+
+The reference's timedemo FPS includes bots, models, effects and HUD, which the new
+engine does not draw yet, and our per-view numbers are fixed views. To compare like
+with like, the reference build logs every frame's view, game time and a microsecond
+timestamp during the ffa3 timedemo (`cg_swjkjaPath`, kept in memory and written at
+shutdown), with entities and HUD off and at the screenshot comparison's quality
+settings. The new renderer replays that exact path (`bench_path`). Both frame times
+are the interval between the same point in consecutive frames, and both engines'
+statistics come from one function.
+
+Remaining differences, stated with every result: the reference still runs the demo
+and cgame logic (light at r_drawentities 0) and presents to a window; the new
+renderer draws offscreen and waits for each frame before the next (no overlap of CPU
+and GPU work). The first favours us slightly, the second costs us.
