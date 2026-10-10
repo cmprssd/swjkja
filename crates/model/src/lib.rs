@@ -1,9 +1,12 @@
 //! Jedi Academy models: MD3 meshes ([`md3`]) and Ghoul2 meshes ([`glm`]) with the
-//! skeletons they are skinned by ([`gla`]).
+//! skeletons they are skinned by ([`gla`]), their skins ([`skin`]) and the frames
+//! their animations start at ([`animation`]).
 
+pub mod animation;
 pub mod gla;
 pub mod glm;
 pub mod md3;
+pub mod skin;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error(pub String);
