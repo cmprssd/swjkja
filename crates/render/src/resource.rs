@@ -251,6 +251,9 @@ pub struct Target {
 /// One frame being recorded into a [`Target`].
 pub struct Frame<'a> {
     pub cmd: vk::CommandBuffer,
+    /// Which copy of per-frame data this frame may write (below
+    /// [`crate::FRAMES_IN_FLIGHT`]): the GPU may still be reading the others.
+    pub slot: usize,
     gpu: &'a Gpu,
     target: &'a Target,
 }
@@ -442,6 +445,62 @@ impl Target {
         }
     }
 
+    /// Records one frame: clears to `clear` (and depth to 0), runs `draw` with per-frame
+    /// `slot`, and leaves the colour ready to read or copy. Timestamps go to queries
+    /// `first` and `first + 1` of `queries`, which must have been reset.
+    pub(crate) fn record(
+        &self,
+        gpu: &Gpu,
+        cmd: vk::CommandBuffer,
+        clear: [f32; 4],
+        slot: usize,
+        (queries, first): (vk::QueryPool, u32),
+        draw: impl FnOnce(&mut Frame),
+    ) {
+        let d = &gpu.device;
+        unsafe {
+            d.cmd_write_timestamp2(cmd, vk::PipelineStageFlags2::TOP_OF_PIPE, queries, first);
+            transition(
+                gpu,
+                cmd,
+                self.color.image,
+                vk::ImageAspectFlags::COLOR,
+                vk::ImageLayout::UNDEFINED,
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            );
+            transition(
+                gpu,
+                cmd,
+                self.depth.image,
+                vk::ImageAspectFlags::DEPTH,
+                vk::ImageLayout::UNDEFINED,
+                vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+            );
+            self.begin(gpu, cmd, Some(clear));
+            draw(&mut Frame {
+                cmd,
+                slot,
+                gpu,
+                target: self,
+            });
+            d.cmd_end_rendering(cmd);
+            transition(
+                gpu,
+                cmd,
+                self.color.image,
+                vk::ImageAspectFlags::COLOR,
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            );
+            d.cmd_write_timestamp2(
+                cmd,
+                vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
+                queries,
+                first + 1,
+            );
+        }
+    }
+
     /// Renders into the target: clears it to `clear` (RGBA, 0-1) and depth 0 (depth is
     /// reversed: 1 is nearest, 0 infinitely far), runs `draw`, and leaves the colour
     /// ready to read back.
@@ -468,39 +527,7 @@ impl Target {
         };
         let result = gpu.submit_and_wait(|cmd| unsafe {
             d.cmd_reset_query_pool(cmd, pool, 0, 2);
-            d.cmd_write_timestamp2(cmd, vk::PipelineStageFlags2::TOP_OF_PIPE, pool, 0);
-            transition(
-                gpu,
-                cmd,
-                self.color.image,
-                vk::ImageAspectFlags::COLOR,
-                vk::ImageLayout::UNDEFINED,
-                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            );
-            transition(
-                gpu,
-                cmd,
-                self.depth.image,
-                vk::ImageAspectFlags::DEPTH,
-                vk::ImageLayout::UNDEFINED,
-                vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-            );
-            self.begin(gpu, cmd, Some(clear));
-            draw(&mut Frame {
-                cmd,
-                gpu,
-                target: self,
-            });
-            gpu.device.cmd_end_rendering(cmd);
-            transition(
-                gpu,
-                cmd,
-                self.color.image,
-                vk::ImageAspectFlags::COLOR,
-                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-            );
-            d.cmd_write_timestamp2(cmd, vk::PipelineStageFlags2::BOTTOM_OF_PIPE, pool, 1);
+            self.record(gpu, cmd, clear, 0, (pool, 0), draw);
         });
         let mut stamps = [0u64; 2];
         let read = unsafe {

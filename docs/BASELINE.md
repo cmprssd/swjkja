@@ -316,6 +316,29 @@ Background load matters more than anything measured here: two earlier reference 
 in the same session ran at 135 and 143 FPS (p99 43-45 ms) and then 231-233 FPS
 with nothing changed. Comparisons are therefore made with alternating runs.
 
+### With frames in flight, 2026-10-10
+
+`FrameLoop` keeps two frames in flight: the CPU records a frame while the GPU draws
+the previous one, and per-frame data (uniforms, deformed geometry, visible index
+lists) has a copy per frame. `bench_path` now renders through it. Alternating runs
+in one session (quieter machine than above, so the reference ran faster too):
+
+| Engine | FPS (each run) | Median ms | p99 ms | 1% low FPS | Max ms |
+|------|------|------|------|------|------|
+| Reference (OpenJK) | 231.2, 255.9, 245.5 | 3.78-4.16 | 6.6-7.8 | 94-108 | 29.2-31.4 |
+| New renderer, frames in flight | 401.9, 398.7, 403.9 | 2.44-2.48 | 6.2-6.5 | 139-150 | 7.7-9.8 |
+
+**1.6-1.7x the reference's average frame rate on the same scenes, with better 1%
+lows and worst frames a third as long.** Against the serial loop (from `main`,
+alternating, 2 runs each of 3 launches): 258-272 FPS serial, 398-439 FPS with frames
+in flight.
+
+What limits it now is the GPU: the mean frame time (2.3-2.5 ms) equals the GPU's
+own time per frame. The GPU time itself fell from 2.8 ms (serial) to 2.3 ms;
+likely because the integrated GPU no longer idles between frames and keeps its
+clock up (not measured: the clock is not logged). Still not compared: presenting
+to a window, which the reference does and this bench does not.
+
 To rerun (opens a game window per run; see `bench/lib.sh`):
 
     bench/path-reference.sh        # reference; RUNS=3, writes to bench/out

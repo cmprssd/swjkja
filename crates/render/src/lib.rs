@@ -4,6 +4,7 @@
 pub mod camera;
 pub mod deform;
 pub mod fog;
+pub mod frames;
 pub mod gpu;
 pub mod parallel;
 pub mod pipeline;
@@ -15,6 +16,7 @@ pub mod world;
 
 pub use ash::vk;
 pub use camera::Camera;
+pub use frames::{FRAMES_IN_FLIGHT, FrameLoop};
 pub use gpu::{DeviceKind, Error, Gpu, Result};
 pub use pipeline::{Pipeline, State, spirv};
 pub use resource::{Buffer, Frame, Image, Target};

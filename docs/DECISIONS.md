@@ -138,3 +138,15 @@ Remaining differences, stated with every result: the reference still runs the de
 and cgame logic (light at r_drawentities 0) and presents to a window; the new
 renderer draws offscreen and waits for each frame before the next (no overlap of CPU
 and GPU work). The first favours us slightly, the second costs us.
+
+## 2026-10-10: Two frames in flight (decided by Claude, pending review)
+
+The renderer records a frame while the GPU draws the previous one (`FrameLoop`,
+`FRAMES_IN_FLIGHT = 2`), with a copy of every buffer a frame rewrites per slot. Two
+is the usual choice: it hides the CPU's recording and the submit/wait behind GPU
+work, and adds at most one frame of latency. More slots would only help if CPU
+frames varied by more than a GPU frame, which they do not here (recording takes
+0.2-0.9 ms, the GPU 2.3 ms). The colour and depth images are shared between frames;
+the GPU runs the frames in order and the full barriers between them keep that
+correct. A retail-data test renders along the benchmark path and checks each frame
+equals the same frame rendered alone (it fails if the frames share one slot).

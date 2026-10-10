@@ -28,6 +28,7 @@ use swjkja_world::{Geometry, World};
 use crate::camera::Camera;
 use crate::deform;
 use crate::fog;
+use crate::frames::FRAMES_IN_FLIGHT;
 use crate::gpu::{Gpu, Result};
 use crate::pipeline::{Pipeline, State, spirv};
 use crate::resource::{Buffer, Frame};
@@ -190,17 +191,14 @@ pub struct WorldRenderer {
     gpu: Arc<Gpu>,
     vertices: Buffer,
     indexes: Buffer,
-    /// Deformed geometry, rewritten every frame.
-    dynamic_vertices: Buffer,
-    dynamic_indexes: Buffer,
-    frame_buffer: Buffer,
+    /// What each frame rewrites, one copy per frame in flight ([`Frame::slot`]).
+    per_frame: Vec<PerFrame>,
     _stage_buffer: Buffer,
     _fog_buffer: Buffer,
     /// The map's light styles, animated each frame.
     styles: swjkja_world::style::LightStyles,
     frame_layout: vk::DescriptorSetLayout,
     frame_pool: vk::DescriptorPool,
-    frame_set: vk::DescriptorSet,
     pipelines: Vec<Pipeline>,
     /// In drawing order.
     materials: Vec<DrawMaterial>,
@@ -215,8 +213,17 @@ pub struct WorldRenderer {
     /// Per surface: the sky it opens (drawn only when one of its surfaces is visible).
     surface_gate: Vec<Option<usize>>,
     gate_count: usize,
-    /// The static index list on the CPU, and the per-frame list of visible ranges.
+    /// The static index list on the CPU (the visible ranges are copied from it).
     static_indexes: Vec<u32>,
+}
+
+/// One frame's data: its uniforms, deformed geometry and visible index ranges, and
+/// the descriptor set with its uniforms (and the shared stage and fog tables).
+struct PerFrame {
+    frame_buffer: Buffer,
+    frame_set: vk::DescriptorSet,
+    dynamic_vertices: Buffer,
+    dynamic_indexes: Buffer,
     culled_indexes: Buffer,
 }
 
@@ -1018,12 +1025,6 @@ impl WorldRenderer {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let frame_buffer = Buffer::new(
-            gpu,
-            vk::BufferUsageFlags::UNIFORM_BUFFER,
-            size_of::<FrameData>() as u64,
-            MemoryLocation::CpuToGpu,
-        )?;
         let stage_buffer = Buffer::with_data(
             gpu,
             vk::BufferUsageFlags::STORAGE_BUFFER,
@@ -1037,86 +1038,91 @@ impl WorldRenderer {
         let sizes = [
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
-                descriptor_count: 1,
+                descriptor_count: FRAMES_IN_FLIGHT as u32,
             },
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: 2,
+                descriptor_count: 2 * FRAMES_IN_FLIGHT as u32,
             },
         ];
         let frame_pool = unsafe {
             d.create_descriptor_pool(
                 &vk::DescriptorPoolCreateInfo::default()
-                    .max_sets(1)
+                    .max_sets(FRAMES_IN_FLIGHT as u32)
                     .pool_sizes(&sizes),
                 None,
             )?
         };
-        let frame_set = unsafe {
+        let frame_sets = unsafe {
             d.allocate_descriptor_sets(
                 &vk::DescriptorSetAllocateInfo::default()
                     .descriptor_pool(frame_pool)
-                    .set_layouts(&[frame_layout]),
-            )?[0]
+                    .set_layouts(&[frame_layout; FRAMES_IN_FLIGHT]),
+            )?
         };
-        let ubo = [vk::DescriptorBufferInfo {
-            buffer: frame_buffer.buffer,
-            offset: 0,
-            range: vk::WHOLE_SIZE,
-        }];
-        let ssbo = [vk::DescriptorBufferInfo {
-            buffer: stage_buffer.buffer,
-            offset: 0,
-            range: vk::WHOLE_SIZE,
-        }];
-        let fog_info = [vk::DescriptorBufferInfo {
-            buffer: fog_buffer.buffer,
-            offset: 0,
-            range: vk::WHOLE_SIZE,
-        }];
-        let writes = [
-            vk::WriteDescriptorSet::default()
-                .dst_set(frame_set)
-                .dst_binding(0)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-                .buffer_info(&ubo),
-            vk::WriteDescriptorSet::default()
-                .dst_set(frame_set)
-                .dst_binding(1)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(&ssbo),
-            vk::WriteDescriptorSet::default()
-                .dst_set(frame_set)
-                .dst_binding(2)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(&fog_info),
-        ];
-        unsafe { d.update_descriptor_sets(&writes, &[]) };
-
-        let dynamic_vertices_buffer = Buffer::new(
-            gpu,
-            vk::BufferUsageFlags::VERTEX_BUFFER,
-            (dynamic_vertices.max(1) as usize * size_of::<Vertex>()) as u64,
-            MemoryLocation::CpuToGpu,
-        )?;
-        let culled_indexes = Buffer::new(
-            gpu,
-            vk::BufferUsageFlags::INDEX_BUFFER,
-            indexes.len().max(1) as u64 * 4,
-            MemoryLocation::CpuToGpu,
-        )?;
-        let dynamic_indexes_buffer = Buffer::new(
-            gpu,
-            vk::BufferUsageFlags::INDEX_BUFFER,
-            dynamic_indexes.max(1) as u64 * 4,
-            MemoryLocation::CpuToGpu,
-        )?;
+        let mut per_frame = Vec::with_capacity(FRAMES_IN_FLIGHT);
+        for frame_set in frame_sets {
+            let frame_buffer = Buffer::new(
+                gpu,
+                vk::BufferUsageFlags::UNIFORM_BUFFER,
+                size_of::<FrameData>() as u64,
+                MemoryLocation::CpuToGpu,
+            )?;
+            let info = |b: &Buffer| {
+                [vk::DescriptorBufferInfo {
+                    buffer: b.buffer,
+                    offset: 0,
+                    range: vk::WHOLE_SIZE,
+                }]
+            };
+            let (ubo, ssbo, fog_info) =
+                (info(&frame_buffer), info(&stage_buffer), info(&fog_buffer));
+            let writes = [
+                vk::WriteDescriptorSet::default()
+                    .dst_set(frame_set)
+                    .dst_binding(0)
+                    .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                    .buffer_info(&ubo),
+                vk::WriteDescriptorSet::default()
+                    .dst_set(frame_set)
+                    .dst_binding(1)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .buffer_info(&ssbo),
+                vk::WriteDescriptorSet::default()
+                    .dst_set(frame_set)
+                    .dst_binding(2)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .buffer_info(&fog_info),
+            ];
+            unsafe { d.update_descriptor_sets(&writes, &[]) };
+            per_frame.push(PerFrame {
+                frame_buffer,
+                frame_set,
+                dynamic_vertices: Buffer::new(
+                    gpu,
+                    vk::BufferUsageFlags::VERTEX_BUFFER,
+                    (dynamic_vertices.max(1) as usize * size_of::<Vertex>()) as u64,
+                    MemoryLocation::CpuToGpu,
+                )?,
+                dynamic_indexes: Buffer::new(
+                    gpu,
+                    vk::BufferUsageFlags::INDEX_BUFFER,
+                    dynamic_indexes.max(1) as u64 * 4,
+                    MemoryLocation::CpuToGpu,
+                )?,
+                culled_indexes: Buffer::new(
+                    gpu,
+                    vk::BufferUsageFlags::INDEX_BUFFER,
+                    indexes.len().max(1) as u64 * 4,
+                    MemoryLocation::CpuToGpu,
+                )?,
+            });
+        }
         // Every texture's pixels, in a few large copies.
         uploads.borrow_mut().flush(gpu)?;
         Ok(Self {
             gpu: gpu.clone(),
-            dynamic_vertices: dynamic_vertices_buffer,
-            dynamic_indexes: dynamic_indexes_buffer,
+            per_frame,
             vertices: Buffer::with_data(
                 gpu,
                 vk::BufferUsageFlags::VERTEX_BUFFER,
@@ -1128,13 +1134,11 @@ impl WorldRenderer {
                 bytemuck::cast_slice(&indexes),
             )?,
             static_indexes: indexes.clone(),
-            frame_buffer,
             _stage_buffer: stage_buffer,
             _fog_buffer: fog_buffer,
             styles: swjkja_world::style::LightStyles::spawn(&bsp.entities),
             frame_layout,
             frame_pool,
-            frame_set,
             pipelines,
             triangles: indexes.len() / 3,
             material_count: draw_materials.len(),
@@ -1151,7 +1155,6 @@ impl WorldRenderer {
             surface_draw,
             surface_gate,
             gate_count: gates,
-            culled_indexes,
         })
     }
 
@@ -1188,7 +1191,9 @@ impl WorldRenderer {
                 .colors((f64::from(time) * 1000.0).round() as i64)
                 .map(|c| c.map(f32::from)),
         };
-        self.frame_buffer
+        let slot = frame.slot;
+        self.per_frame[slot]
+            .frame_buffer
             .mapped_mut()?
             .copy_from_slice(bytemuck::bytes_of(&data));
 
@@ -1200,8 +1205,15 @@ impl WorldRenderer {
             left: [-right[0], -right[1], -right[2]],
             up,
         };
-        let vb = self.dynamic_vertices.mapped_mut()?;
-        let ib = self.dynamic_indexes.mapped_mut()?;
+        let PerFrame {
+            dynamic_vertices,
+            dynamic_indexes,
+            culled_indexes,
+            frame_set,
+            ..
+        } = &mut self.per_frame[slot];
+        let vb = dynamic_vertices.mapped_mut()?;
+        let ib = dynamic_indexes.mapped_mut()?;
         for m in &mut self.materials {
             let Some(dynamic) = &m.dynamic else { continue };
             let (verts, indexes) = match &dynamic.source {
@@ -1255,7 +1267,7 @@ impl WorldRenderer {
         for m in self.materials.iter_mut().filter(|m| m.culled) {
             m.index_count = 0;
         }
-        let out = self.culled_indexes.mapped_mut()?;
+        let out = culled_indexes.mapped_mut()?;
         let mut at = 0usize;
         for (i, &(m, start, count)) in ranges.iter().enumerate() {
             if i == 0 || ranges[i - 1].0 != m {
@@ -1271,7 +1283,8 @@ impl WorldRenderer {
             return Ok(());
         };
         let d = &self.gpu.device;
-        let sets = [textures.set, self.frame_set];
+        let sets = [textures.set, *frame_set];
+        let frame_data = &self.per_frame[slot];
         let mut depth_copied = false;
         let mut bound = usize::MAX;
         let mut buffers_bound: Option<Bound> = None;
@@ -1312,10 +1325,11 @@ impl WorldRenderer {
                 if buffers_bound != Some(geometry) {
                     buffers_bound = Some(geometry);
                     let (v, i) = match geometry {
-                        Bound::Dynamic => {
-                            (self.dynamic_vertices.buffer, self.dynamic_indexes.buffer)
-                        }
-                        Bound::Visible => (self.vertices.buffer, self.culled_indexes.buffer),
+                        Bound::Dynamic => (
+                            frame_data.dynamic_vertices.buffer,
+                            frame_data.dynamic_indexes.buffer,
+                        ),
+                        Bound::Visible => (self.vertices.buffer, frame_data.culled_indexes.buffer),
                         Bound::Static => (self.vertices.buffer, self.indexes.buffer),
                     };
                     d.cmd_bind_vertex_buffers(cmd, 0, &[v], &[0]);
