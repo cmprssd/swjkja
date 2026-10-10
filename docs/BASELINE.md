@@ -247,6 +247,15 @@ also shows one world flare near the floor that the original does not draw.
 The 19 world views (references taken with `r_drawentities 0`) are unchanged by the
 models: all within 0.41 mean difference, at most 0.1% of pixels off by more than 16.
 
+## Single-player ammo rack compared with the reference, 2026-10-10
+
+stamp_barrels (above) has an ammo rack on the wall with a blaster pack and a medpack.
+With racks drawn it matches the original at 0.13 mean difference (0.16 before), 0.0%
+of pixels off by more than 16, against the same reference capture. Around the rack
+(130x130 pixels) the difference is 0.36, an outline on the medpack: the original
+spreads rack items at random (here up to 2 units and 4 degrees), which this
+renderer leaves out (see DECISIONS.md).
+
 ## Single-player breakables compared with the reference, 2026-10-10
 
 Two t3_stamp views in `bench/reference/model-views.txt`, looking at breakables

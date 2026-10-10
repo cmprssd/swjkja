@@ -5,7 +5,7 @@
 # keep NPCs and breakables out of sight; they were found around clusters of static
 # models at least 1200 units from any NPC's spawn point. The t3_stamp views look at
 # breakables (barrels and crates) 350 units away; stamp_barrels has an ammo rack in
-# sight, stamp_crates brush entities (containers, stairs), neither drawn yet.
+# sight, stamp_crates brush entities (containers, stairs), not drawn yet.
 # Candidates whose capture had undrawn regions were dropped: single player leaves
 # the screen uncleared, and draws only the areas the player's snapshot marks
 # visible (none from an eye in solid).

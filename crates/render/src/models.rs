@@ -88,7 +88,7 @@ pub struct Instance {
 }
 
 pub struct StaticModels {
-    /// Entity `n + 1` is instance `n` (entity 0 is the world): the breakables, then
+    /// Entity `n + 1` is instance `n` (entity 0 is the world): the game entities, then
     /// the static models, in the order the original adds them to the scene.
     pub instances: Vec<Instance>,
     pub pieces: Vec<Piece>,
@@ -191,7 +191,7 @@ pub fn lod(count: usize, lod_radius: f32, origin: Vec3, camera: &Camera, scale: 
 }
 
 impl StaticModels {
-    /// Loads the models the map places under `rules` (its breakables in their initial
+    /// Loads the models the map places under `rules` (its game entities in their initial
     /// state, then its static models) and bakes each placement (call
     /// [`StaticModels::locate`] before drawing). A model that does not load stops the
     /// original's map load; here its placements are skipped with a warning.
@@ -201,7 +201,7 @@ impl StaticModels {
     /// inside fog 1); a retail-data test checks there are no others.
     pub fn load(vfs: &Vfs, bsp: &Bsp, fogs: &[FogVolume], rules: Rules) -> Self {
         let sp = matches!(rules, Rules::SinglePlayer { .. });
-        let mut placements = swjkja_world::static_model::breakables(&bsp.entities, rules);
+        let mut placements = swjkja_world::static_model::entity_models(&bsp.entities, rules);
         placements.extend(swjkja_world::static_model::static_models(
             &bsp.entities,
             rules,

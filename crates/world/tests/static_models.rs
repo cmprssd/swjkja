@@ -1,5 +1,5 @@
 use swjkja_bsp::Entity;
-use swjkja_world::static_model::{Rules, angles_to_axis, breakables, static_models};
+use swjkja_world::static_model::{Rules, angles_to_axis, entity_models, static_models};
 
 fn entity(pairs: &[(&str, &str)]) -> Entity {
     Entity {
@@ -217,20 +217,20 @@ fn breakables_spawn_in_single_player_unless_started_off() {
         breakable(&[("gravity", "0")]),
         entity(&[("classname", "misc_model_breakable"), ("origin", "0 0 0")]),
     ];
-    assert_eq!(breakables(&entities, SP).len(), 3);
+    assert_eq!(entity_models(&entities, SP).len(), 3);
     assert_eq!(
-        breakables(&entities, Rules::SinglePlayer { skill: 1 }).len(),
+        entity_models(&entities, Rules::SinglePlayer { skill: 1 }).len(),
         4
     );
     // Multiplayer maps place none, and its game would not spawn these.
-    assert!(breakables(&entities, FFA).is_empty());
+    assert!(entity_models(&entities, FFA).is_empty());
     // Static models are not breakables, nor the other way round.
     assert!(static_models(&entities, SP).is_empty());
 }
 
 #[test]
 fn a_breakable_is_linked_by_its_box_an_epsilon_larger() {
-    let models = breakables(
+    let models = entity_models(
         &[
             breakable(&[("angle", "90")]),
             breakable(&[("mins", "-8 -8 0"), ("maxs", "8 8 40")]),
@@ -266,7 +266,7 @@ fn a_breakable_is_linked_by_its_box_an_epsilon_larger() {
 
 #[test]
 fn a_scaled_breakable_scales_its_box_and_rises_by_its_sunken_bottom() {
-    let models = breakables(
+    let models = entity_models(
         &[
             breakable(&[("modelscale", "2")]),
             breakable(&[("modelscale_vec", "1 1 0.5"), ("modelscale", "3")]),
@@ -306,5 +306,166 @@ fn a_scaled_breakable_scales_its_box_and_rises_by_its_sunken_bottom() {
     assert_eq!(
         bomber.entity_box,
         Some([[-71.0, -61.0, -51.0], [91.0, 101.0, 111.0]])
+    );
+}
+
+fn rack(class: &str, extra: &[(&str, &str)]) -> Entity {
+    let mut pairs = vec![
+        ("classname", class),
+        ("model", "models/map_objects/imperial/weaponsrung.md3"),
+        ("origin", "100 200 50"),
+        ("angle", "90"),
+    ];
+    pairs.extend_from_slice(extra);
+    entity(&pairs)
+}
+
+#[test]
+fn racks_draw_their_own_model_linked_by_a_point() {
+    // The gun rack's weapons are Ghoul2 models, not drawn yet.
+    let models = entity_models(&[rack("misc_model_gun_rack", &[("spawnflags", "7")])], SP);
+    let [gun_rack] = &models[..] else {
+        panic!("{models:?}")
+    };
+    assert_eq!(gun_rack.model, "models/map_objects/kejim/weaponsrack.md3");
+    assert_eq!(gun_rack.origin, [100.0, 200.0, 50.0]);
+    assert!(
+        close(gun_rack.axes[0], [0.0, 1.0, 0.0]),
+        "{:?}",
+        gun_rack.axes
+    );
+    assert!(gun_rack.normalized);
+    assert_eq!(
+        gun_rack.entity_box,
+        Some([[99.0, 199.0, 49.0], [101.0, 201.0, 51.0]])
+    );
+    let models = entity_models(&[rack("misc_model_ammo_rack", &[])], SP);
+    assert_eq!(models[0].model, "models/map_objects/kejim/weaponsrung.md3");
+    assert_eq!(models[0].entity_box, gun_rack.entity_box);
+}
+
+#[test]
+fn an_ammo_rack_fills_its_shelf_with_the_first_ammo() {
+    let models = entity_models(&[rack("misc_model_ammo_rack", &[])], SP);
+    let [_, goods @ ..] = &models[..] else {
+        panic!("{models:?}")
+    };
+    // No ammo checked: blaster packs, 8 units apart along the rack's right (+x at
+    // yaw 90), 7 units up, turned 90 degrees from the rack.
+    let origins: Vec<_> = goods.iter().map(|m| m.origin).collect();
+    assert_eq!(
+        origins,
+        [
+            [92.0, 200.0, 57.0],
+            [100.0, 200.0, 57.0],
+            [108.0, 200.0, 57.0]
+        ]
+    );
+    for m in goods {
+        assert_eq!(m.model, "models/items/energy_cell.md3");
+        assert!(close(m.axes[0], [-1.0, 0.0, 0.0]), "{:?}", m.axes);
+    }
+    assert_eq!(
+        goods[0].entity_box,
+        Some([[83.0, 191.0, 56.0], [101.0, 209.0, 74.0]])
+    );
+}
+
+#[test]
+fn an_ammo_rack_places_checked_ammo_then_a_medpack_beside_the_weapon() {
+    let models = |flags: &str| {
+        entity_models(
+            &[rack("misc_model_ammo_rack", &[("spawnflags", flags)])],
+            SP,
+        )
+        .into_iter()
+        .skip(1)
+        .map(|m| (m.model, m.origin))
+        .collect::<Vec<_>>()
+    };
+    let bolts = || "models/items/metallic_bolts.md3".to_owned();
+    let medpac = || "models/items/medpac.md3".to_owned();
+    // Metal bolts, health, no fill: one pack, and the medpack on the right, higher.
+    assert_eq!(
+        models("82"),
+        [
+            (bolts(), [92.0, 200.0, 57.0]),
+            (medpac(), [106.0, 200.0, 24.0 + 50.0])
+        ]
+    );
+    // With a weapon (a repeater, not drawn) on the right, the medpack goes left.
+    assert_eq!(models("90")[1], (medpac(), [94.0, 200.0, 74.0]));
+    // A power cell's rack takes no weapon, so the medpack stays right.
+    assert_eq!(models("120")[1].1, [106.0, 200.0, 74.0]);
+    // Every ammo type, in the original's order: one each.
+    let all: Vec<_> = models("103").into_iter().map(|(m, _)| m).collect();
+    assert_eq!(
+        all,
+        [
+            "models/items/energy_cell.md3",
+            "models/items/metallic_bolts.md3",
+            "models/items/power_cell.md3",
+            "models/items/rockets.md3",
+        ]
+    );
+}
+
+#[test]
+fn rack_goods_come_after_every_map_entity() {
+    let models = entity_models(
+        &[
+            rack("misc_model_ammo_rack", &[("spawnflags", "65")]),
+            breakable(&[]),
+        ],
+        SP,
+    );
+    let names: Vec<_> = models.iter().map(|m| m.model.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "models/map_objects/kejim/weaponsrung.md3",
+            "m.md3",
+            "models/items/energy_cell.md3"
+        ]
+    );
+}
+
+#[test]
+fn beacons_and_bombs_wait_for_a_targetname_to_be_used() {
+    let at = |class| {
+        entity(&[
+            ("classname", class),
+            ("origin", "0 0 0"),
+            ("model", "x.md3"),
+        ])
+    };
+    let named = |class| {
+        entity(&[
+            ("classname", class),
+            ("origin", "0 0 0"),
+            ("targetname", "bigbomb"),
+        ])
+    };
+    let models = entity_models(
+        &[
+            at("misc_model_beacon"),
+            at("misc_model_bomb_planted"),
+            named("misc_model_beacon"),
+            named("misc_model_bomb_planted"),
+        ],
+        SP,
+    );
+    let [beacon, bomb] = &models[..] else {
+        panic!("{models:?}")
+    };
+    assert_eq!(beacon.model, "models/map_objects/wedge/beacon.md3");
+    assert_eq!(
+        beacon.entity_box,
+        Some([[-17.0, -17.0, -1.0], [17.0, 17.0, 25.0]])
+    );
+    assert_eq!(bomb.model, "models/map_objects/factory/bomb_new_deact.md3");
+    assert_eq!(
+        bomb.entity_box,
+        Some([[-17.0, -17.0, -1.0], [17.0, 17.0, 71.0]])
     );
 }
