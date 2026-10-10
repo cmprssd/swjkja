@@ -14,39 +14,8 @@
 //! draws to a window with vsync off.
 use std::time::Instant;
 
-use swjkja_render::{Camera, FrameLoop, Gpu, Target, TextureSet, WorldRenderer};
-
-/// One recorded frame: `usec time_ms x y z pitch yaw roll fov_x`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct PathFrame {
-    usec: i64,
-    time_ms: i32,
-    origin: [f32; 3],
-    angles: [f32; 3],
-    fov_x: f32,
-}
-
-fn parse_path(text: &str) -> Result<Vec<PathFrame>, String> {
-    text.lines()
-        .enumerate()
-        .filter(|(_, l)| !l.trim().is_empty() && !l.starts_with('#'))
-        .map(|(n, l)| {
-            let f: Vec<&str> = l.split_whitespace().collect();
-            let bad = || format!("line {}: expected 9 numbers: {l}", n + 1);
-            if f.len() != 9 {
-                return Err(bad());
-            }
-            let num = |i: usize| f[i].parse::<f32>().map_err(|_| bad());
-            Ok(PathFrame {
-                usec: f[0].parse().map_err(|_| bad())?,
-                time_ms: f[1].parse().map_err(|_| bad())?,
-                origin: [num(2)?, num(3)?, num(4)?],
-                angles: [num(5)?, num(6)?, num(7)?],
-                fov_x: num(8)?,
-            })
-        })
-        .collect()
-}
+use swjkja_render::path::{self, PathFrame};
+use swjkja_render::{FrameLoop, Gpu, Target, TextureSet, WorldRenderer};
 
 /// Frame times in ms from timestamps in µs taken at the same point of every frame.
 fn intervals_ms(usec: &[i64]) -> Vec<f64> {
@@ -102,7 +71,7 @@ fn print_row(name: &str, s: &Stats) {
 
 fn read_path(file: &str) -> Vec<PathFrame> {
     let text = std::fs::read_to_string(file).unwrap_or_else(|e| panic!("{file}: {e}"));
-    let path = parse_path(&text).unwrap_or_else(|e| panic!("{file}: {e}"));
+    let path = path::parse(&text).unwrap_or_else(|e| panic!("{file}: {e}"));
     assert!(path.len() >= 2, "{file}: needs at least two frames");
     path
 }
@@ -146,8 +115,7 @@ fn main() {
         let start = Instant::now();
         for f in &path {
             usec.push(start.elapsed().as_micros() as i64);
-            let mut camera = Camera::new(f.origin, f.angles, 1280, 720);
-            camera.fov_x = f.fov_x;
+            let camera = f.camera(1280, 720);
             let time = f.time_ms as f32 / 1000.0;
             gpu_ms.extend(
                 frames
@@ -161,12 +129,7 @@ fn main() {
         }
         gpu_ms.extend(frames.finish().unwrap());
         if let (Some(out), true) = (out, run > 0) {
-            let mut text = String::from("# usec time_ms x y z pitch yaw roll fov_x\n");
-            for (f, us) in path.iter().zip(&usec) {
-                let ([x, y, z], [p, w, r]) = (f.origin, f.angles);
-                text += &format!("{us} {} {x} {y} {z} {p} {w} {r} {}\n", f.time_ms, f.fov_x);
-            }
-            std::fs::write(format!("{out}-{run}.txt"), text).unwrap();
+            std::fs::write(format!("{out}-{run}.txt"), path::write(&path, &usec)).unwrap();
         }
         if run > 0 {
             let gpu_mean = gpu_ms.iter().sum::<f64>() / gpu_ms.len() as f64;
@@ -183,33 +146,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_recorded_frames() {
-        let path = parse_path(
-            "# usec time_ms x y z pitch yaw roll fov_x\n\
-             1000 5050 -1.5 2 3.25 10 -90.5 0 80\n\n\
-             3500 5100 0 0 0 0 0 0 80.000\n",
-        )
-        .unwrap();
-        assert_eq!(
-            path[0],
-            PathFrame {
-                usec: 1000,
-                time_ms: 5050,
-                origin: [-1.5, 2.0, 3.25],
-                angles: [10.0, -90.5, 0.0],
-                fov_x: 80.0,
-            }
-        );
-        assert_eq!(path.len(), 2);
+    fn intervals() {
         assert_eq!(intervals_ms(&[1000, 3500, 4000]), vec![2.5, 0.5]);
-    }
-
-    #[test]
-    fn rejects_short_lines() {
-        assert_eq!(
-            parse_path("1 2 3\n"),
-            Err("line 1: expected 9 numbers: 1 2 3".to_string())
-        );
     }
 
     #[test]

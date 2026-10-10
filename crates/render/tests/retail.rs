@@ -14,18 +14,13 @@ fn frames_in_flight_render_like_single_frames() {
         eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
         return;
     };
-    // usec time_ms x y z pitch yaw roll fov_x
-    let path: Vec<(f32, Camera)> = include_str!("../../../bench/reference/ffa3.path")
-        .lines()
-        .filter(|l| !l.starts_with('#'))
-        .take(60)
-        .map(|l| {
-            let f: Vec<f32> = l.split_whitespace().map(|v| v.parse().unwrap()).collect();
-            let mut camera = Camera::new([f[2], f[3], f[4]], [f[5], f[6], f[7]], 320, 180);
-            camera.fov_x = f[8];
-            (f[1] / 1000.0, camera)
-        })
-        .collect();
+    let path: Vec<(f32, Camera)> =
+        swjkja_render::path::parse(include_str!("../../../bench/reference/ffa3.path"))
+            .unwrap()
+            .iter()
+            .take(60)
+            .map(|f| (f.time_ms as f32 / 1000.0, f.camera(320, 180)))
+            .collect();
 
     let gpu = Gpu::new_headless().unwrap();
     let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();

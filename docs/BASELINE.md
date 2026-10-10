@@ -339,6 +339,36 @@ likely because the integrated GPU no longer idles between frames and keeps its
 clock up (not measured: the clock is not logged). Still not compared: presenting
 to a window, which the reference does and this bench does not.
 
+### Presenting to a window, 2026-10-10
+
+`swjkja view <GameData> mp/ffa3 --replay bench/reference/ffa3.path <out>` draws the
+same path in a 1280x720 window (B8G8R8A8_UNORM swapchain, IMMEDIATE present mode,
+the target copied to the swapchain image each frame) and writes its timestamps in
+the path format. Alternating runs (reference, window, offscreen), three each, on a
+busier machine (Chrome using about 1.4 of the 4 cores):
+
+| Run | FPS (each run) | Median ms | p99 ms | 1% low FPS | Max ms |
+|------|------|------|------|------|------|
+| Reference (OpenJK, window) | 195.9, 196.8, 202.4 | 4.29-4.48 | 10.4-11.2 | 69-74 | 33-41 |
+| New renderer, window | 159.0, 162.9, 160.2 | 5.57-6.35 | 16.8-18.6 | 48-51 | 26-30 |
+| New renderer, offscreen | 281.3, 279.6, 289.8 | 2.86-3.12 | 10.0-12.8 | 42-92 | 12-49 |
+
+**In a window the new renderer is slower than the original on this machine (about
+0.8x), although it is 1.4x faster offscreen in the same runs.** Presenting costs
+about 3 ms per frame. Where it goes, from timing each step over 500 frames: the
+fence wait 2.7-3.6 ms, acquiring the image 0.6-0.9 ms, recording and submitting
+2.1-2.4 ms, `vkQueuePresentKHR` 0.13 ms. The CPU waits on the GPU for half of each
+frame although our own GPU work (2.8-3.2 ms with timestamps) is the same as
+offscreen, so the GPU is busy with presenting: the copy to the swapchain image, and
+the desktop compositor's work on the same integrated GPU. Ruled out: the event loop
+(drawing outside `RedrawRequested` moved the time into the fence wait, no gain), a
+fourth swapchain image (155-158 -> 164-167 FPS, within the noise). MAILBOX is not
+offered by this driver (only IMMEDIATE and FIFO).
+
+Not yet known: how Windows presents the window (composed copy or independent flip)
+for the Vulkan swapchain and for the reference's OpenGL. PresentMon shows it but
+needs administrator rights.
+
 To rerun (opens a game window per run; see `bench/lib.sh`):
 
     bench/path-reference.sh        # reference; RUNS=3, writes to bench/out
