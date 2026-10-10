@@ -1,5 +1,6 @@
 use swjkja_model::gla::{Gla, IDENTITY, Mat34, ROOT, multiply, uncompress};
 use swjkja_model::glm::{Glm, SURFACE_IS_BOLT, SURFACE_NO_DESCENDANTS, SURFACE_OFF, skin};
+use swjkja_model::skin::Skin;
 
 fn ints(v: &[i32]) -> Vec<u8> {
     v.iter().flat_map(|i| i.to_le_bytes()).collect()
@@ -226,6 +227,69 @@ fn drawing_walks_the_hierarchy_skipping_tags_and_hidden_branches() {
     assert_eq!(glm.surfaces[1].shader, "");
     // An off surface still leads to its children, unless it hides them.
     assert_eq!(glm.drawn_surfaces(), [0, 3]);
+}
+
+#[test]
+fn skins_and_switches_turn_surfaces_off_and_on() {
+    let hierarchy: [Hier; 6] = [
+        ("Body", 0, "models/body", -1, &[1, 2, 4]),
+        ("*flash", SURFACE_IS_BOLT, "[nomaterial]", 0, &[]),
+        ("arm_off", SURFACE_OFF, "", 0, &[3]),
+        ("hand", 0, "models/hand", 2, &[]),
+        ("cap", SURFACE_OFF | SURFACE_NO_DESCENDANTS, "", 0, &[5]),
+        ("feather", 0, "", 4, &[]),
+    ];
+    let surfaces: Vec<_> = (0..6).map(|i| surface(i, &[0], ONE_WEIGHT)).collect();
+    let glm = Glm::parse(&glm(&hierarchy, 1, &surfaces)).unwrap();
+    // A skin hides "hand"; its "*off" for "arm", off already, changes nothing.
+    let mut skin = Skin::default();
+    skin.add(b"body,models/skin/body.tga\nhand,*off\narm,*off\n");
+    let mut flags = glm.skinned_flags(&skin);
+    assert_eq!(glm.drawn_with(&flags), [0]);
+    // Turning a surface on clears its hiding of descendants too: "cap" and below.
+    assert!(glm.set_surface_off(&mut flags, "CAP", false));
+    assert_eq!(glm.drawn_with(&flags), [0, 4, 5]);
+    // Turning off hides the surface alone; its children still draw.
+    assert!(glm.set_surface_off(&mut flags, "body", true));
+    assert_eq!(glm.drawn_with(&flags), [4, 5]);
+    // A name no surface has (switch lists are split on whitespace, not commas).
+    assert!(!glm.set_surface_off(&mut flags, "hand,cap", true));
+}
+
+#[test]
+fn skin_files_pair_surfaces_with_shaders_like_the_original() {
+    let mut skin = Skin::default();
+    skin.add(
+        b"// comment\nHead,models/a/head.tga\n\"torso\",\"models/a/t.tga\"\n\
+          l_cap_off,models/a/caps.tga\nr_cap_off,*off\nhead,models/b/head.tga\n\
+          tag_weapon,models/a/x.tga\n",
+    );
+    // Lowercased names; an "_off" name loses the suffix, or is skipped when its
+    // shader is "*off"; a tag is skipped and its shader read as the next name.
+    assert_eq!(
+        skin.surfaces,
+        [
+            ("head".into(), "models/a/head.tga".into()),
+            ("torso".into(), "models/a/t.tga".into()),
+            ("l_cap".into(), "models/a/caps.tga".into()),
+            ("head".into(), "models/b/head.tga".into()),
+            ("models/a/x.tga".into(), "".into()),
+        ]
+    );
+    // The first entry for a name wins.
+    assert_eq!(skin.shader("head"), Some("models/a/head.tga"));
+    assert_eq!(skin.shader("legs"), None);
+    // A token starting at a comma keeps it (`CommaParse`): spaces before a comma
+    // shift the pairs.
+    let mut skin = Skin::default();
+    skin.add(b"hips , models/a/h.tga\n");
+    assert_eq!(
+        skin.surfaces,
+        [
+            ("hips".into(), ",".into()),
+            ("models/a/h.tga".into(), "".into())
+        ]
+    );
 }
 
 #[test]

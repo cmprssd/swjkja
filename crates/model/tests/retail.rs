@@ -8,9 +8,11 @@ use std::path::PathBuf;
 
 use swjkja_bsp::Bsp;
 use swjkja_fs::Vfs;
+use swjkja_model::animation;
 use swjkja_model::gla::{DEFAULT_NAME, Gla};
 use swjkja_model::glm::{Ghoul2Model, skin};
 use swjkja_model::md3::{MAX_LODS, Md3, Md3Model, lod_file};
+use swjkja_model::skin::Skin;
 
 fn retail() -> Option<Vfs> {
     let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
@@ -122,4 +124,44 @@ fn every_retail_ghoul2_model_loads_with_its_skeleton() {
     // Counted independently with Python's zipfile: 66 unique .gla and 127 unique
     // .glm names, 41 meshes naming "*default".
     assert_eq!((skeletons.len(), meshes.len(), default), (66, 127, 41));
+}
+
+#[test]
+fn every_player_model_skin_loads_and_its_skeleton_stands() {
+    let Some(vfs) = retail() else { return };
+    let mut meshes: Vec<&str> = vfs
+        .files()
+        .filter(|f| f.starts_with("models/players/") && f.ends_with("/model.glm"))
+        .collect();
+    meshes.sort_unstable();
+    let (mut skins, mut standing) = (0, 0);
+    for name in &meshes {
+        let model = Ghoul2Model::load(&vfs, name).unwrap();
+        let folder = name.strip_suffix("model.glm").unwrap();
+        for file in vfs.files().filter(|f| {
+            f.strip_prefix(folder)
+                .is_some_and(|f| !f.contains('/') && f.ends_with(".skin"))
+        }) {
+            let skin = Skin::load(&vfs, file).unwrap_or_else(|| panic!("{file}: no surfaces"));
+            assert!(!model.glm.skinned_flags(&skin).is_empty());
+            skins += 1;
+        }
+        if model.glm.anim_name == DEFAULT_NAME {
+            continue;
+        }
+        let cfg = animation::config_file(&vfs, &model.glm.anim_name)
+            .unwrap_or_else(|| panic!("{name}: no animation file"));
+        let text = String::from_utf8_lossy(&vfs.read(&cfg).unwrap()).into_owned();
+        if let Some(frame) = animation::start_frame(&text, animation::STAND) {
+            assert!(frame < model.gla.frame_count, "{name}: {frame}");
+            standing += 1;
+        }
+    }
+    eprintln!(
+        "{} player models, {skins} skins, {standing} with a standing frame",
+        meshes.len()
+    );
+    // Counted independently with Python's zipfile: 77 player models and 305 skins
+    // beside them.
+    assert_eq!((meshes.len(), skins), (77, 305));
 }

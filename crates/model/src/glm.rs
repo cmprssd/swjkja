@@ -9,6 +9,7 @@ use swjkja_fs::Vfs;
 
 use crate::gla::{self, Gla, Mat34};
 use crate::md3::{MAX_INDEXES, MAX_VERTEXES, Vec3};
+use crate::skin::{self, Skin};
 use crate::{Error, Reader, bail};
 
 const IDENT: &[u8; 4] = b"2LGM";
@@ -190,19 +191,63 @@ impl Glm {
         })
     }
 
-    /// The surfaces drawn with no overrides, in drawing order (`RenderSurfaces` from
-    /// surface 0): a surface with any flag set (a tag, or off) is not drawn, and
-    /// one that hides its descendants stops the walk below it.
+    /// Each surface's own flags, before any override.
+    pub fn surface_flags(&self) -> Vec<u32> {
+        self.surfaces.iter().map(|s| s.flags).collect()
+    }
+
+    /// The first surface named `name` (`G2_IsSurfaceLegal`, ignoring case).
+    pub fn find_surface(&self, name: &str) -> Option<usize> {
+        self.surfaces
+            .iter()
+            .position(|s| s.name.eq_ignore_ascii_case(name))
+    }
+
+    /// `G2_SetSurfaceOnOff`: turns surface `name` off or on in `flags`, which also
+    /// clears its hiding of descendants. `false` if no surface has that name.
+    pub fn set_surface_off(&self, flags: &mut [u32], name: &str, off: bool) -> bool {
+        let Some(s) = self.find_surface(name) else {
+            return false;
+        };
+        flags[s] &= !(SURFACE_OFF | SURFACE_NO_DESCENDANTS);
+        if off {
+            flags[s] |= SURFACE_OFF;
+        }
+        true
+    }
+
+    /// The flags with `skin` on (`G2API_SetSurfaceOnOffFromSkin`): each surface the
+    /// skin gives "*off" is turned off, unless it is off already.
+    pub fn skinned_flags(&self, skin: &Skin) -> Vec<u32> {
+        let mut flags = self.surface_flags();
+        for (name, shader) in &skin.surfaces {
+            let on = self
+                .find_surface(name)
+                .is_some_and(|s| self.surfaces[s].flags & SURFACE_OFF == 0);
+            if on && shader == skin::OFF {
+                self.set_surface_off(&mut flags, name, true);
+            }
+        }
+        flags
+    }
+
+    /// The surfaces drawn with no overrides, in drawing order.
     pub fn drawn_surfaces(&self) -> Vec<usize> {
+        self.drawn_with(&self.surface_flags())
+    }
+
+    /// The surfaces drawn with `flags` (one per surface), in drawing order
+    /// (`RenderSurfaces` from surface 0): a surface with any flag set (a tag, or off)
+    /// is not drawn, and one that hides its descendants stops the walk below it.
+    pub fn drawn_with(&self, flags: &[u32]) -> Vec<usize> {
         let mut drawn = Vec::new();
         let mut stack = vec![0];
         while let Some(s) = stack.pop() {
-            let info = &self.surfaces[s];
-            if info.flags == 0 {
+            if flags[s] == 0 {
                 drawn.push(s);
             }
-            if info.flags & SURFACE_NO_DESCENDANTS == 0 {
-                stack.extend(info.children.iter().rev());
+            if flags[s] & SURFACE_NO_DESCENDANTS == 0 {
+                stack.extend(self.surfaces[s].children.iter().rev());
             }
         }
         drawn
