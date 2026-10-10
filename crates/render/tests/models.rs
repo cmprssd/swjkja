@@ -5,9 +5,9 @@ use std::path::PathBuf;
 
 use swjkja_render::Camera;
 use swjkja_render::fog::FogVolume;
-use swjkja_render::models::{GHOUL2_ITEM_RADIUS, StaticModels, md3_fog_sphere, sp_fog_num};
+use swjkja_render::models::{StaticModels, md3_fog_sphere, sp_fog_num};
 use swjkja_render::vis::{Frustum, SurfaceCull, WorldVis};
-use swjkja_world::static_model::Rules;
+use swjkja_world::static_model::{ITEM_RADIUS, Rules};
 
 #[test]
 fn ffa5_static_models_cull_like_the_original() {
@@ -113,8 +113,8 @@ fn only_one_single_player_model_fog_depends_on_the_view() {
         for p in placements {
             // A Ghoul2 item's sphere is its radius around its origin; an MD3's,
             // each level's frame 0.
-            let spheres = if p.model.ends_with(".glm") {
-                vec![(p.origin, GHOUL2_ITEM_RADIUS)]
+            let spheres = if let Some(g) = &p.ghoul2 {
+                vec![(p.origin, g.radius)]
             } else {
                 let model = md3s
                     .entry(p.model.to_ascii_lowercase())
@@ -277,7 +277,7 @@ fn t2_dpred_rack_weapons_draw_as_ghoul2_items() {
     let vis = WorldVis::new(&bsp, vec![SurfaceCull::Never; bsp.surfaces.len()]);
     models.locate(&vis);
     let weapons: Vec<usize> = (0..models.instances.len())
-        .filter(|&n| models.instances[n].ghoul2_radius == Some(GHOUL2_ITEM_RADIUS))
+        .filter(|&n| models.instances[n].ghoul2_radius == Some(ITEM_RADIUS))
         .collect();
     assert_eq!(weapons.len(), 25);
     for &n in &weapons {

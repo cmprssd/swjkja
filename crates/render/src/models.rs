@@ -18,7 +18,7 @@
 //!
 //! The weapons on single player's racks are Ghoul2 models, items drawn by the
 //! renderer's `R_AddGhoulSurfaces`: culled by a sphere of the entity's radius (20 for
-//! an item) around its origin, their level of detail and fog picked from the same
+//! an item, [`swjkja_world::static_model::ITEM_RADIUS`]) around its origin, their level of detail and fog picked from the same
 //! sphere, and their meshes posed at frame 0 of their skeleton.
 //!
 //! The models never move, so each placement's surfaces are baked into world space at
@@ -33,7 +33,7 @@ use swjkja_fs::Vfs;
 use swjkja_model::glm::{self, Ghoul2Model};
 use swjkja_model::md3::{Md3, Md3Model};
 use swjkja_world::Geometry;
-use swjkja_world::static_model::{Rules, StaticModel};
+use swjkja_world::static_model::{Ghoul2, Rules, StaticModel};
 
 use crate::camera::Camera;
 use crate::fog::FogVolume;
@@ -48,9 +48,6 @@ const SP_LOD_SCALE: f32 = 10.0;
 const SP_DISTANCE_CULL_SQ: f32 = 8192.0 * 8192.0;
 /// The worldspawn's "distanceCull" when it has none (`DEFAULT_DISTANCE_CULL`).
 const DEFAULT_DISTANCE_CULL: f32 = 6000.0;
-/// An item's radius (`FinishSpawningItem`: `s.radius`), which a Ghoul2 item is
-/// culled, leveled and fogged by.
-pub const GHOUL2_ITEM_RADIUS: f32 = 20.0;
 
 /// One surface of one level of one placed model, in world space.
 pub struct Piece {
@@ -242,8 +239,12 @@ impl StaticModels {
             let model = match model {
                 Some(Model::Md3(m)) => m,
                 Some(Model::Ghoul2(m)) => {
+                    let Some(g) = &p.ghoul2 else {
+                        eprintln!("warning: model {}: a Ghoul2 mesh placed as an MD3", p.model);
+                        continue;
+                    };
                     let entity = instances.len() + 1;
-                    instances.push(ghoul2_instance(m, p, entity, fogs, &mut pieces));
+                    instances.push(ghoul2_instance(m, p, g, entity, fogs, &mut pieces));
                     continue;
                 }
                 None => continue,
@@ -441,16 +442,17 @@ impl Model {
     }
 }
 
-/// A Ghoul2 item placed by `p`: each level's drawn surfaces posed at frame 0, fogged
-/// by the item's sphere as seen from outside any fog.
+/// A Ghoul2 entity placed by `p`: each level's drawn surfaces posed at frame 0, fogged
+/// by the entity's sphere as seen from outside any fog.
 fn ghoul2_instance(
     model: &Ghoul2Model,
     p: &StaticModel,
+    g: &Ghoul2,
     entity: usize,
     fogs: &[FogVolume],
     pieces: &mut Vec<Piece>,
 ) -> Instance {
-    let radius = GHOUL2_ITEM_RADIUS;
+    let radius = g.radius;
     let fog = sp_fog_num(fogs, p.origin, radius, 0);
     let pose = model.gla.pose(0);
     let drawn = model.glm.drawn_surfaces();

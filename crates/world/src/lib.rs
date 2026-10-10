@@ -8,6 +8,7 @@
 #![allow(clippy::needless_range_loop)]
 
 pub mod light_grid;
+pub mod npc;
 pub mod patch;
 pub mod static_model;
 pub mod stitch;

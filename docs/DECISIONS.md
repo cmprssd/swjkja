@@ -331,3 +331,22 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   then on the left), turned around and pitched 75 degrees up (cgame's `CG_Item` for a
   VERTICAL item). An ammo rack with a weapon and no ammo checked places a blaster at
   the rack's own height, as the original does (its height variable stays 0).
+
+## 2026-10-10: Single player's NPCs, as they spawn (decided by Claude, pending review)
+
+- **Only the NPCs a map spawns by itself**: spawners without a "targetname" (245 on
+  the retail single-player maps at the easiest skill). The others wait to be used,
+  by triggers or scripts this engine does not run yet.
+- **Each NPC's type follows its spawn function** (`SP_NPC_*`): its class and flags,
+  and the spawner's "NPC_type" where the function keeps it (some replace it, as
+  `NPC_Tavion_New` does). **A random choice takes the branch written first**: the
+  "if" side of a coin flip (StormTrooper, not StormTrooper2), the first of several
+  cases (a random Jedi is jedi_hf1). The original's choice depends on the game's
+  random numbers, as the rack items' spread does.
+- **Its look comes from the first `.npc` block of its type**, the files joined in
+  the game's listing order (two names are defined twice: rebel2, stofficeralt):
+  the Ghoul2 model, skin, surface switches, scale and box. The player's character
+  ("Player") is the `g_char_*` defaults, jedi_tf with head_a1, torso_a1, lower_a1.
+- **Left out**: vehicles (their model comes from `vehicles.dat`), the MD3 NPCs (two
+  mice), `NPC_Galak` (spawns nothing) and typeless `NPC_spawner`s (random NPCs; no
+  retail map has one that spawns at load).
