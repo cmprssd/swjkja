@@ -9,11 +9,12 @@
 //! With `out`, each run is also written as `<out>-<run>.txt`: the path with this
 //! renderer's timestamps, in the reference's format.
 //!
-//! This loop waits for each frame before starting the next and draws offscreen (no
-//! window, no present); the reference draws to a window with vsync off.
+//! Frames go through a [`FrameLoop`] (the CPU records a frame while the GPU draws
+//! the previous one) and are drawn offscreen (no window, no present); the reference
+//! draws to a window with vsync off.
 use std::time::Instant;
 
-use swjkja_render::{Camera, Gpu, Target, TextureSet, WorldRenderer};
+use swjkja_render::{Camera, FrameLoop, Gpu, Target, TextureSet, WorldRenderer};
 
 /// One recorded frame: `usec time_ms x y z pitch yaw roll fov_x`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -138,6 +139,7 @@ fn main() {
     print_header();
     // Run 0 warms caches and the driver and is not reported, like the reference's
     // cold run.
+    let mut frames = FrameLoop::new(&gpu).unwrap();
     for run in 0..=runs {
         let mut usec = Vec::with_capacity(path.len());
         let mut gpu_ms = Vec::with_capacity(path.len());
@@ -147,9 +149,9 @@ fn main() {
             let mut camera = Camera::new(f.origin, f.angles, 1280, 720);
             camera.fov_x = f.fov_x;
             let time = f.time_ms as f32 / 1000.0;
-            gpu_ms.push(
-                target
-                    .render_timed(&gpu, renderer.clear_color(), |frame| {
+            gpu_ms.extend(
+                frames
+                    .render(&target, renderer.clear_color(), |frame| {
                         renderer
                             .draw(frame, &textures, &camera, time, depth_slot)
                             .unwrap()
@@ -157,6 +159,7 @@ fn main() {
                     .unwrap(),
             );
         }
+        gpu_ms.extend(frames.finish().unwrap());
         if let (Some(out), true) = (out, run > 0) {
             let mut text = String::from("# usec time_ms x y z pitch yaw roll fov_x\n");
             for (f, us) in path.iter().zip(&usec) {
