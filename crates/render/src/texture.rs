@@ -371,6 +371,18 @@ impl TextureSet {
     pub fn add_view(&mut self, view: vk::ImageView) -> u32 {
         let slot = self.textures.len() as u32;
         assert!(slot < MAX_TEXTURES, "texture array full");
+        self.textures.push(None);
+        self.set_view(slot, view);
+        slot
+    }
+
+    /// Points a slot from [`TextureSet::add_view`] at another view (a resized
+    /// target's), when no frame in flight uses the set.
+    pub fn set_view(&mut self, slot: u32, view: vk::ImageView) {
+        assert!(
+            self.textures[slot as usize].is_none(),
+            "slot {slot} holds a texture, not a view"
+        );
         let info = [vk::DescriptorImageInfo::default()
             .image_view(view)
             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
@@ -381,8 +393,6 @@ impl TextureSet {
             .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
             .image_info(&info);
         unsafe { self.gpu.device.update_descriptor_sets(&[write], &[]) };
-        self.textures.push(None);
-        slot
     }
 
     pub fn len(&self) -> usize {

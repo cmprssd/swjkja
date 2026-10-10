@@ -9,3 +9,12 @@ rust-version.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+raw-window-handle = "0.6.2"
+swjkja-bsp = { version = "0.0.0", path = "../bsp" }
+swjkja-fs = { version = "0.0.0", path = "../fs" }
+swjkja-render = { version = "0.0.0", path = "../render" }
+swjkja-shader = { version = "0.0.0", path = "../shader" }
+swjkja-world = { version = "0.0.0", path = "../world" }
+winit = "0.30.13"

@@ -19,6 +19,15 @@ Status: early. See [docs/ROADMAP.md](docs/ROADMAP.md) for the milestones and
 
 Checks run locally with `local-ci` (see `.local-ci`), not on GitHub Actions.
 
+## Map viewer
+
+    swjkja view <GameData> mp/ffa3
+
+flies through a map: mouse to look, W A S D to move, Space and C up and down, Shift
+to go faster, Esc to quit. The window title shows the frame rate and frame time.
+`--vsync` caps the frame rate to the display, and `--replay <path> <out>` draws a
+recorded camera path (`bench/reference/*.path`) once and writes its frame times.
+
 Build output and caches are kept bounded: `scripts/disk.sh` lists everything the
 project stores and where, `.local-ci` shrinks any Rust build folder over 3 GB after
 each run, and `scripts/disk.sh clean-all` deletes all of it.

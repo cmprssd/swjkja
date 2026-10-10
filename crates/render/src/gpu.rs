@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use ash::vk;
 use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 #[derive(Debug)]
 pub struct Error(pub String);
@@ -60,18 +61,56 @@ impl Gpu {
     /// every target (Intel HD 600 series and newer, Steam Deck, lavapipe) has. `SWJKJA_GPU` picks a device whose
     /// name contains the given text.
     pub fn new_headless() -> Result<Arc<Self>> {
+        Ok(Self::create(None)?.0)
+    }
+
+    /// A device that can also present to a window, and the window's surface (for
+    /// [`crate::Swapchain`], which destroys it). Only devices that can present to the
+    /// surface from their graphics queue are considered.
+    pub fn new_for_window(
+        display: RawDisplayHandle,
+        window: RawWindowHandle,
+    ) -> Result<(Arc<Self>, vk::SurfaceKHR)> {
+        let (gpu, surface) = Self::create(Some((display, window)))?;
+        Ok((gpu, surface.expect("created with a window")))
+    }
+
+    fn create(
+        window: Option<(RawDisplayHandle, RawWindowHandle)>,
+    ) -> Result<(Arc<Self>, Option<vk::SurfaceKHR>)> {
         let entry =
             unsafe { ash::Entry::load() }.map_err(|e| Error(format!("no Vulkan loader: {e}")))?;
         let app = vk::ApplicationInfo::default()
             .application_name(c"swjkja")
             .engine_name(c"swjkja")
             .api_version(vk::API_VERSION_1_3);
+        let extensions = match window {
+            Some((display, _)) => ash_window::enumerate_required_extensions(display)?,
+            None => &[],
+        };
         let instance = unsafe {
             entry.create_instance(
-                &vk::InstanceCreateInfo::default().application_info(&app),
+                &vk::InstanceCreateInfo::default()
+                    .application_info(&app)
+                    .enabled_extension_names(extensions),
                 None,
             )?
         };
+        let surface = match window {
+            Some((display, window)) => Some(
+                match unsafe {
+                    ash_window::create_surface(&entry, &instance, display, window, None)
+                } {
+                    Ok(s) => s,
+                    Err(e) => {
+                        unsafe { instance.destroy_instance(None) };
+                        return Err(e.into());
+                    }
+                },
+            ),
+            None => None,
+        };
+        let surface_fn = ash::khr::surface::Instance::new(&entry, &instance);
 
         let wanted = std::env::var("SWJKJA_GPU")
             .ok()
@@ -102,10 +141,14 @@ impl Gpu {
             }
             let families =
                 unsafe { instance.get_physical_device_queue_family_properties(physical) };
-            let Some(family) = families
-                .iter()
-                .position(|f| f.queue_flags.contains(vk::QueueFlags::GRAPHICS))
-            else {
+            let Some(family) = families.iter().enumerate().position(|(i, f)| {
+                f.queue_flags.contains(vk::QueueFlags::GRAPHICS)
+                    && surface.is_none_or(|s| unsafe {
+                        surface_fn
+                            .get_physical_device_surface_support(physical, i as u32, s)
+                            .unwrap_or(false)
+                    })
+            }) else {
                 continue;
             };
             let kind = match props.device_type {
@@ -119,10 +162,20 @@ impl Gpu {
         }
         candidates.sort_by_key(|c| c.0);
         let Some((kind, physical, queue_family, name)) = candidates.into_iter().next() else {
-            unsafe { instance.destroy_instance(None) };
+            unsafe {
+                if let Some(s) = surface {
+                    surface_fn.destroy_surface(s, None);
+                }
+                instance.destroy_instance(None);
+            }
             return Err(Error(
                 "no Vulkan 1.3 device with a graphics queue and update-after-bind texture arrays"
-                    .into(),
+                    .to_string()
+                    + if surface.is_some() {
+                        " that can present to the window"
+                    } else {
+                        ""
+                    },
             ));
         };
 
@@ -137,11 +190,16 @@ impl Gpu {
         let mut features12 = vk::PhysicalDeviceVulkan12Features::default()
             .descriptor_binding_partially_bound(true)
             .descriptor_binding_sampled_image_update_after_bind(true);
+        let device_extensions = match surface {
+            Some(_) => &[ash::khr::swapchain::NAME.as_ptr()][..],
+            None => &[],
+        };
         let device = unsafe {
             instance.create_device(
                 physical,
                 &vk::DeviceCreateInfo::default()
                     .queue_create_infos(&queue_info)
+                    .enabled_extension_names(device_extensions)
                     .push_next(&mut features13)
                     .push_next(&mut features12)
                     .enabled_features(
@@ -167,7 +225,7 @@ impl Gpu {
                 None,
             )?
         };
-        Ok(Arc::new(Self {
+        let gpu = Arc::new(Self {
             entry,
             instance,
             physical,
@@ -178,7 +236,8 @@ impl Gpu {
             kind,
             allocator: Mutex::new(Some(allocator)),
             command_pool,
-        }))
+        });
+        Ok((gpu, surface))
     }
 
     /// Records commands with `record`, submits them and waits until the GPU is done.

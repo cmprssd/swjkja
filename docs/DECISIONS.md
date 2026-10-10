@@ -150,3 +150,20 @@ frames varied by more than a GPU frame, which they do not here (recording takes
 the GPU runs the frames in order and the full barriers between them keep that
 correct. A retail-data test renders along the benchmark path and checks each frame
 equals the same frame rendered alone (it fails if the frames share one slot).
+
+## 2026-10-10: The map viewer's window (decided by Claude, pending review)
+
+- **`winit` 0.30 for the window and input, `ash-window` for the Vulkan surface.**
+  The usual pure-Rust pair on Windows and Linux; 0.31 is still in beta.
+- **No vsync by default** (IMMEDIATE present mode), like the original's
+  `r_swapInterval 0`; `--vsync` uses FIFO.
+- **An 8-bit UNORM swapchain, never sRGB**: the renderer writes colours as the
+  original does, without sRGB conversion; an sRGB swapchain would brighten them.
+- **Frames are rendered into the offscreen target and copied to the swapchain
+  image**, so the renderer, its pipelines and the tests are the same with and
+  without a window. The copy is one of the suspects for the cost of presenting.
+- **Frame rate and frame time in the window title**, updated twice a second: there
+  is no text rendering yet.
+- **Controls like the original's noclip**: 250 units/s (`g_speed`), Shift for 3x,
+  forward follows the view, mouse at 0.11 degrees per count (`sensitivity` 5).
+  The viewer starts at the first player start, eyes 36 units up.
