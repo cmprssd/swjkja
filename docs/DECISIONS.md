@@ -185,3 +185,25 @@ equals the same frame rendered alone (it fails if the frames share one slot).
 - **Replays draw their first view for 100 frames before the timed path starts**, to
   leave out the 68-160 ms stall right after the window opens (in fullscreen, the
   mode switch). The original's timed demo starts seconds after its own mode switch.
+
+## 2026-10-10: The viewer's loading screen (decided by Claude, pending review)
+
+- **The map loads on its own thread**, so the window shows frames and handles
+  events (moving, closing, Esc) from the start. The loading thread uploads to the
+  GPU while the window presents, so `Gpu::queue` is now a `Mutex` and every submit,
+  present and `vkDeviceWaitIdle` (`Gpu::wait_idle`) takes it: Vulkan allows one
+  thread at a time on a queue, and the type makes forgetting the lock impossible.
+- **A progress bar on black, without text** (there is no text rendering yet): a
+  track half the window wide with the part done filled, drawn with
+  `vkCmdClearAttachments` (`Frame::fill`), so it needs no pipeline. The step under
+  way and the percentage are in the title. The bar advances by step, weighted by
+  each step's share of a load from a cold file cache (game data 36%, textures and
+  pipelines 62%), when the bar is on screen long enough to matter.
+- **The first loading frame is drawn as soon as the window exists**, inside
+  `resumed`, rather than at the first redraw, which comes about 100 ms later while
+  Windows sets the window up. Loading frames are then drawn at about 60 per second,
+  to leave the CPU and GPU to the loading thread.
+- **The mouse is grabbed once the map is ready**, so the window can be moved while
+  it loads. Frame times, `--timings` and replays start when the map is ready.
+- **Closing while loading just exits**: the loading thread is not cancelled, and
+  ends with the process.

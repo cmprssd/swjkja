@@ -407,7 +407,7 @@ impl TextureSet {
 impl Drop for TextureSet {
     fn drop(&mut self) {
         unsafe {
-            let _ = self.gpu.device.device_wait_idle();
+            self.gpu.wait_idle();
             self.textures.clear();
             for s in self.samplers {
                 self.gpu.device.destroy_sampler(s, None);

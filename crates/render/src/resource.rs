@@ -262,6 +262,38 @@ pub struct Frame<'a> {
 }
 
 impl Frame<'_> {
+    /// Fills a rectangle (x, y, width, height in pixels) with a colour, without a
+    /// pipeline: for the loading screen's progress bar.
+    pub fn fill(&mut self, rect: [u32; 4], color: [f32; 4]) {
+        let [x, y, width, height] = rect;
+        if width == 0 || height == 0 {
+            return; // Vulkan forbids empty rectangles.
+        }
+        unsafe {
+            self.gpu.device.cmd_clear_attachments(
+                self.cmd,
+                &[vk::ClearAttachment {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    color_attachment: 0,
+                    clear_value: vk::ClearValue {
+                        color: vk::ClearColorValue { float32: color },
+                    },
+                }],
+                &[vk::ClearRect {
+                    rect: vk::Rect2D {
+                        offset: vk::Offset2D {
+                            x: x as i32,
+                            y: y as i32,
+                        },
+                        extent: vk::Extent2D { width, height },
+                    },
+                    base_array_layer: 0,
+                    layer_count: 1,
+                }],
+            )
+        };
+    }
+
     /// Pauses rendering, copies the depth buffer to [`Target::depth_copy`] and resumes
     /// with the colour and depth so far, like the original reading the depth buffer
     /// in the middle of a frame.

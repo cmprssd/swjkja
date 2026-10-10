@@ -25,6 +25,8 @@ Checks run locally with `local-ci` (see `.local-ci`), not on GitHub Actions.
 
 flies through a map: mouse to look, W A S D to move, Space and C up and down, Shift
 to go faster, Esc to quit. The window title shows the frame rate and frame time.
+While the map loads, the window shows a progress bar (and the step in its title),
+and can be moved or closed.
 `--vsync` caps the frame rate to the display, and `--replay <path> <out>` draws a
 recorded camera path (`bench/reference/*.path`) once and writes its frame times.
 `--fullscreen` uses exclusive fullscreen at 1280x720 instead of a window, and

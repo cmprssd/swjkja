@@ -473,6 +473,27 @@ To rerun (opens a game window per run; see `bench/lib.sh`):
     scripts/cargo-msvc.sh run --release -p swjkja-render --example bench_path -- \
         <GameData> mp/ffa3 bench/reference/ffa3.path 3
 
+## The viewer's loading screen, 2026-10-10
+
+`swjkja view` now loads the map on its own thread and shows a progress bar from
+the start (it prints when its first frame was presented, and each loading step's
+time). On the Intel HD 630, mp/ffa3 in a window:
+
+- **First frame 260-350 ms after the window is asked for** (6 runs); before, the
+  window stayed blank until the map was loaded (the times below). Before it:
+  creating the window about 100 ms, the Vulkan device 100-115 ms, the swapchain
+  80-100 ms, the target 40-90 ms. Drawing the first frame at the first redraw
+  instead of right away cost about 100 more.
+- **Loading takes 0.75-1.2 s with the game files in the file cache and 3-9 s
+  without** (game data 2.4-3.2 s, textures and pipelines 0.5-5.5 s; the archives are
+  on the USB drive).
+- **The window stays responsive while loading**: it moves, answers messages within
+  65 ms at worst, and closes 240-320 ms after `WM_CLOSE` while textures are being
+  uploaded (checked with a PowerShell probe that moves and closes it).
+- **Replay times are unchanged**: alternating four runs each, 255-265 FPS (median
+  3.58-3.75 ms) before and 253-259 FPS (3.62-3.77 ms) after, within the run-to-run
+  spread.
+
 ## Not measured yet
 
 - **Frame-time spikes** (1% lows) **of the full game**: the path benchmark above has

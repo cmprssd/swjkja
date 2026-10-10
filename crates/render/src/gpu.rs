@@ -47,12 +47,15 @@ pub struct Gpu {
     pub instance: ash::Instance,
     pub physical: vk::PhysicalDevice,
     pub device: ash::Device,
-    pub queue: vk::Queue,
+    /// Locked for every submit and present: a loading thread uploads while the window
+    /// presents, and Vulkan requires one thread at a time on a queue.
+    pub queue: Mutex<vk::Queue>,
     pub queue_family: u32,
     pub name: String,
     pub kind: DeviceKind,
     pub allocator: Mutex<Option<Allocator>>,
-    command_pool: vk::CommandPool,
+    /// For [`Gpu::submit_and_wait`], which holds it while recording.
+    command_pool: Mutex<vk::CommandPool>,
 }
 
 impl Gpu {
@@ -230,23 +233,31 @@ impl Gpu {
             instance,
             physical,
             device,
-            queue,
+            queue: Mutex::new(queue),
             queue_family,
             name,
             kind,
             allocator: Mutex::new(Some(allocator)),
-            command_pool,
+            command_pool: Mutex::new(command_pool),
         });
         Ok((gpu, surface))
+    }
+
+    /// Waits until the GPU is idle (`vkDeviceWaitIdle`, which needs the queue to
+    /// itself).
+    pub fn wait_idle(&self) {
+        let _queue = self.queue.lock().unwrap();
+        let _ = unsafe { self.device.device_wait_idle() };
     }
 
     /// Records commands with `record`, submits them and waits until the GPU is done.
     pub fn submit_and_wait(&self, record: impl FnOnce(vk::CommandBuffer)) -> Result<()> {
         let d = &self.device;
+        let pool = self.command_pool.lock().unwrap();
         unsafe {
             let cmd = d.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::default()
-                    .command_pool(self.command_pool)
+                    .command_pool(*pool)
                     .command_buffer_count(1),
             )?[0];
             d.begin_command_buffer(
@@ -259,13 +270,13 @@ impl Gpu {
             let fence = d.create_fence(&vk::FenceCreateInfo::default(), None)?;
             let cmds = [cmd];
             d.queue_submit(
-                self.queue,
+                *self.queue.lock().unwrap(),
                 &[vk::SubmitInfo::default().command_buffers(&cmds)],
                 fence,
             )?;
             let waited = d.wait_for_fences(&[fence], true, u64::MAX);
             d.destroy_fence(fence, None);
-            d.free_command_buffers(self.command_pool, &cmds);
+            d.free_command_buffers(*pool, &cmds);
             waited?;
         }
         Ok(())
@@ -278,7 +289,8 @@ impl Drop for Gpu {
             let _ = self.device.device_wait_idle();
             // The allocator must go before the device it allocates from.
             self.allocator.lock().unwrap().take();
-            self.device.destroy_command_pool(self.command_pool, None);
+            self.device
+                .destroy_command_pool(*self.command_pool.get_mut().unwrap(), None);
             self.device.destroy_device(None);
             self.instance.destroy_instance(None);
         }
