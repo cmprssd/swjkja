@@ -33,6 +33,13 @@ use crate::pipeline::{Pipeline, State, spirv};
 use crate::resource::{Buffer, Frame};
 use crate::sky;
 use crate::texture::{Texture, TextureSet};
+
+/// `R_FindImageFile`: the image `name` resolves to, or `None` if none decodes or its
+/// sides are not powers of two (the original refuses those as if missing).
+fn find_image(vfs: &Vfs, name: &str) -> Option<swjkja_image::Image> {
+    let image = swjkja_image::load(vfs, name).ok()?.image;
+    (image.width.is_power_of_two() && image.height.is_power_of_two()).then_some(image)
+}
 use crate::vis;
 
 #[repr(C)]
@@ -415,8 +422,32 @@ impl WorldRenderer {
         bsp: &Bsp,
         world: &World,
     ) -> Result<Self> {
-        // Images: decode once, keep the decoded pixels to upload on first use.
+        // Images: decode once, keep the decoded pixels to upload on first use. Every
+        // image the map's shaders can ask for is decoded up front, in parallel; a name
+        // missed here decodes when asked.
         let mut decoded: HashMap<String, Option<swjkja_image::Image>> = HashMap::new();
+        {
+            let mut names: Vec<String> = Vec::new();
+            for shader in &bsp.shaders {
+                let stripped = swjkja_shader::resolve::strip_extension(shader.name());
+                names.push(stripped.to_owned());
+                if let Some(Ok(def)) = shaders.parse(stripped) {
+                    for stage in &def.stages {
+                        match &stage.texture {
+                            swjkja_shader::Texture::Map { name, .. } => names.push(name.clone()),
+                            swjkja_shader::Texture::Animated { names: frames, .. } => {
+                                names.extend(frames.iter().cloned())
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            names.sort_unstable();
+            names.dedup();
+            let images = crate::parallel::map(&names, |name| find_image(vfs, name));
+            decoded.extend(names.into_iter().zip(images));
+        }
         struct Loader<'a> {
             vfs: &'a Vfs,
             decoded: &'a mut HashMap<String, Option<swjkja_image::Image>>,
@@ -426,7 +457,7 @@ impl WorldRenderer {
                 let vfs = self.vfs;
                 self.decoded
                     .entry(name.to_owned())
-                    .or_insert_with(|| swjkja_image::load(vfs, name).ok().map(|l| l.image))
+                    .or_insert_with(|| find_image(vfs, name))
                     .is_some()
             }
         }
@@ -547,6 +578,8 @@ impl WorldRenderer {
             &fog::fog_image(),
             false,
         )?);
+        let uploads = std::cell::RefCell::new(crate::texture::Uploads::default());
+        let decoded = std::cell::RefCell::new(decoded);
         let lightmaps: Vec<u32> = bsp
             .lightmaps
             .chunks(swjkja_bsp::LIGHTMAP_BYTES)
@@ -555,7 +588,14 @@ impl WorldRenderer {
                     .chunks(3)
                     .flat_map(|p| [p[0], p[1], p[2], 255])
                     .collect();
-                Ok(textures.add(Texture::new(gpu, 128, 128, &rgba, false)?))
+                Ok(textures.add(Texture::queued(
+                    gpu,
+                    128,
+                    128,
+                    rgba,
+                    false,
+                    &mut uploads.borrow_mut(),
+                )?))
             })
             .collect::<Result<_>>()?;
         let mut named: HashMap<String, u32> = HashMap::new();
@@ -563,15 +603,17 @@ impl WorldRenderer {
             if let Some(&slot) = named.get(name) {
                 return Ok(slot);
             }
-            let slot = match decoded
-                .get(name)
-                .cloned()
-                .flatten()
-                .or_else(|| swjkja_image::load(vfs, name).ok().map(|l| l.image))
-            {
-                Some(img) => {
-                    textures.add(Texture::new(gpu, img.width, img.height, &img.rgba, true)?)
-                }
+            // Each name uploads once (`named`), so its decoded pixels can move.
+            let cached = decoded.borrow_mut().remove(name).flatten();
+            let slot = match cached.or_else(|| find_image(vfs, name)) {
+                Some(img) => textures.add(Texture::queued(
+                    gpu,
+                    img.width,
+                    img.height,
+                    img.rgba,
+                    true,
+                    &mut uploads.borrow_mut(),
+                )?),
                 None => default_slot,
             };
             named.insert(name.to_owned(), slot);
@@ -592,10 +634,18 @@ impl WorldRenderer {
                     // Frames need consecutive slots: upload them in order, fresh.
                     let first = textures.len() as u32;
                     for name in names {
-                        let img = swjkja_image::load(vfs, name).ok().map(|l| l.image);
+                        // Frames may repeat across materials: copy, don't take.
+                        let cached = decoded.borrow().get(name).cloned().flatten();
+                        let img = cached.or_else(|| find_image(vfs, name));
                         match img {
-                            Some(img) => textures
-                                .add(Texture::new(gpu, img.width, img.height, &img.rgba, true)?),
+                            Some(img) => textures.add(Texture::queued(
+                                gpu,
+                                img.width,
+                                img.height,
+                                img.rgba,
+                                true,
+                                &mut uploads.borrow_mut(),
+                            )?),
                             None => textures.add(Texture::new(gpu, 16, 16, &default_image, true)?),
                         };
                     }
@@ -1061,6 +1111,8 @@ impl WorldRenderer {
             dynamic_indexes.max(1) as u64 * 4,
             MemoryLocation::CpuToGpu,
         )?;
+        // Every texture's pixels, in a few large copies.
+        uploads.borrow_mut().flush(gpu)?;
         Ok(Self {
             gpu: gpu.clone(),
             dynamic_vertices: dynamic_vertices_buffer,
