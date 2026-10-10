@@ -75,6 +75,22 @@ pub struct StaticModel {
     /// For a game entity, its linked box in world space (`absmin`, `absmax`): the
     /// server sends it when the box touches a cluster the view can see.
     pub entity_box: Option<[Vec3; 2]>,
+    /// For a Ghoul2 model (`.glm`), how it is drawn.
+    pub ghoul2: Option<Ghoul2>,
+}
+
+/// How a Ghoul2 entity is drawn.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ghoul2 {
+    /// The skin file (`RE_RegisterSkin`'s name), or `None` for the mesh's own shaders.
+    pub skin: Option<String>,
+    /// Surfaces turned off (`true`) or on, in order, after the skin's.
+    pub switches: Vec<(String, bool)>,
+    /// The entity's radius (`s.radius`): the renderer culls it by a sphere of this
+    /// radius around its origin, times its largest scale.
+    pub radius: f32,
+    /// Posed as an NPC starts (its skeleton's `BOTH_STAND1`), or at frame 0.
+    pub stand: bool,
 }
 
 /// `atof`: the longest leading number, 0 for none.
@@ -148,7 +164,7 @@ fn spawns_in(e: &Entity, gametype: usize) -> bool {
 
 /// `G_SpawnGEntityFromSpawnVars`'s filters: "notsingle", and the spawnflags bit that
 /// leaves an entity out at `skill` (256 easy, 512 medium, 1024 hard).
-fn spawns_at(e: &Entity, skill: u32) -> bool {
+pub(crate) fn spawns_at(e: &Entity, skill: u32) -> bool {
     let flag = |key| e.get(key).map_or(0, atoi);
     flag("notsingle") == 0 && flag("spawnflags") & (1 << (8 + skill)) == 0
 }
@@ -198,6 +214,7 @@ fn multiplayer(e: &Entity) -> Option<StaticModel> {
         normalized: false,
         zoffset,
         entity_box: None,
+        ghoul2: None,
     })
 }
 
@@ -236,8 +253,12 @@ fn single_player(e: &Entity) -> Option<StaticModel> {
         normalized: !scaled.contains(&true),
         zoffset: e.get("zoffset").map_or(0.0, atof),
         entity_box: None,
+        ghoul2: None,
     })
 }
+
+/// An item's radius (`FinishSpawningItem`: `s.radius`).
+pub const ITEM_RADIUS: f32 = 20.0;
 
 /// `misc_model_breakable`'s START_OFF: hidden until something uses it.
 const START_OFF: i64 = 4096;
@@ -288,7 +309,7 @@ const BEACON: &str = "models/map_objects/wedge/beacon.md3";
 const BOMB: &str = "models/map_objects/factory/bomb_new_deact.md3";
 
 /// The origin and angles spawn keys, in the order they appear (`G_ParseField`).
-fn origin_and_angles(e: &Entity) -> (Vec3, Vec3) {
+pub(crate) fn origin_and_angles(e: &Entity) -> (Vec3, Vec3) {
     let (mut origin, mut angles) = ([0.0; 3], [0.0; 3]);
     for (key, value) in &e.pairs {
         match key.to_ascii_lowercase().as_str() {
@@ -315,6 +336,7 @@ fn entity(model: &str, origin: Vec3, angles: Vec3, mins: Vec3, maxs: Vec3) -> St
             [0, 1, 2].map(|i| origin[i] + mins[i] - 1.0),
             [0, 1, 2].map(|i| origin[i] + maxs[i] + 1.0),
         ]),
+        ghoul2: None,
     }
 }
 
@@ -480,7 +502,16 @@ fn rack_item(item: Item, origin: Vec3, angles: Vec3, right: f32, up: f32) -> Sta
     } else {
         [angles[0], angles[1] + 90.0, angles[2]]
     };
-    entity(item.model, at, turned, item.mins, item.maxs)
+    let mut m = entity(item.model, at, turned, item.mins, item.maxs);
+    if item.weapon {
+        m.ghoul2 = Some(Ghoul2 {
+            skin: None,
+            switches: Vec::new(),
+            radius: ITEM_RADIUS,
+            stand: false,
+        });
+    }
+    m
 }
 
 /// `SP_misc_model_breakable`, for an entity that spawns.
@@ -553,5 +584,6 @@ fn breakable(e: &Entity) -> Option<StaticModel> {
         normalized: !scaled.contains(&true),
         zoffset: 0.0,
         entity_box: Some(entity_box),
+        ghoul2: None,
     })
 }

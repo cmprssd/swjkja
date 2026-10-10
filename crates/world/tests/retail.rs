@@ -5,7 +5,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use swjkja_bsp::{Bsp, SurfaceKind};
-use swjkja_world::{Geometry, Options, World};
+use swjkja_world::static_model::Rules;
+use swjkja_world::{Geometry, Options, World, npc};
 
 #[test]
 fn every_retail_map_builds() {
@@ -102,4 +103,58 @@ fn every_retail_map_has_a_light_grid_and_spawns_its_static_models() {
     assert_eq!(total, 6684);
     eprintln!("{lit} of {total} static models get more than the minimum ambient light");
     assert!(lit > total / 2, "{lit} of {total}");
+}
+
+#[test]
+fn single_player_npcs_find_their_looks() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let files: Vec<Vec<u8>> = vfs
+        .list("ext_data/npcs", ".npc")
+        .iter()
+        .map(|f| vfs.read(&format!("ext_data/npcs/{f}")).unwrap())
+        .collect();
+    let parms = npc::join_parms(files.iter().map(Vec::as_slice));
+    let mut maps: Vec<&str> = vfs
+        .files()
+        .filter(|f| f.ends_with(".bsp") && !f.starts_with("maps/mp/"))
+        .collect();
+    maps.sort_unstable();
+    let (mut spawns, mut drawn) = (0, 0);
+    let mut not_drawn = std::collections::BTreeSet::new();
+    for name in &maps {
+        let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
+        let rules = Rules::for_map(name);
+        for n in npc::npc_spawns(&bsp.entities, rules) {
+            spawns += 1;
+            match npc::npc_look(&parms, &n.npc_type, n.message) {
+                Some(look) => {
+                    drawn += 1;
+                    let folder = format!("models/players/{}/", look.model);
+                    assert!(
+                        vfs.contains(&format!("{folder}model.glm")),
+                        "{name}: {look:?}"
+                    );
+                }
+                None => {
+                    not_drawn.insert(n.npc_type.to_ascii_lowercase());
+                }
+            }
+        }
+        let models = npc::npc_models(&bsp.entities, rules, &parms);
+        assert!(
+            models
+                .iter()
+                .all(|m| m.ghoul2.as_ref().is_some_and(|g| g.stand))
+        );
+    }
+    eprintln!("{spawns} NPCs spawn at load, {drawn} drawn; not drawn: {not_drawn:?}");
+    // Counted independently with Python: 267 spawners without a targetname, less 21
+    // vehicles, 1 left out at the easiest skill, and 0 typeless spawners. The two
+    // mice (t1_surprise, t3_byss), MD3 droids in the original, are not drawn.
+    assert_eq!((spawns, drawn), (245, 243));
+    assert_eq!(not_drawn.iter().collect::<Vec<_>>(), ["mouse"]);
 }
