@@ -185,7 +185,7 @@ impl FrameLoop {
         let images = [image];
         let presented = unsafe {
             swapchain.swapchain_fn.queue_present(
-                self.gpu.queue,
+                *self.gpu.queue.lock().unwrap(),
                 &vk::PresentInfoKHR::default()
                     .wait_semaphores(&waits)
                     .swapchains(&swapchains)
@@ -264,7 +264,7 @@ impl FrameLoop {
             };
             let stages = vec![vk::PipelineStageFlags::ALL_COMMANDS; waits.len()];
             d.queue_submit(
-                gpu.queue,
+                *gpu.queue.lock().unwrap(),
                 &[vk::SubmitInfo::default()
                     .wait_semaphores(&waits)
                     .wait_dst_stage_mask(&stages)

@@ -1419,7 +1419,7 @@ fn flare_quads(
 impl Drop for WorldRenderer {
     fn drop(&mut self) {
         unsafe {
-            let _ = self.gpu.device.device_wait_idle();
+            self.gpu.wait_idle();
             self.gpu
                 .device
                 .destroy_descriptor_pool(self.frame_pool, None);

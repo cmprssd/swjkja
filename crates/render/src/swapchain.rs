@@ -186,7 +186,7 @@ impl Drop for Swapchain {
     fn drop(&mut self) {
         let d = &self.gpu.device;
         unsafe {
-            let _ = d.device_wait_idle();
+            self.gpu.wait_idle();
             for &view in &self.views {
                 d.destroy_image_view(view, None);
             }
