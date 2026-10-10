@@ -232,3 +232,34 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   the map load with an error. No retail map has one.
 - **Model views are captured with entities drawn** (`ENTITIES=1`), the views placed so
   no item or mover is in sight.
+
+## 2026-10-10: Single-player maps follow single-player rules
+
+- **Asked: which models after the static ones?** The single-player maps' breakables
+  and racks (about 1,100 placements), not the multiplayer siege items (about 50).
+  A census of the retail maps found that multiplayer maps place no breakables,
+  racks, beacons or planted bombs: all of them are on single-player maps, spawned by
+  the single-player game code.
+- **Asked: how does the viewer pick spawn rules?** By the map's path: maps under
+  `maps/mp/` follow multiplayer rules (free-for-all), every other map single-player
+  rules (`Rules::for_map`).
+- **First step: the static models of single-player maps, drawn the single-player
+  way** (6,210 placements). Single player spawns them in the game module, not cgame,
+  and draws them differently: cgame culls by the PVS and a fixed 8192 units only;
+  a view or cull point in solid draws nothing; the renderer culls unscaled models by
+  their sphere, picks levels with
+  `r_lodscale` 10 (multiplayer's is 5), prefers a fog that holds the whole model and
+  lights the model at its cull point. Breakables come next, then racks and beacons.
+
+## 2026-10-10: Single-player spawn details (decided by Claude, pending review)
+
+- **Skill 0 (easy)**, `g_spskill`'s default, for the spawnflags that leave entities
+  out per skill (256, 512, 1024). The viewer has no skill setting yet; the reference
+  captures use the same skill.
+- **A model's fog is fixed at load**, as seen from outside any fog. Single player's
+  choice can depend on the fog the view is in when a model straddles fogs; a
+  retail-data test checks that no retail placement's choice does.
+- **Single-player reference views come from OpenJK's single-player executable**,
+  patched like the multiplayer one to pin the view and game time
+  (`bench/reference/openjk-view.patch`), in first person so the player stays out of
+  sight.

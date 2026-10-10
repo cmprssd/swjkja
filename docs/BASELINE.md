@@ -247,6 +247,31 @@ also shows one world flare near the floor that the original does not draw.
 The 19 world views (references taken with `r_drawentities 0`) are unchanged by the
 models: all within 0.41 mean difference, at most 0.1% of pixels off by more than 16.
 
+## Single-player static models compared with the reference, 2026-10-10
+
+Four single-player views in `bench/reference/model-views.txt`, captured with OpenJK's
+single-player executable (patched like the multiplayer one to pin the view and game
+time) at skill 0, in first person, after skipping the map's opening cutscene
+(`exitview`) and moving the player to the view (`noclip`, `setviewpos`).
+
+| View | Mean difference | Pixels off by > 16 | Shows |
+|------|------|------|------|
+| dpred_canopy | 1.34 | 0.0% | tree models filling the view, the ground between them |
+| hoth2_fog | 0.76 | 0.0% | rock models in the cave's fog |
+| rancor_plate | 0.47 | 0.3% | wall plates in a hall |
+| vjun1_hall | 1.48 | 3.1% | air purifiers and light blocks |
+
+vjun1_hall differs by the original's green laser beams (effects, not drawn here) and
+highlights on the air purifiers' tops, not yet explained (their shader has no
+environment stage). The three mp/ffa5 views are unchanged (0.17, 3.87 and 0.22).
+
+Two candidate views (t2_dpred, t2_rancor) were dropped: the original left parts of
+their screens undrawn, showing earlier frames, because single player never clears the
+screen and draws only the areas the player's snapshot marks visible. One of them had
+its eye inside a solid leaf, where single player draws no static models at all; this
+renderer drew the trees there until it followed the same rule
+(`single_player_draws_no_models_from_a_view_in_solid` in `crates/render/tests`).
+
 ## Renderer frame times (swjkja-render), 2026-10-07
 
 `bench_world <GameData> bench/reference/views.txt` renders each reference view 300

@@ -32,8 +32,16 @@ fn main() {
             let world_time = t.elapsed();
             let t = Instant::now();
             let mut textures = TextureSet::new(&gpu).unwrap();
-            let renderer =
-                WorldRenderer::new(&gpu, &mut textures, &vfs, &shaders, &bsp, &world).unwrap();
+            let renderer = WorldRenderer::new(
+                &gpu,
+                &mut textures,
+                &vfs,
+                &shaders,
+                &bsp,
+                &world,
+                swjkja_world::static_model::Rules::for_map(&format!("maps/{map}.bsp")),
+            )
+            .unwrap();
             let renderer_time = t.elapsed();
             let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
             println!(

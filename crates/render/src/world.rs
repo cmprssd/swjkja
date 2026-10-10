@@ -460,6 +460,7 @@ impl WorldRenderer {
         shaders: &ShaderText,
         bsp: &Bsp,
         world: &World,
+        rules: swjkja_world::static_model::Rules,
     ) -> Result<Self> {
         // The global fog (the one without a brush; fog numbers are 1-based) and its
         // parameters, from its shader's fogParms (red at 250 units if it has none, as
@@ -489,7 +490,7 @@ impl WorldRenderer {
             });
         }
 
-        let mut models = StaticModels::load(vfs, bsp, &fog_volumes);
+        let mut models = StaticModels::load(vfs, bsp, &fog_volumes, rules);
 
         // Images: decode once, keep the decoded pixels to upload on first use. Every
         // image the map's shaders can ask for is decoded up front, in parallel; a name
@@ -1390,7 +1391,9 @@ impl WorldRenderer {
                 continue;
             };
             let m = &self.models.instances[n];
-            let light = self.light_grid.entity_light(m.origin, &styles, [0.0; 3]);
+            let light = self
+                .light_grid
+                .entity_light(m.light_origin, &styles, [0.0; 3]);
             let v4 = |v: [f32; 3]| [v[0], v[1], v[2], 0.0];
             let entity = GpuEntity {
                 ambient: v4(light.ambient),

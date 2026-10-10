@@ -4,6 +4,12 @@
 //! detail (`R_ComputeLOD`), culls its box (`R_CullModel`, which skips the sphere for
 //! these scaled entities) and picks a fog (`R_ComputeFogNum`).
 //!
+//! Single player differs (`code/cgame/cg_main.cpp`: `CG_DrawMiscEnts`; `code/rd-vanilla`):
+//! cgame culls by the PVS (drawing nothing from a view in solid, nor a model whose
+//! cull point is in solid) and a fixed distance only, the renderer also culls by the
+//! frame's sphere when the model has no scale, picks levels with `r_lodscale` 10,
+//! prefers a fog that holds the whole model, and lights the model at its cull point.
+//!
 //! The models never move, so each placement's surfaces are baked into world space at
 //! load; their normals carry the axes' scale, which is what the original's lighting
 //! sees (`R_SetupEntityLighting` turns the light into the model's scaled axes).
@@ -15,7 +21,7 @@ use swjkja_bsp::{Bsp, DrawVert};
 use swjkja_fs::Vfs;
 use swjkja_model::md3::{Md3, Md3Model};
 use swjkja_world::Geometry;
-use swjkja_world::static_model::StaticModel;
+use swjkja_world::static_model::{Rules, StaticModel};
 
 use crate::camera::Camera;
 use crate::fog::FogVolume;
@@ -23,8 +29,11 @@ use crate::vis::{Frustum, WorldVis};
 
 pub type Vec3 = [f32; 3];
 
-/// `r_lodscale`, the original's default.
+/// `r_lodscale`, the original's default: multiplayer's, then single player's.
 const LOD_SCALE: f32 = 5.0;
+const SP_LOD_SCALE: f32 = 10.0;
+/// Single player's cull distance, squared (`CG_DrawMiscEnts`: 8192 * 8192).
+const SP_DISTANCE_CULL_SQ: f32 = 8192.0 * 8192.0;
 /// The worldspawn's "distanceCull" when it has none (`DEFAULT_DISTANCE_CULL`).
 const DEFAULT_DISTANCE_CULL: f32 = 6000.0;
 
@@ -41,6 +50,8 @@ pub struct Piece {
 pub struct ModelLod {
     /// Frame 0's bounds in the model's own space.
     pub bounds: [Vec3; 2],
+    /// Frame 0's sphere in the model's own space (centre, radius).
+    pub sphere: (Vec3, f32),
     /// Indexes into [`StaticModels::pieces`].
     pub pieces: Range<usize>,
 }
@@ -51,8 +62,14 @@ pub struct Instance {
     pub axes: [Vec3; 3],
     /// The point cgame culls by: the origin, 1 + zoffset units up.
     pub cull_origin: Vec3,
+    /// The point the model is lit from: the origin, or in single player the cull
+    /// point (`RF_LIGHTING_ORIGIN`).
+    pub light_origin: Vec3,
+    /// Whether the renderer culls by the frame's sphere too (unit axes).
+    pub sphere_cull: bool,
     pub cull_cluster: i32,
-    /// cgame's culling radius: the scaled bounds' (`R_ModelBounds`, level 0).
+    /// cgame's culling radius: the scaled bounds' (`R_ModelBounds`, level 0). In
+    /// single player, the squared distance between the scaled bounds' corners.
     pub radius: f32,
     /// `R_ComputeLOD`'s radius: level 0's frame 0 bounds, unscaled.
     pub lod_radius: f32,
@@ -68,6 +85,7 @@ pub struct StaticModels {
     /// (`R_LoadMD3`, levels from least detailed to most).
     pub shaders: Vec<String>,
     distance_cull: f32,
+    rules: Rules,
 }
 
 fn dot(a: Vec3, b: Vec3) -> f32 {
@@ -103,9 +121,43 @@ pub fn fog_num(fogs: &[FogVolume], origin: Vec3, md3: &Md3) -> usize {
         .map_or(0, |i| i + 1)
 }
 
+/// Single player's `R_ComputeFogNum`, seen from fog `view_fog` (0 for none): the
+/// first fog that holds the frame's box (centre ± radius) whole; before it, a fog
+/// that holds one of the box's two extreme corners and matches the view's fog
+/// (`R_FogParmsMatch`: the same red and green, fog 0's being zero); failing both, the
+/// first fog holding a corner.
+pub fn sp_fog_num(fogs: &[FogVolume], origin: Vec3, md3: &Md3, view_fog: usize) -> usize {
+    let frame = &md3.frames[0];
+    let center = [0, 1, 2].map(|i| origin[i] + frame.local_origin[i]);
+    let lo = center.map(|c| c - frame.radius);
+    let hi = center.map(|c| c + frame.radius);
+    let inside =
+        |p: Vec3, f: &FogVolume| (0..3).all(|j| p[j] >= f.bounds[0][j] && p[j] <= f.bounds[1][j]);
+    let parms = |n: usize| match n {
+        0 => [0.0; 2],
+        n => [fogs[n - 1].parms_color[0], fogs[n - 1].parms_color[1]],
+    };
+    let mut partial = 0;
+    for (i, f) in fogs.iter().enumerate() {
+        let n = i + 1;
+        if inside(lo, f) && inside(hi, f) {
+            return n;
+        }
+        if inside(lo, f) || inside(hi, f) {
+            if view_fog == n || parms(view_fog) == parms(n) {
+                return n;
+            }
+            if partial == 0 {
+                partial = n;
+            }
+        }
+    }
+    partial
+}
+
 /// `R_ComputeLOD` with `r_lodbias` 0: the level for a model of `lod_radius` at
 /// `origin`, from its projected size.
-pub fn lod(count: usize, lod_radius: f32, origin: Vec3, camera: &Camera) -> usize {
+pub fn lod(count: usize, lod_radius: f32, origin: Vec3, camera: &Camera, scale: f32) -> usize {
     if count < 2 {
         return 0;
     }
@@ -120,7 +172,7 @@ pub fn lod(count: usize, lod_radius: f32, origin: Vec3, camera: &Camera) -> usiz
     };
     // Projected to nothing (the model crosses the view plane): the most detail.
     let flod = if projected != 0.0 {
-        1.0 - projected * LOD_SCALE
+        1.0 - projected * scale
     } else {
         0.0
     };
@@ -128,12 +180,15 @@ pub fn lod(count: usize, lod_radius: f32, origin: Vec3, camera: &Camera) -> usiz
 }
 
 impl StaticModels {
-    /// Loads the models the map places and bakes each placement (call
-    /// [`StaticModels::locate`] before drawing). A model that
-    /// does not load stops the original's map load; here its placements are skipped
-    /// with a warning.
-    pub fn load(vfs: &Vfs, bsp: &Bsp, fogs: &[FogVolume]) -> Self {
-        let placements = swjkja_world::static_model::static_models(&bsp.entities, 0);
+    /// Loads the models the map places under `rules` and bakes each placement (call
+    /// [`StaticModels::locate`] before drawing). A model that does not load stops the
+    /// original's map load; here its placements are skipped with a warning.
+    ///
+    /// A single-player model's fog is the one it has seen from outside any fog: no
+    /// retail model's fog depends on where the view is (a retail-data test checks).
+    pub fn load(vfs: &Vfs, bsp: &Bsp, fogs: &[FogVolume], rules: Rules) -> Self {
+        let sp = matches!(rules, Rules::SinglePlayer { .. });
+        let placements = swjkja_world::static_model::static_models(&bsp.entities, rules);
         let mut models: HashMap<String, Option<Md3Model>> = HashMap::new();
         let mut shaders = Vec::new();
         let mut instances = Vec::new();
@@ -162,12 +217,17 @@ impl StaticModels {
                 .iter()
                 .map(|md3| {
                     let first = pieces.len();
-                    let fog = fog_num(fogs, p.origin, md3);
+                    let fog = if sp {
+                        sp_fog_num(fogs, p.origin, md3, 0)
+                    } else {
+                        fog_num(fogs, p.origin, md3)
+                    };
                     for s in &md3.surfaces {
                         pieces.push(bake(s, p, entity, fog));
                     }
                     ModelLod {
                         bounds: md3.frames[0].bounds,
+                        sphere: (md3.frames[0].local_origin, md3.frames[0].radius),
                         pieces: first..pieces.len(),
                     }
                 })
@@ -175,12 +235,21 @@ impl StaticModels {
             let bounds = model.lods[0].frames[0].bounds;
             let scaled = bounds.map(|b| [0, 1, 2].map(|i| b[i] * p.scale[i]));
             let cull_origin = [p.origin[0], p.origin[1], p.origin[2] + 1.0 + p.zoffset];
+            let radius = if sp {
+                // CG_CreateMiscEnts: DistanceSquared(mins, maxs), squared on purpose.
+                let d = [0, 1, 2].map(|i| scaled[1][i] - scaled[0][i]);
+                dot(d, d)
+            } else {
+                radius_from_bounds(scaled)
+            };
             instances.push(Instance {
                 origin: p.origin,
                 axes: p.axes,
                 cull_origin,
+                light_origin: if sp { cull_origin } else { p.origin },
+                sphere_cull: sp && p.normalized,
                 cull_cluster: -1,
-                radius: radius_from_bounds(scaled),
+                radius,
                 lod_radius: radius_from_bounds(bounds),
                 lods,
             });
@@ -196,6 +265,7 @@ impl StaticModels {
             pieces,
             shaders,
             distance_cull,
+            rules,
         }
     }
 
@@ -216,19 +286,44 @@ impl StaticModels {
         vis: &WorldVis,
     ) -> Option<usize> {
         let m = &self.instances[n];
-        // CG_DrawMiscStaticModels.
-        if m.radius != 0.0 && frustum.culls_sphere(m.cull_origin, m.radius) {
-            return None;
-        }
-        if !vis.can_see(view_cluster, m.cull_cluster) {
-            return None;
-        }
         let to_view = [0, 1, 2].map(|i| m.origin[i] - camera.origin[i]);
-        if length(to_view) - m.radius > self.distance_cull {
+        let scale = match self.rules {
+            Rules::Multiplayer { .. } => {
+                // CG_DrawMiscStaticModels.
+                if m.radius != 0.0 && frustum.culls_sphere(m.cull_origin, m.radius) {
+                    return None;
+                }
+                if !vis.can_see(view_cluster, m.cull_cluster) {
+                    return None;
+                }
+                if length(to_view) - m.radius > self.distance_cull {
+                    return None;
+                }
+                LOD_SCALE
+            }
+            Rules::SinglePlayer { .. } => {
+                // CG_DrawMiscEnts. Its inPVS also needs both points' areas connected
+                // (CM_AreasConnected): with every area portal open, as the world is
+                // drawn, that is both points being inside the map (a solid leaf has
+                // area -1, and these are the leafs without a cluster).
+                if view_cluster < 0
+                    || m.cull_cluster < 0
+                    || !vis.can_see(view_cluster, m.cull_cluster)
+                {
+                    return None;
+                }
+                if dot(to_view, to_view) - m.radius > SP_DISTANCE_CULL_SQ {
+                    return None;
+                }
+                SP_LOD_SCALE
+            }
+        };
+        // R_AddMD3Surfaces: the level, then its sphere and box (R_CullModel).
+        let level = lod(m.lods.len(), m.lod_radius, m.origin, camera, scale);
+        let (center, radius) = m.lods[level].sphere;
+        if m.sphere_cull && frustum.culls_sphere(transform(m.origin, &m.axes, center), radius) {
             return None;
         }
-        // R_AddMD3Surfaces: the level, then its box.
-        let level = lod(m.lods.len(), m.lod_radius, m.origin, camera);
         let [mins, maxs] = m.lods[level].bounds;
         let corners: [Vec3; 8] = std::array::from_fn(|i| {
             let v = [
@@ -278,6 +373,55 @@ fn bake(s: &swjkja_model::md3::Surface, p: &StaticModel, entity: usize, fog: usi
 mod tests {
     use super::*;
 
+    fn fog(bounds: [Vec3; 2], color: [f32; 3]) -> FogVolume {
+        FogVolume {
+            color: [0; 4],
+            parms_color: color,
+            tc_scale: 0.0,
+            surface: [0.0; 4],
+            bounds,
+        }
+    }
+
+    #[test]
+    fn single_player_fog_prefers_a_whole_fit_then_the_view_fog() {
+        // A model of radius 10 at the origin: its box is -10..10.
+        let md3 = Md3 {
+            name: String::new(),
+            flags: 0,
+            frames: vec![swjkja_model::md3::Frame {
+                bounds: [[-10.0; 3], [10.0; 3]],
+                local_origin: [0.0; 3],
+                radius: 10.0,
+                name: String::new(),
+            }],
+            tags: Vec::new(),
+            tags_per_frame: 0,
+            surfaces: Vec::new(),
+        };
+        let red = [1.0, 0.0, 0.0];
+        let blue = [0.0, 0.0, 1.0];
+        // Fog 1 holds the box's low corner only, fog 2 its high corner only, fog 3
+        // the whole box.
+        let low = fog([[-20.0; 3], [0.0; 3]], red);
+        let high = fog([[0.0; 3], [20.0; 3]], red);
+        let whole = fog([[-50.0; 3], [50.0; 3]], red);
+        let fogs = [low, high, whole];
+        // From outside any fog: neither partial fog matches fog 0's zero colour, so
+        // the whole fit wins.
+        assert_eq!(sp_fog_num(&fogs, [0.0; 3], &md3, 0), 3);
+        // From inside fog 2 (or one of the same colour): fog 1 already matches.
+        assert_eq!(sp_fog_num(&fogs, [0.0; 3], &md3, 2), 1);
+        // A blue fog has fog 0's red and green (zero): it matches from outside.
+        let fogs = [fog([[-20.0; 3], [0.0; 3]], blue), high];
+        assert_eq!(sp_fog_num(&fogs, [0.0; 3], &md3, 0), 1);
+        // Only partial fits of other colours: the first of them.
+        let fogs = [high, low];
+        assert_eq!(sp_fog_num(&fogs, [0.0; 3], &md3, 0), 1);
+        // Out of every fog.
+        assert_eq!(sp_fog_num(&fogs, [100.0; 3], &md3, 0), 0);
+    }
+
     #[test]
     fn radius_reaches_the_farthest_corner() {
         assert_eq!(radius_from_bounds([[-3.0, 0.0, 0.0], [1.0, 4.0, 0.0]]), 5.0);
@@ -288,7 +432,7 @@ mod tests {
         let camera = Camera::new([0.0; 3], [0.0; 3], 640, 480);
         // 80 degrees across at 4:3: tan(half vertical fov) = 0.629.
         let ty = camera.tan_half_fov().1;
-        let at = |d: f32| lod(3, 10.0, [d, 0.0, 0.0], &camera);
+        let at = |d: f32| lod(3, 10.0, [d, 0.0, 0.0], &camera, LOD_SCALE);
         // Projected radius 1/5 or more: flod <= 0, the most detail.
         assert_eq!(at(10.0 / (0.2 * ty)), 0);
         // Projected radius 0.1: flod 0.5, times 3 levels: level 1.
@@ -298,6 +442,6 @@ mod tests {
         // Behind the viewer: projected to nothing, the most detail.
         assert_eq!(at(-100.0), 0);
         // One level: always it.
-        assert_eq!(lod(1, 10.0, [1.0e6, 0.0, 0.0], &camera), 0);
+        assert_eq!(lod(1, 10.0, [1.0e6, 0.0, 0.0], &camera, LOD_SCALE), 0);
     }
 }

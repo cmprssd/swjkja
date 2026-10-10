@@ -26,8 +26,16 @@ fn main() {
         let bsp = swjkja_bsp::Bsp::parse(&vfs.read(&format!("maps/{map}.bsp")).unwrap()).unwrap();
         let world = swjkja_world::World::load(&bsp, &Default::default());
         let mut textures = TextureSet::new(&gpu).unwrap();
-        let mut renderer =
-            WorldRenderer::new(&gpu, &mut textures, &vfs, &shaders, &bsp, &world).unwrap();
+        let mut renderer = WorldRenderer::new(
+            &gpu,
+            &mut textures,
+            &vfs,
+            &shaders,
+            &bsp,
+            &world,
+            swjkja_world::static_model::Rules::for_map(&format!("maps/{map}.bsp")),
+        )
+        .unwrap();
         let load = t.elapsed();
         // One target per map; its depth copy sits in the texture array for flares.
         let target = Target::new(&gpu, 1280, 720).unwrap();
