@@ -473,6 +473,28 @@ To rerun (opens a game window per run; see `bench/lib.sh`):
     scripts/cargo-msvc.sh run --release -p swjkja-render --example bench_path -- \
         <GameData> mp/ffa3 bench/reference/ffa3.path 3
 
+**On an idle PC, 2026-10-10** (Chrome, Steam and GeForce NOW closed, CPU load
+about 4% before the runs), the new build against the reference, alternating
+(reference window, reference fullscreen, viewer window, viewer fullscreen), three
+rounds, both at 1280x720:
+
+| Run | FPS (each run) | Median ms | p99 ms | 1% low FPS | Max ms |
+|------|------|------|------|------|------|
+| Reference, window | 267.9, 265.0, 270.7 | 3.59-3.65 | 6.18-6.93 | 104-108 | 29-31 |
+| New renderer, window | 285.3, 280.9, 281.7 | 3.43-3.58 | 6.78-7.32 | 120-122 | 10-13 |
+| Reference, fullscreen | 289.7, 279.3, 287.3 | 3.37-3.48 | 5.54-5.94 | 117-127 | 27 |
+| New renderer, fullscreen | 305.5, 328.8, 327.9 | 2.99-3.15 | 5.33-6.00 | 110-162 | 8-23 |
+
+**Milestone 2's speed goal is met: the new renderer is faster than the original on
+the same path in both modes, on an idle PC too.** Every run of ours beats every run
+of the reference: 1.04-1.08x in a window (the margin drawing straight into the
+window's image bought; before it the original was ahead there) and 1.05-1.18x in
+exclusive fullscreen. Our worst frames are 8-23 ms against the original's 27-31 ms;
+our p99 in a window is slightly higher (6.8-7.3 against 6.2-6.9 ms). The idle
+margins are much smaller than under load (1.15-1.45x), where the original, bound by
+its one CPU thread, slows down and we do not; and far below offscreen (1.4-1.7x),
+so presenting is still most of what separates the two in a window.
+
 ## The viewer's loading screen, 2026-10-10
 
 `swjkja view` now loads the map on its own thread and shows a progress bar from
