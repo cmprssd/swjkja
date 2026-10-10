@@ -365,9 +365,44 @@ the desktop compositor's work on the same integrated GPU. Ruled out: the event l
 fourth swapchain image (155-158 -> 164-167 FPS, within the noise). MAILBOX is not
 offered by this driver (only IMMEDIATE and FIFO).
 
-Not yet known: how Windows presents the window (composed copy or independent flip)
-for the Vulkan swapchain and for the reference's OpenGL. PresentMon shows it but
-needs administrator rights.
+Waiting for the swapchain image only at the copy (`TRANSFER` instead of
+`ALL_COMMANDS`, so drawing the world need not wait for the image) made no difference:
+the two builds alternating five times each, 130-149 and 132-144 FPS.
+
+**Window and exclusive fullscreen, 2026-10-10**, both at 1280x720, alternating
+(reference window, reference fullscreen, viewer window, viewer fullscreen), three
+rounds, on a busier machine still (about half of the CPU taken by Chrome, Steam and
+GeForce NOW):
+
+| Run | FPS (each run) | Median ms | p99 ms | 1% low FPS | Max ms |
+|------|------|------|------|------|------|
+| Reference, window | 141.2, 139.7, 136.9 | 5.60-5.70 | 25.5-26.4 | 32-36 | 38-44 |
+| Reference, fullscreen | 163.6, 164.5, 165.0 | 4.77-4.97 | 17.4-19.3 | 41-44 | 36-39 |
+| New renderer, window | 174.4, 160.3, 160.2 | 5.09-5.49 | 25.3-26.4 | 31-34 | 37-39 |
+| New renderer, fullscreen | 206.7, 196.2, 197.3 | 3.70-4.03 | 23.5-27.0 | 27-28 | 86-141 |
+
+- **In this load the new renderer is faster in a window too** (1.15-1.25x), and in
+  the earlier alternating run of the day too (138-173 against 107-118 FPS). The
+  difference from the table above is the reference, not the new renderer: the new
+  renderer's window rate is the same (159-163 then, 160-174 now), while the
+  reference fell from about 198 to 139 FPS. The reference is bound by the CPU (one
+  thread, the OpenGL driver's work on it) and slows down with the PC's load; the new
+  renderer in a window is bound by the GPU and does not. So which is faster in a
+  window depends on the load: on an idle PC the original still wins.
+- **The compositor costs both about 1 ms per frame**: fullscreen gains 1.0-1.2 ms
+  per frame for the reference and 1.0-1.4 ms for the new renderer. It is not what
+  makes our window frames slower than offscreen.
+- Left over: in fullscreen our frame is still about 1-1.5 ms longer than offscreen
+  (3.7-4.0 against 2.9-3.1 ms median) and than our own GPU work, so presenting on
+  this driver costs GPU time even without composition, perhaps a copy of its own in
+  Intel's Windows Vulkan presentation. PresentMon (its present mode per frame)
+  would show it; it needs administrator rights.
+- Our fullscreen runs have stalls the reference does not (worst frames 86-141 ms,
+  1% lows 27-28 FPS against 41-44): not looked into yet.
+
+To rerun these: `FULLSCREEN=1 bench/path-reference.sh` and `swjkja view ...
+--replay ... --fullscreen` (exclusive fullscreen at 1280x720; the screen switches
+to that mode).
 
 To rerun (opens a game window per run; see `bench/lib.sh`):
 
