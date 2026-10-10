@@ -18,7 +18,13 @@ pub struct FogVolume {
     /// The fog surface plane (normal pointing into the fog, and its distance, as
     /// `surface[3]`); all zero for the global fog, which has none.
     pub surface: [f32; 4],
+    /// The fog brush's axial bounds (its first six sides); the whole world for the
+    /// global fog. Models pick their fog by these (`R_ComputeFogNum`).
+    pub bounds: [Vec3; 2],
 }
+
+/// `MAX_WORLD_COORD`.
+const MAX_WORLD_COORD: f32 = 64.0 * 1024.0;
 
 impl FogVolume {
     /// `R_LoadFogs` for fog `index` (0-based, the bsp's order), with its shader's
@@ -28,6 +34,15 @@ impl FogVolume {
         let color = parms.color.map(|c| (c * 255.0) as u8);
         let depth = parms.depth_for_opaque.max(1.0);
         let mut surface = [0.0; 4];
+        let mut bounds = [[-MAX_WORLD_COORD; 3], [MAX_WORLD_COORD; 3]];
+        if fog.brush >= 0 {
+            // "brushes are always sorted with the axial sides first".
+            let first_side = bsp.brushes[fog.brush as usize].first_side as usize;
+            for (k, side) in bsp.brush_sides.iter().skip(first_side).take(6).enumerate() {
+                let dist = bsp.planes[side.plane as usize].dist;
+                bounds[k % 2][k / 2] = if k % 2 == 0 { -dist } else { dist };
+            }
+        }
         if fog.brush >= 0 && fog.visible_side != -1 {
             let first_side = bsp.brushes[fog.brush as usize].first_side;
             let side = &bsp.brush_sides[(first_side + fog.visible_side) as usize];
@@ -43,6 +58,7 @@ impl FogVolume {
             color: [color[0], color[1], color[2], 255],
             tc_scale: 1.0 / (depth * 8.0),
             surface,
+            bounds,
         }
     }
 }
@@ -140,6 +156,7 @@ mod tests {
             color: [0; 4],
             tc_scale: 1.0 / (8.0 * 400.0),
             surface: [0.0, 0.0, -1.0, -100.0],
+            bounds: [[0.0; 3]; 2],
         };
         let forward = [1.0, 0.0, 0.0];
         // Eye inside the fog: a point 400 units ahead is fully in (t = 31/32), at
@@ -163,6 +180,7 @@ mod tests {
             color: [0; 4],
             tc_scale: 0.001,
             surface: [0.0; 4],
+            bounds: [[0.0; 3]; 2],
         };
         assert_eq!(
             fog_tex_coords(&fog, [5.0, 0.0, -9999.0], [0.0; 3], [1.0, 0.0, 0.0])[1],

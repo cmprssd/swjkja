@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Captures reference screenshots with the reference OpenJK (built with the
 # cg_swjkjaView/cg_swjkjaTime patch by bench/build-openjk.sh): every view in
-# reference/views.txt at its pinned game time,
+# reference/views.txt (or the views file given) at its pinned game time,
 # world only (r_drawentities 0, no HUD), full-quality textures, 1280x720.
+# With ENTITIES=1, entities are drawn too (the static models of
+# reference/model-views.txt; those views keep items and movers out of sight).
 # Holocron mode (g_gametype 1) because free-for-all opens the force-power menu on
 # joining, over the view. Opens a game window per map; refuses while the PC is in
 # use (see lib.sh).
@@ -14,15 +16,17 @@ out_win="$WORK_WIN\\reference-shots"
 out=$(wslpath "$out_win")
 mkdir -p "$out"
 
-maps=$(grep -v '^#' reference/views.txt | awk 'NF {print $1}' | sort -u)
+views=${1:-reference/views.txt}
+entities=${ENTITIES:-0}
+maps=$(grep -v '^#' "$views" | awk 'NF {print $1}' | sort -u)
 for map in $maps; do
 	cfg=$(mktemp)
 	{
 		# Cheat cvars need the devmap; r_drawentities 0 leaves only the world.
 		echo "wait 300"
-		echo "set cg_draw2D 0; set r_drawentities 0; set cg_drawGun 0"
+		echo "set cg_draw2D 0; set r_drawentities $entities; set cg_drawGun 0"
 		echo "wait 300"
-		grep -v '^#' reference/views.txt | awk -v m="$map" '$1 == m {
+		grep -v '^#' "$views" | awk -v m="$map" '$1 == m {
 			printf "set cg_swjkjaView \"%s %s %s %s %s %s\"\nset cg_swjkjaTime %s\nwait 200\nscreenshot_png %s\nwait 100\n", $3, $4, $5, $6, $7, $8, $9, $2
 		}'
 		echo "quit"

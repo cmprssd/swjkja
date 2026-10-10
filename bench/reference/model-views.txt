@@ -1,0 +1,6 @@
+# Views of static models (misc_model_static), in the format of views.txt. Captured
+# with entities drawn (ENTITIES=1 bench/capture-reference.sh reference/model-views.txt),
+# so each view keeps items and movers (doors, platforms) out of sight.
+mp/ffa5   ffa5_lamps    0 -200 100        0 270 0   12345
+mp/ffa5   ffa5_rings    -2024 -1296 572   0 342 0   12345
+mp/ffa5   ffa5_pipes    2216 -1080 700    0 240 0   12345

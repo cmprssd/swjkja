@@ -224,6 +224,29 @@ differ from the 12.345 s render by 0.54 and 0.80 on average, and from the time-0
 render by 19.2 and 21.7. In the fog views "undrawn" (pure black) pixels are the
 black fogs themselves, which the reference shows black too.
 
+## Static models compared with the reference, 2026-10-10
+
+`bench/reference/model-views.txt` holds three mp/ffa5 views of its static models
+(`misc_model_static`: lava rings, lamps, struts, air purifiers), captured with
+entities drawn (`ENTITIES=1 bench/capture-reference.sh reference/model-views.txt`)
+and placed to keep items and movers out of sight. The rings view draws 8 of the
+map's 84 models after culling.
+
+| View | Mean difference | Pixels off by > 16 | Shows |
+|------|------|------|------|
+| ffa5_lamps | 0.17 | 0.1% | lamp posts at the edges |
+| ffa5_rings | 0.22 | 0.1% | four lava rings filling the middle |
+| ffa5_pipes | 3.87 | 4.4% | rings and an air purifier; the original's view saber |
+
+The models match: on the rings (the box around them in ffa5_rings) ours differs by
+0.6 on average, +0.28/+0.05/+0.20 per channel (no bias, so the light grid lighting
+agrees), with 2.3% of pixels off by more than 8. ffa5_pipes differs mostly by the
+original's first-person lightsaber, which `cg_drawGun 0` does not hide; ffa5_rings
+also shows one world flare near the floor that the original does not draw.
+
+The 19 world views (references taken with `r_drawentities 0`) are unchanged by the
+models: all within 0.41 mean difference, at most 0.1% of pixels off by more than 16.
+
 ## Renderer frame times (swjkja-render), 2026-10-07
 
 `bench_world <GameData> bench/reference/views.txt` renders each reference view 300

@@ -51,7 +51,8 @@ struct Stage {
     tc_vector: array<vec4<f32>, 4>,
     // Two vec4 of parameters per tcMod: [bundle * 8 + index * 2 + 0..1].
     tcmod: array<vec4<f32>, 16>,
-    // x: the light style for rgbGen lightmapStyle.
+    // x: the light style for rgbGen lightmapStyle. y: 1 for a model's surfaces:
+    // lm23.w holds the entity number (else the entity is the world, 0).
     style: vec4<f32>,
     // x: GL fog for this stage: 0 none, 1 towards the fog colour, 2 black, 3 white.
     // y: 1 for sky geometry: positions are offsets from the viewer, drawn at the far
@@ -61,6 +62,15 @@ struct Stage {
     // w: bits 0-15 the surface's fog number (0 none, else 1-based index into fogs),
     // bits 16-17 adjustColorsForFog (0 none, 1 rgb, 2 alpha, 3 rgba).
     fog: vec4<u32>,
+}
+
+// An entity's light (R_SetupEntityLighting) and colour (shaderRGBA), 0-255.
+struct Entity {
+    ambient: vec4<f32>,
+    directed: vec4<f32>,
+    // xyz: the direction the light comes from, unit length or zero.
+    light_dir: vec4<f32>,
+    color: vec4<f32>,
 }
 
 struct Push {
@@ -78,6 +88,7 @@ var<immediate> push: Push;
 @group(1) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(1) var<storage, read> stages: array<Stage>;
 @group(1) @binding(2) var<storage, read> fogs: array<Fog>;
+@group(1) @binding(3) var<storage, read> entities: array<Entity>;
 
 // RB_CalcFogTexCoords (fog.rs fog_tex_coords) for fog number `n`.
 fn fog_tex_coords(n: u32, v: vec3<f32>) -> vec2<f32> {
@@ -255,8 +266,18 @@ fn tc_mods(s: Stage, bundle: u32, xyz: vec3<f32>, st_in: vec2<f32>) -> vec2<f32>
     return st;
 }
 
+// RB_CalcDiffuseColor: ambient, plus the directed light by how much the normal faces
+// it. A model's normal carries its axes' scale, as the original's lighting sees it.
+fn diffuse(e: Entity, normal: vec3<f32>) -> vec3<f32> {
+    let incoming = dot(normal, e.light_dir.xyz);
+    if incoming <= 0.0 {
+        return floor(e.ambient.rgb);
+    }
+    return min(floor(e.ambient.rgb + incoming * e.directed.rgb), vec3<f32>(255.0));
+}
+
 // ComputeColors, in 0-255 like the original's byte colours.
-fn colors(s: Stage, xyz: vec3<f32>, vertex: vec4<f32>) -> vec4<f32> {
+fn colors(s: Stage, xyz: vec3<f32>, vertex: vec4<f32>, normal: vec3<f32>, e: Entity) -> vec4<f32> {
     let identity_light = frame.params.y;
     let identity_byte = floor(255.0 * identity_light);
     var c = vec4<f32>(identity_byte);
@@ -270,11 +291,19 @@ fn colors(s: Stage, xyz: vec3<f32>, vertex: vec4<f32>) -> vec4<f32> {
             let glow = clamp(wave(s.funcs.x, s.rgb_wave) * identity_light, 0.0, 1.0);
             c = vec4<f32>(vec3<f32>(floor(255.0 * glow)), 255.0);
         }
-        // The world entity is white.
-        case 3u: { c = vec4<f32>(255.0); }
-        case 4u: { c = vec4<f32>(0.0, 0.0, 0.0, c.a); }
-        // No light grid for the world entity: ambient and directed light are zero.
-        case 9u, 10u: { c = vec4<f32>(0.0, 0.0, 0.0, 255.0); }
+        case 3u: { c = e.color; }
+        case 4u: { c = 255.0 - e.color; }
+        case 9u: { c = vec4<f32>(diffuse(e, normal), 255.0); }
+        case 10u: {
+            // RB_CalcDiffuseEntityColor: the light (unrounded) times the colour.
+            let tint = e.color.rgb / 255.0;
+            let incoming = dot(normal, e.light_dir.xyz);
+            var rgb = floor(tint * e.ambient.rgb);
+            if incoming > 0.0 {
+                rgb = floor(min(e.ambient.rgb + incoming * e.directed.rgb, vec3<f32>(255.0)) * tint);
+            }
+            c = vec4<f32>(rgb, e.color.a);
+        }
         case 11u: { c = s.constant; }
         case 12u: { c = frame.styles[u32(s.style.x)]; }
         // CGEN_FOG: the fog's colorInt (alpha included).
@@ -287,8 +316,8 @@ fn colors(s: Stage, xyz: vec3<f32>, vertex: vec4<f32>) -> vec4<f32> {
                 c.a = 255.0;
             }
         }
-        case 2u: { c.a = 255.0; }
-        case 3u: { c.a = 0.0; }
+        case 2u: { c.a = e.color.a; }
+        case 3u: { c.a = 255.0 - e.color.a; }
         case 4u: { if rgb_gen != RGB_VERTEX { c.a = vertex.a; } }
         case 5u: { c.a = 255.0 - vertex.a; }
         case 7u: { c.a = floor(255.0 * clamp(wave(s.funcs.y, s.alpha_wave), 0.0, 1.0)); }
@@ -355,7 +384,11 @@ fn vs_main(
     }
     out.tc0 = tc_mods(s, 0u, world_xyz, tc_gen(s, 0u, world_xyz, normal, st, lm01, lm23));
     out.tc1 = tc_mods(s, 1u, world_xyz, tc_gen(s, 1u, world_xyz, normal, st, lm01, lm23));
-    var c = colors(s, xyz, round(color * 255.0));
+    var entity = 0u;
+    if s.style.y == 1.0 {
+        entity = u32(lm23.w);
+    }
+    var c = colors(s, xyz, round(color * 255.0), normal, entities[entity]);
     // adjustColorsForFog on a fogged surface: fade by the fog's opacity
     // (RB_CalcModulate*ByFog), in bytes as the original.
     let fog_num = s.fog.w & 0xffffu;

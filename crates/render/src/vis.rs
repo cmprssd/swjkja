@@ -57,6 +57,52 @@ fn box_on_plane_side(mins: Vec3, maxs: Vec3, p: &Plane) -> u8 {
     sides
 }
 
+/// The view's four side planes (`R_SetupFrustum`; cgame's `CG_SetupFrustum` builds
+/// the same ones).
+#[derive(Debug, Clone, Copy)]
+pub struct Frustum {
+    planes: [Plane; 4],
+}
+
+impl Frustum {
+    pub fn new(camera: &Camera) -> Self {
+        let [f, r, u] = camera.axes();
+        let left = [-r[0], -r[1], -r[2]];
+        let (tx, ty) = camera.tan_half_fov();
+        let side = |ang: f32, axis: Vec3, sign: f32| {
+            let (xs, xc) = ang.sin_cos();
+            let normal = [0, 1, 2].map(|k| f[k] * xs + sign * xc * axis[k]);
+            Plane {
+                normal,
+                dist: dot(camera.origin, normal),
+            }
+        };
+        let (ax, ay) = (tx.atan(), ty.atan());
+        Self {
+            planes: [
+                side(ax, left, 1.0),
+                side(ax, left, -1.0),
+                side(ay, u, 1.0),
+                side(ay, u, -1.0),
+            ],
+        }
+    }
+
+    /// `CG_CullPointAndRadius`: the sphere is entirely behind a plane.
+    pub fn culls_sphere(&self, center: Vec3, radius: f32) -> bool {
+        self.planes
+            .iter()
+            .any(|p| dot(center, p.normal) - p.dist < -radius)
+    }
+
+    /// `R_CullLocalBox`'s CULL_OUT: every corner is on or behind one plane.
+    pub fn culls_points(&self, points: &[Vec3]) -> bool {
+        self.planes
+            .iter()
+            .any(|p| points.iter().all(|&v| dot(v, p.normal) <= p.dist))
+    }
+}
+
 /// The world's BSP tree and what visibility needs per surface.
 pub struct WorldVis {
     nodes: Vec<swjkja_bsp::Node>,
@@ -127,6 +173,21 @@ impl WorldVis {
         }
     }
 
+    /// The cluster of the leaf containing `p` (-1 outside the map, or without nodes).
+    pub fn cluster(&self, p: Vec3) -> i32 {
+        if self.nodes.is_empty() {
+            return -1;
+        }
+        self.leafs[self.point_in_leaf(p)].cluster
+    }
+
+    /// `R_inPVS` for two points' clusters: whether `to` is in the potentially
+    /// visible set of `from` (a point outside the map sees, and is seen by,
+    /// everything).
+    pub fn can_see(&self, from: i32, to: i32) -> bool {
+        self.vis.can_see(from, to)
+    }
+
     /// The surfaces the original draws for this view, in the order it adds them.
     pub fn visible(&mut self, camera: &Camera, out: &mut Vec<usize>) {
         out.clear();
@@ -154,25 +215,7 @@ impl WorldVis {
             }
         }
 
-        // R_SetupFrustum: four side planes from the field of view.
-        let [f, r, u] = camera.axes();
-        let left = [-r[0], -r[1], -r[2]];
-        let (tx, ty) = camera.tan_half_fov();
-        let side = |ang: f32, axis: Vec3, sign: f32| {
-            let (xs, xc) = ang.sin_cos();
-            let normal = [0, 1, 2].map(|k| f[k] * xs + sign * xc * axis[k]);
-            Plane {
-                normal,
-                dist: dot(camera.origin, normal),
-            }
-        };
-        let (ax, ay) = (tx.atan(), ty.atan());
-        let frustum = [
-            side(ax, left, 1.0),
-            side(ax, left, -1.0),
-            side(ay, u, 1.0),
-            side(ay, u, -1.0),
-        ];
+        let frustum = Frustum::new(camera).planes;
 
         // R_RecursiveWorldNode, front child first.
         let mut stack: Vec<(i32, u8)> = vec![(0, 0b1111)];
