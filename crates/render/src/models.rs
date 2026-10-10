@@ -18,8 +18,14 @@
 //!
 //! The weapons on single player's racks are Ghoul2 models, items drawn by the
 //! renderer's `R_AddGhoulSurfaces`: culled by a sphere of the entity's radius (20 for
-//! an item, [`swjkja_world::static_model::ITEM_RADIUS`]) around its origin, their level of detail and fog picked from the same
-//! sphere, and their meshes posed at frame 0 of their skeleton.
+//! an item, [`swjkja_world::static_model::ITEM_RADIUS`]) around its origin, their
+//! level of detail and fog picked from the same sphere, and their meshes posed at
+//! frame 0 of their skeleton.
+//!
+//! Single player's NPCs are Ghoul2 entities too, drawn by cgame as players
+//! (`CG_Player`): their skin on, their surfaces switched, posed as they start
+//! (`BOTH_STAND1`), culled and leveled by their radius times their largest scale, and
+//! lit at their origin.
 //!
 //! The models never move, so each placement's surfaces are baked into world space at
 //! load; their normals carry the axes' scale, which is what the original's lighting
@@ -30,9 +36,12 @@ use std::ops::Range;
 
 use swjkja_bsp::{Bsp, DrawVert};
 use swjkja_fs::Vfs;
+use swjkja_model::animation;
 use swjkja_model::glm::{self, Ghoul2Model};
 use swjkja_model::md3::{Md3, Md3Model};
+use swjkja_model::skin::Skin;
 use swjkja_world::Geometry;
+use swjkja_world::npc;
 use swjkja_world::static_model::{Ghoul2, Rules, StaticModel};
 
 use crate::camera::Camera;
@@ -215,11 +224,21 @@ impl StaticModels {
     pub fn load(vfs: &Vfs, bsp: &Bsp, fogs: &[FogVolume], rules: Rules) -> Self {
         let sp = matches!(rules, Rules::SinglePlayer { .. });
         let mut placements = swjkja_world::static_model::entity_models(&bsp.entities, rules);
+        if sp {
+            let files: Vec<Vec<u8>> = vfs
+                .list("ext_data/npcs", ".npc")
+                .iter()
+                .filter_map(|f| vfs.read(&format!("ext_data/npcs/{f}")).ok())
+                .collect();
+            let parms = npc::join_parms(files.iter().map(Vec::as_slice));
+            placements.extend(npc::npc_models(&bsp.entities, rules, &parms));
+        }
         placements.extend(swjkja_world::static_model::static_models(
             &bsp.entities,
             rules,
         ));
         let mut models: HashMap<String, Option<Model>> = HashMap::new();
+        let mut skins: HashMap<String, Option<Skin>> = HashMap::new();
         let mut shaders = Vec::new();
         let mut instances = Vec::new();
         let mut pieces = Vec::new();
@@ -243,8 +262,22 @@ impl StaticModels {
                         eprintln!("warning: model {}: a Ghoul2 mesh placed as an MD3", p.model);
                         continue;
                     };
+                    // RE_RegisterSkin registers the skin's shaders after the mesh's.
+                    let skin = g.skin.as_ref().and_then(|name| {
+                        skins
+                            .entry(name.to_ascii_lowercase())
+                            .or_insert_with(|| {
+                                let skin = Skin::load(vfs, name);
+                                let surfaces = skin.iter().flat_map(|s| &s.surfaces);
+                                shaders.extend(surfaces.map(|(_, shader)| shader.clone()));
+                                skin
+                            })
+                            .as_ref()
+                    });
+                    let frame = if g.stand { stand_frame(vfs, m) } else { 0 };
                     let entity = instances.len() + 1;
-                    instances.push(ghoul2_instance(m, p, g, entity, fogs, &mut pieces));
+                    let look = (g, skin, frame);
+                    instances.push(ghoul2_instance(m, p, look, entity, fogs, &mut pieces));
                     continue;
                 }
                 None => continue,
@@ -442,22 +475,40 @@ impl Model {
     }
 }
 
-/// A Ghoul2 entity placed by `p`: each level's drawn surfaces posed at frame 0, fogged
-/// by the entity's sphere as seen from outside any fog.
+/// The frame a Ghoul2 mesh stands in as an NPC starts: its skeleton's
+/// `BOTH_STAND1`, or frame 0 where the skeleton has none (unanimated).
+fn stand_frame(vfs: &Vfs, model: &Ghoul2Model) -> usize {
+    animation::config_file(vfs, &model.glm.anim_name)
+        .and_then(|file| vfs.read(&file).ok())
+        .and_then(|text| animation::start_frame(&String::from_utf8_lossy(&text), animation::STAND))
+        .filter(|&frame| frame < model.gla.frame_count)
+        .unwrap_or(0)
+}
+
+/// A Ghoul2 entity placed by `p`, posed at `frame`, with `skin` on and then `g`'s
+/// switches (`G2API_SetSkin`, `G2_SetSurfaceOnOff`): each level's drawn surfaces
+/// with the skin's shader for their name, or their own (`RenderSurfaces`). Culled
+/// by a sphere of its radius times its largest scale, leveled by three quarters of
+/// that, and fogged by its unscaled radius as seen from outside any fog.
 fn ghoul2_instance(
     model: &Ghoul2Model,
     p: &StaticModel,
-    g: &Ghoul2,
+    (g, skin, frame): (&Ghoul2, Option<&Skin>, usize),
     entity: usize,
     fogs: &[FogVolume],
     pieces: &mut Vec<Piece>,
 ) -> Instance {
-    let radius = g.radius;
-    let fog = sp_fog_num(fogs, p.origin, radius, 0);
-    let pose = model.gla.pose(0);
-    let drawn = model.glm.drawn_surfaces();
-    let lods = model
-        .glm
+    let largest = p.scale.into_iter().fold(f32::MIN, f32::max);
+    let radius = g.radius * if largest == 0.0 { 1.0 } else { largest };
+    let fog = sp_fog_num(fogs, p.origin, g.radius, 0);
+    let pose = model.gla.pose(frame);
+    let glm = &model.glm;
+    let mut flags = skin.map_or_else(|| glm.surface_flags(), |skin| glm.skinned_flags(skin));
+    for (name, off) in &g.switches {
+        glm.set_surface_off(&mut flags, name, *off);
+    }
+    let drawn = glm.drawn_with(&flags);
+    let lods = glm
         .lods
         .iter()
         .map(|surfaces| {
@@ -476,7 +527,10 @@ fn ghoul2_instance(
                     &surface.st[..],
                     &surface.indexes[..],
                 );
-                let shader = &model.glm.surfaces[s].shader;
+                let info = &glm.surfaces[s];
+                let shader = skin
+                    .and_then(|skin| skin.shader(&info.name))
+                    .unwrap_or(&info.shader);
                 pieces.push(bake(mesh, shader, p, entity, fog));
             }
             ModelLod {

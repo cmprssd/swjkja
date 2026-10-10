@@ -350,3 +350,23 @@ equals the same frame rendered alone (it fails if the frames share one slot).
 - **Left out**: vehicles (their model comes from `vehicles.dat`), the MD3 NPCs (two
   mice), `NPC_Galak` (spawns nothing) and typeless `NPC_spawner`s (random NPCs; no
   retail map has one that spawns at load).
+
+## 2026-10-10: Single player's NPCs, drawn standing (decided by Claude, pending review)
+
+- **NPCs are posed at the first frame of `BOTH_STAND1`**, the animation `NPC_Begin`
+  starts them in, read from their skeleton's `animation.cfg`, not at frame 0: frame
+  0 of the humanoid skeleton belongs to a facial animation (`FACE_ALERT`). A
+  skeleton without that animation stays at frame 0, as the original leaves it
+  unanimated.
+- **Drawn as cgame draws players** (`CG_Player`): the skin on (its "*off" surfaces
+  hidden), the `.npc` block's surface switches, yaw only, axes scaled and the model
+  lifted 24 units per unit of height scale; culled and leveled by `s.radius` times
+  the largest scale, fogged by the radius alone, lit at the origin. The skin's
+  shaders register after the mesh's (`NPC_PrecacheByClassName`).
+- **Known differences, left for later steps**: no weapons or sabers in their hands,
+  and so not the weapon-ready torso the original's first frames give them; no
+  floor drop (the original runs a movement frame that drops an NPC to the floor;
+  spawners placed above it float, 8 units on t2_dpred); no `customRGBA` tint (its
+  retail uses are random colours); no blob shadows; MD3 NPCs (mice) and vehicles
+  not drawn.
+

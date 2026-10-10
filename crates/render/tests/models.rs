@@ -215,8 +215,11 @@ fn t3_stamp_entities_cull_like_the_original() {
         .iter()
         .take_while(|m| m.entity_box.is_some())
         .count();
-    // 193 breakables, 5 ammo racks and the 12 packs and medpacks on them.
-    assert_eq!(entities, 193 + 5 + 12);
+    // 193 breakables, 5 ammo racks and the 12 packs and medpacks on them, then the 8
+    // NPCs, which spawn after the racks' goods.
+    assert_eq!(entities, 193 + 5 + 12 + 8);
+    let npcs = entities - 8..entities;
+    let entities = npcs.start;
     // The eye 350 units south of the barrels, looking north.
     let camera = Camera::new([352.0, 342.0, 124.0], [10.0, 90.0, 0.0], 1280, 720);
     let frustum = Frustum::new(&camera);
@@ -259,6 +262,12 @@ fn t3_stamp_entities_cull_like_the_original() {
     // 77 breakables, and two racks with their goods.
     assert_eq!(count(&sent), 77 + 6);
     assert_eq!(count(&|n| drawn(n).is_some()), 10 + 3);
+    let npcs_drawn: Vec<_> = npcs
+        .filter(|&n| drawn(n).is_some())
+        .map(|n| models.instances[n].origin)
+        .collect();
+    // Ahead to the right: a cultist, and the mutant rancor (scale 2, lifted 24 units).
+    assert_eq!(npcs_drawn, [[852.0, 984.0, 88.0], [858.0, 1509.0, 120.0]]);
 }
 
 /// t2_dpred's rack weapons are Ghoul2 items: 18 on its six gun racks and 7 on its
@@ -306,5 +315,49 @@ fn t2_dpred_rack_weapons_draw_as_ghoul2_items() {
             (63.0, 0),
             (72.0, 0)
         ]
+    );
+}
+
+/// t2_dpred's stormtroopers near the start (-1100 -4300) spawn with the map: drawn
+/// as Ghoul2 characters with their skin, standing.
+#[test]
+fn t2_dpred_stormtroopers_draw_skinned_and_standing() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t2_dpred.bsp").unwrap()).unwrap();
+    let models = StaticModels::load(&vfs, &bsp, &[], Rules::for_map("maps/t2_dpred.bsp"));
+    let find = |origin: [f32; 3]| {
+        models
+            .instances
+            .iter()
+            .find(|m| (0..3).all(|i| (m.origin[i] - origin[i]).abs() < 1e-3))
+            .unwrap_or_else(|| panic!("{origin:?}"))
+    };
+    let trooper = find([-2080.0, -4264.0, 32.0]);
+    // A commander: scale 105, lifted 24 * 0.05 units.
+    let commander = find([-738.0, -3813.0, 24.0 + 24.0 * 0.05]);
+    let shaders = |m: &swjkja_render::models::Instance| -> Vec<String> {
+        models.pieces[m.lods[0].pieces.clone()]
+            .iter()
+            .map(|p| p.shader.rsplit('/').next().unwrap().to_owned())
+            .collect()
+    };
+    // The default skin hides the pauldron ("*off"); the officer skin shows it.
+    let (t, c) = (shaders(trooper), shaders(commander));
+    assert_eq!((t.len(), c.len()), (21, 20));
+    assert!(t.contains(&"helmet.tga".into()) && !t.contains(&"shoulder.tga".into()));
+    assert!(c.contains(&"shoulder.tga".into()));
+    // Radius "height" (64, 68), times the scale.
+    assert_eq!(trooper.ghoul2_radius, Some(64.0));
+    assert!((commander.ghoul2_radius.unwrap() - 68.0 * 1.05).abs() < 1e-3);
+    // Standing (BOTH_STAND1): feet at the box's bottom, 24 below the origin, the
+    // head 64 above them.
+    let [mins, maxs] = trooper.lods[0].bounds;
+    assert!(
+        (mins[2] + 24.0).abs() < 0.5 && (maxs[2] - 40.0).abs() < 0.5,
+        "{mins:?} {maxs:?}"
     );
 }
