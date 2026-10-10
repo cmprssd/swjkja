@@ -28,3 +28,8 @@ png = "0.18.1"
 swjkja-fs = { path = "../fs" }
 swjkja-image = { path = "../image" }
 swjkja-shader = { path = "../shader" }
+
+# bench_path's parsing and statistics have unit tests.
+[[example]]
+name = "bench_path"
+test = true

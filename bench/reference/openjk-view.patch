@@ -12,11 +12,91 @@ index 976ae03..fd4daed 100644
  //	if ( ofs == lastofs )
  //		return;
  	lastofs = ofs;
+diff --git a/codemp/cgame/cg_main.c b/codemp/cgame/cg_main.c
+index 12bbd47..857bdbe 100644
+--- a/codemp/cgame/cg_main.c
++++ b/codemp/cgame/cg_main.c
+@@ -2694,6 +2694,8 @@ Called before every level change or subsystem restart
+ */
+ void CG_Shutdown( void )
+ {
++	extern void CG_SwjkjaWritePath( void );
++	CG_SwjkjaWritePath();
+ 	BG_ClearAnimsets(); //free all dynamic allocations made through the engine
+ 
+     CG_DestroyAllGhoul2();
 diff --git a/codemp/cgame/cg_view.c b/codemp/cgame/cg_view.c
-index 0229760..936d639 100644
+index 0229760..86299de 100644
 --- a/codemp/cgame/cg_view.c
 +++ b/codemp/cgame/cg_view.c
-@@ -2612,6 +2612,15 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
+@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
+ // for a 3D rendering
+ #include "cg_local.h"
+ #include "game/bg_saga.h"
++#include <time.h>
+ 
+ #define MASK_CAMERACLIP (MASK_SOLID|CONTENTS_PLAYERCLIP)
+ #define CAMERA_SIZE	4
+@@ -2414,6 +2415,58 @@ extern void CG_ActualLoadDeferredPlayers( void );
+ 
+ static int cg_siegeClassIndex = -2;
+ 
++// swjkja benchmark: with cg_swjkjaPath set, every frame's view, game time and a
++// microsecond timestamp are kept in memory and written to that file when the cgame
++// shuts down (CG_SwjkjaWritePath), so logging costs nothing during the run.
++typedef struct {
++	long long usec;
++	int time;
++	vec3_t origin, angles;
++	float fov_x;
++} swjkjaFrame_t;
++#define SWJKJA_MAX_FRAMES 16384
++static swjkjaFrame_t swjkjaFrames[SWJKJA_MAX_FRAMES];
++static int swjkjaFrameCount;
++
++static void CG_SwjkjaLogFrame( void ) {
++	struct timespec ts;
++	swjkjaFrame_t *f;
++	if ( !cg_swjkjaPath.string[0] || swjkjaFrameCount >= SWJKJA_MAX_FRAMES ) {
++		return;
++	}
++	timespec_get( &ts, TIME_UTC );
++	f = &swjkjaFrames[swjkjaFrameCount++];
++	f->usec = (long long)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
++	f->time = cg.refdef.time;
++	VectorCopy( cg.refdef.vieworg, f->origin );
++	VectorCopy( cg.refdef.viewangles, f->angles );
++	f->fov_x = cg.refdef.fov_x;
++}
++
++void CG_SwjkjaWritePath( void ) {
++	fileHandle_t fh;
++	char line[256];
++	int i;
++	if ( !cg_swjkjaPath.string[0] || !swjkjaFrameCount ) {
++		return;
++	}
++	trap->FS_Open( cg_swjkjaPath.string, &fh, FS_WRITE );
++	if ( !fh ) {
++		return;
++	}
++	Com_sprintf( line, sizeof( line ), "# usec time_ms x y z pitch yaw roll fov_x\n" );
++	trap->FS_Write( line, strlen( line ), fh );
++	for ( i = 0; i < swjkjaFrameCount; i++ ) {
++		const swjkjaFrame_t *f = &swjkjaFrames[i];
++		Com_sprintf( line, sizeof( line ), "%lld %d %.3f %.3f %.3f %.4f %.4f %.4f %.3f\n", f->usec, f->time,
++			f->origin[0], f->origin[1], f->origin[2], f->angles[0], f->angles[1], f->angles[2], f->fov_x );
++		trap->FS_Write( line, strlen( line ), fh );
++	}
++	trap->FS_Close( fh );
++	trap->Print( "swjkja path: %d frames written to %s\n", swjkjaFrameCount, cg_swjkjaPath.string );
++	swjkjaFrameCount = 0;
++}
++
+ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demoPlayback ) {
+ 	int		inwater;
+ 	const char *cstr;
+@@ -2612,6 +2665,15 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
  
  	// build cg.refdef
  	inwater = CG_CalcViewValues();
@@ -32,7 +112,7 @@ index 0229760..936d639 100644
  	CG_SetupFrustum();
  
  	if (cg_linearFogOverride)
-@@ -2669,6 +2678,10 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
+@@ -2669,6 +2731,11 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
  	}
  
  	cg.refdef.time = cg.time;
@@ -40,19 +120,21 @@ index 0229760..936d639 100644
 +	if ( cg_swjkjaTime.string[0] ) {
 +		cg.refdef.time = cg_swjkjaTime.integer;
 +	}
++	CG_SwjkjaLogFrame();
  	memcpy( cg.refdef.areamask, cg.snap->areamask, sizeof( cg.refdef.areamask ) );
  
  	// warning sounds when powerup is wearing off
 diff --git a/codemp/cgame/cg_xcvar.h b/codemp/cgame/cg_xcvar.h
-index ceb9bd8..68f9317 100644
+index ceb9bd8..d899b2d 100644
 --- a/codemp/cgame/cg_xcvar.h
 +++ b/codemp/cgame/cg_xcvar.h
-@@ -86,6 +86,8 @@ XCVAR_DEF( cg_fallingBob,						"1",					NULL,					CVAR_ARCHIVE )
+@@ -86,6 +86,9 @@ XCVAR_DEF( cg_fallingBob,						"1",					NULL,					CVAR_ARCHIVE )
  XCVAR_DEF( cg_footsteps,						"3",					NULL,					CVAR_ARCHIVE )
  XCVAR_DEF( cg_forceModel,						"0",					CG_ForceModelChange,	CVAR_ARCHIVE )
  XCVAR_DEF( cg_fov,								"80",					NULL,					CVAR_ARCHIVE )
 +XCVAR_DEF( cg_swjkjaView,						"",						NULL,					0 )
 +XCVAR_DEF( cg_swjkjaTime,						"",						NULL,					0 )
++XCVAR_DEF( cg_swjkjaPath,						"",						NULL,					0 )
  XCVAR_DEF( cg_fovAspectAdjust,					"0",					NULL,					CVAR_ARCHIVE )
  XCVAR_DEF( cg_fovViewmodel,						"0",					NULL,					CVAR_ARCHIVE )
  XCVAR_DEF( cg_fovViewmodelAdjust,				"1",					NULL,					CVAR_ARCHIVE )
