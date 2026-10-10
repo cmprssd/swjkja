@@ -42,7 +42,8 @@ pub struct LightStyles {
     pub patterns: Vec<[String; 3]>,
 }
 
-fn atoi(s: &str) -> i64 {
+/// `atoi`: leading digits, 0 for none.
+pub(crate) fn atoi(s: &str) -> i64 {
     let s = s.trim_start();
     let (sign, digits) = match s.strip_prefix('-') {
         Some(rest) => (-1, rest),

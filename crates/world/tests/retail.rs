@@ -64,3 +64,33 @@ fn every_retail_map_builds() {
         world.stitches
     );
 }
+
+#[test]
+fn every_retail_map_has_a_light_grid_and_spawns_its_static_models() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let (mut total, mut lit) = (0, 0);
+    for name in vfs.files().filter(|f| f.ends_with(".bsp")) {
+        let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
+        let grid = swjkja_world::light_grid::LightGrid::load(&bsp, 0);
+        let styles = swjkja_world::style::LightStyles::spawn(&bsp.entities).colors(0);
+        assert!(grid.exists(), "{name}: no light grid");
+        let models = swjkja_world::static_model::static_models(&bsp.entities, 0);
+        if name == "maps/mp/ffa5.bsp" {
+            assert_eq!(models.len(), 84);
+        }
+        for m in &models {
+            let light = grid.entity_light(m.origin, &styles, [0.0; 3]);
+            lit += usize::from(light.ambient.iter().any(|&a| a > 32.0));
+        }
+        total += models.len();
+    }
+    // Counted independently with Python: every misc_model_static with a model spawns
+    // in free-for-all.
+    assert_eq!(total, 6684);
+    eprintln!("{lit} of {total} static models get more than the minimum ambient light");
+    assert!(lit > total / 2, "{lit} of {total}");
+}
