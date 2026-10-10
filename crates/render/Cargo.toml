@@ -19,6 +19,7 @@ raw-window-handle = "0.6.2"
 swjkja-bsp = { version = "0.0.0", path = "../bsp" }
 swjkja-fs = { version = "0.0.0", path = "../fs" }
 swjkja-image = { version = "0.0.0", path = "../image" }
+swjkja-model = { version = "0.0.0", path = "../model" }
 swjkja-shader = { version = "0.0.0", path = "../shader" }
 swjkja-world = { version = "0.0.0", path = "../world" }
 

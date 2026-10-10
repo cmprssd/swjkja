@@ -1519,6 +1519,7 @@ dependencies = [
  "swjkja-bsp",
  "swjkja-fs",
  "swjkja-image",
+ "swjkja-model",
  "swjkja-shader",
  "swjkja-world",
 ]

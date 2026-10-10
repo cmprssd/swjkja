@@ -207,3 +207,28 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   it loads. Frame times, `--timings` and replays start when the map is ready.
 - **Closing while loading just exits**: the loading thread is not cancelled, and
   ends with the process.
+
+## 2026-10-10: Milestone 3 starts with the map's MD3 models
+
+- **Asked: which models first?** Every MD3 the maps place (static models, then the
+  breakables, racks, siege items and beacons), not only `misc_model_static`. The
+  static models come first: 6,684 of the retail maps' roughly 7,300 MD3 placements.
+- **Asked: where to check them against the original?** mp/ffa5 (84 static models),
+  a multiplayer map, so the existing capture tooling works.
+
+## 2026-10-10: How static models are drawn (decided by Claude, pending review)
+
+- **Baked into world space at load**: the models never move, so each placement's
+  surfaces become triangle soups that join the world's materials, draw order and
+  per-frame index lists. Their normals keep the axes' scale, which is what the
+  original's lighting sees when it turns the light into the model's scaled axes.
+- **Lit through an entity table**: the frame's descriptor set has a fourth buffer,
+  one light (ambient, directed, direction) and colour per entity, filled each frame
+  for the visible models; a model's stages read their entity number from a spare
+  lightmap coordinate. Entity 0 is the world (no grid light, white).
+- **Free-for-all spawn rules** (`notfree`, `gametype "ffa"`), the viewer having no
+  game type yet.
+- **A model that does not load is skipped with a warning**, where the original stops
+  the map load with an error. No retail map has one.
+- **Model views are captured with entities drawn** (`ENTITIES=1`), the views placed so
+  no item or mover is in sight.

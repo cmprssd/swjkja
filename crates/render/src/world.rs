@@ -3,6 +3,9 @@
 //! original's order (materials by sort value, then by creation order; each material's
 //! surfaces stage by stage).
 //!
+//! The map's static models ([`crate::models`]) join the world: their surfaces are
+//! drawn with the world's, each with its entity's light.
+//!
 //! Not yet: normal and text deforms, distance LOD
 //! for patches, visibility culling, video maps (drawn white), noise waves (their
 //! base value), fog on sky layers.
@@ -30,6 +33,7 @@ use crate::deform;
 use crate::fog;
 use crate::frames::FRAMES_IN_FLIGHT;
 use crate::gpu::{Gpu, Result};
+use crate::models::StaticModels;
 use crate::pipeline::{Pipeline, State, spirv};
 use crate::resource::{Buffer, Frame};
 use crate::sky;
@@ -89,6 +93,27 @@ struct GpuStage {
     tcmod: [[f32; 4]; 16],
     style: [f32; 4],
     fog: [u32; 4],
+}
+
+/// An entity's light and colour for the shader's `entities` table (see `Entity` in
+/// world.wgsl); entity 0 is the world.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuEntity {
+    ambient: [f32; 4],
+    directed: [f32; 4],
+    light_dir: [f32; 4],
+    color: [f32; 4],
+}
+
+impl GpuEntity {
+    /// The world: no light grid light, colour white.
+    const WORLD: Self = Self {
+        ambient: [0.0; 4],
+        directed: [0.0; 4],
+        light_dir: [0.0; 4],
+        color: [255.0; 4],
+    };
 }
 
 #[repr(C)]
@@ -215,6 +240,11 @@ pub struct WorldRenderer {
     gate_count: usize,
     /// The static index list on the CPU (the visible ranges are copied from it).
     static_indexes: Vec<u32>,
+    /// The map's static models; their surfaces follow the map's in `surface_draw`.
+    models: StaticModels,
+    /// Where the models' surfaces start in `surface_draw`.
+    first_model_surface: usize,
+    light_grid: swjkja_world::light_grid::LightGrid,
 }
 
 /// One frame's data: its uniforms, deformed geometry and visible index ranges, and
@@ -225,6 +255,8 @@ struct PerFrame {
     dynamic_vertices: Buffer,
     dynamic_indexes: Buffer,
     culled_indexes: Buffer,
+    /// The entity table: [`GpuEntity`] per entity.
+    entities: Buffer,
 }
 
 /// The vertex attributes of [`Vertex`].
@@ -429,14 +461,45 @@ impl WorldRenderer {
         bsp: &Bsp,
         world: &World,
     ) -> Result<Self> {
+        // The global fog (the one without a brush; fog numbers are 1-based) and its
+        // parameters, from its shader's fogParms (red at 250 units if it has none, as
+        // in R_LoadFogs).
+        let global_fog = bsp.fogs.iter().position(|f| f.brush == -1).map(|i| i + 1);
+        let parms_of = |n: usize| {
+            let name = swjkja_shader::resolve::strip_extension(bsp.fogs[n - 1].shader());
+            match shaders.parse(name) {
+                Some(Ok(def)) if def.fog_parms.is_some() => def.fog_parms.unwrap(),
+                _ => swjkja_shader::FogParms {
+                    color: [1.0, 0.0, 0.0],
+                    depth_for_opaque: 250.0,
+                },
+            }
+        };
+        let fog_parms = global_fog.map(parms_of);
+        // The fogs table, indexed by fog number (entry 0 unused).
+        let fog_volumes: Vec<fog::FogVolume> = (1..=bsp.fogs.len())
+            .map(|n| fog::FogVolume::load(bsp, n - 1, &parms_of(n)))
+            .collect();
+        let mut gpu_fogs = vec![GpuFog::zeroed()];
+        for f in &fog_volumes {
+            gpu_fogs.push(GpuFog {
+                color: f.color.map(f32::from),
+                surface: f.surface,
+                params: [f.tc_scale, 0.0, 0.0, 0.0],
+            });
+        }
+
+        let mut models = StaticModels::load(vfs, bsp, &fog_volumes);
+
         // Images: decode once, keep the decoded pixels to upload on first use. Every
         // image the map's shaders can ask for is decoded up front, in parallel; a name
         // missed here decodes when asked.
         let mut decoded: HashMap<String, Option<swjkja_image::Image>> = HashMap::new();
         {
             let mut names: Vec<String> = Vec::new();
-            for shader in &bsp.shaders {
-                let stripped = swjkja_shader::resolve::strip_extension(shader.name());
+            let map_shaders = bsp.shaders.iter().map(|s| s.name());
+            for shader in map_shaders.chain(models.shaders.iter().map(String::as_str)) {
+                let stripped = swjkja_shader::resolve::strip_extension(shader);
                 names.push(stripped.to_owned());
                 if let Some(Ok(def)) = shaders.parse(stripped) {
                     for stage in &def.stages {
@@ -539,31 +602,51 @@ impl WorldRenderer {
             };
         }
 
-        // The global fog (the one without a brush; fog numbers are 1-based) and its
-        // parameters, from its shader's fogParms (red at 250 units if it has none, as
-        // in R_LoadFogs).
-        let global_fog = bsp.fogs.iter().position(|f| f.brush == -1).map(|i| i + 1);
-        let parms_of = |n: usize| {
-            let name = swjkja_shader::resolve::strip_extension(bsp.fogs[n - 1].shader());
-            match shaders.parse(name) {
-                Some(Ok(def)) if def.fog_parms.is_some() => def.fog_parms.unwrap(),
-                _ => swjkja_shader::FogParms {
-                    color: [1.0, 0.0, 0.0],
-                    depth_for_opaque: 250.0,
-                },
-            }
+        // The models' materials, in the order the models register their shaders
+        // (R_LoadMD3: no lightmap, default styles), then their surfaces.
+        let world_materials = materials.len();
+        let first_model_surface = bsp.surfaces.len();
+        let model_key = |name: &str| {
+            (
+                name.to_owned(),
+                [swjkja_shader::resolve::LIGHTMAP_NONE; 4],
+                [0, 255, 255, 255],
+            )
         };
-        let fog_parms = global_fog.map(parms_of);
-        // The fogs table, indexed by fog number (entry 0 unused).
-        let mut gpu_fogs = vec![GpuFog::zeroed()];
-        for n in 1..=bsp.fogs.len() {
-            let f = fog::FogVolume::load(bsp, n - 1, &parms_of(n));
-            gpu_fogs.push(GpuFog {
-                color: f.color.map(f32::from),
-                surface: f.surface,
-                params: [f.tc_scale, 0.0, 0.0, 0.0],
-            });
+        let names = models.shaders.iter().map(String::as_str);
+        for name in names.chain(models.pieces.iter().map(|p| p.shader.as_str())) {
+            let key = model_key(name);
+            if material_index.contains_key(&key) {
+                continue;
+            }
+            let mut loader = Loader {
+                vfs,
+                decoded: &mut decoded,
+            };
+            materials.push(resolve_map_shader(
+                shaders,
+                &key.0,
+                key.1,
+                key.2,
+                bsp.lightmap_pages(),
+                &mut loader,
+                &mut |_| false,
+            ));
+            surfaces_of.push(Default::default());
+            material_index.insert(key, materials.len() - 1);
         }
+        for (k, piece) in models.pieces.iter().enumerate() {
+            let m = material_index[&model_key(&piece.shader)];
+            surfaces_of[m]
+                .entry(piece.fog)
+                .or_default()
+                .push(first_model_surface + k);
+        }
+        let geometry = |i: usize| match i.checked_sub(first_model_surface) {
+            Some(k) => &models.pieces[k].geometry,
+            None => &world.surfaces[i].geometry,
+        };
+        let surface_count = first_model_surface + models.pieces.len();
 
         // Textures.
         let default_image: Vec<u8> = (0..16 * 16)
@@ -684,6 +767,11 @@ impl WorldRenderer {
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(3)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::VERTEX),
         ];
         let frame_layout = unsafe {
             d.create_descriptor_set_layout(
@@ -707,8 +795,8 @@ impl WorldRenderer {
         let mut draw_materials = Vec::new();
         // Per surface: its draw material and index range in the static index list,
         // or its sky gate.
-        let mut surface_draw: Vec<Option<(usize, u32, u32)>> = vec![None; bsp.surfaces.len()];
-        let mut surface_gate: Vec<Option<usize>> = vec![None; bsp.surfaces.len()];
+        let mut surface_draw: Vec<Option<(usize, u32, u32)>> = vec![None; surface_count];
+        let mut surface_gate: Vec<Option<usize>> = vec![None; surface_count];
         let mut gates = 0usize;
         let (mut dynamic_vertices, mut dynamic_indexes) = (0u32, 0u32);
         for &m in &order {
@@ -857,7 +945,7 @@ impl WorldRenderer {
             for (&fog, group) in &surfaces_of[m] {
                 let flares: Vec<([f32; 3], [f32; 3])> = group
                     .iter()
-                    .filter_map(|&i| match world.surfaces[i].geometry {
+                    .filter_map(|&i| match *geometry(i) {
                         Geometry::Flare { origin, normal, .. } => Some((origin, normal)),
                         _ => None,
                     })
@@ -881,7 +969,7 @@ impl WorldRenderer {
                     let mut dv = Vec::new();
                     let mut di = Vec::new();
                     for &i in group {
-                        append_deformable(&world.surfaces[i].geometry, &mut dv, &mut di);
+                        append_deformable(geometry(i), &mut dv, &mut di);
                     }
                     if di.is_empty() {
                         continue;
@@ -908,7 +996,7 @@ impl WorldRenderer {
                     let first_index = indexes.len() as u32;
                     for &i in group {
                         let start = indexes.len() as u32;
-                        append(&world.surfaces[i].geometry, &mut vertices, &mut indexes);
+                        append(geometry(i), &mut vertices, &mut indexes);
                         surface_draw[i] =
                             Some((draw_materials.len(), start, indexes.len() as u32 - start));
                     }
@@ -936,6 +1024,9 @@ impl WorldRenderer {
                         states.len() - 1
                     });
                     let mut g = gpu_stage(s, material.multitexture);
+                    if m >= world_materials {
+                        g.style[1] = 1.0; // a model's: lit by its entity
+                    }
                     g.fog[2] = u32::from(is_flare);
                     g.fog[3] = fog as u32
                         | (match s.fog_adjust {
@@ -1042,7 +1133,7 @@ impl WorldRenderer {
             },
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: 2 * FRAMES_IN_FLIGHT as u32,
+                descriptor_count: 3 * FRAMES_IN_FLIGHT as u32,
             },
         ];
         let frame_pool = unsafe {
@@ -1075,8 +1166,18 @@ impl WorldRenderer {
                     range: vk::WHOLE_SIZE,
                 }]
             };
-            let (ubo, ssbo, fog_info) =
-                (info(&frame_buffer), info(&stage_buffer), info(&fog_buffer));
+            let entities = Buffer::new(
+                gpu,
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+                ((models.instances.len() + 1) * size_of::<GpuEntity>()) as u64,
+                MemoryLocation::CpuToGpu,
+            )?;
+            let (ubo, ssbo, fog_info, entity_info) = (
+                info(&frame_buffer),
+                info(&stage_buffer),
+                info(&fog_buffer),
+                info(&entities),
+            );
             let writes = [
                 vk::WriteDescriptorSet::default()
                     .dst_set(frame_set)
@@ -1093,11 +1194,17 @@ impl WorldRenderer {
                     .dst_binding(2)
                     .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                     .buffer_info(&fog_info),
+                vk::WriteDescriptorSet::default()
+                    .dst_set(frame_set)
+                    .dst_binding(3)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .buffer_info(&entity_info),
             ];
             unsafe { d.update_descriptor_sets(&writes, &[]) };
             per_frame.push(PerFrame {
                 frame_buffer,
                 frame_set,
+                entities,
                 dynamic_vertices: Buffer::new(
                     gpu,
                     vk::BufferUsageFlags::VERTEX_BUFFER,
@@ -1120,6 +1227,8 @@ impl WorldRenderer {
         }
         // Every texture's pixels, in a few large copies.
         uploads.borrow_mut().flush(gpu)?;
+        let vis = vis::WorldVis::new(bsp, surface_cull);
+        models.locate(&vis);
         Ok(Self {
             gpu: gpu.clone(),
             per_frame,
@@ -1151,8 +1260,11 @@ impl WorldRenderer {
                 )
             }),
             materials: draw_materials,
-            vis: vis::WorldVis::new(bsp, surface_cull),
+            vis,
             surface_draw,
+            models,
+            first_model_surface,
+            light_grid: swjkja_world::light_grid::LightGrid::load(bsp, 0),
             surface_gate,
             gate_count: gates,
         })
@@ -1174,6 +1286,10 @@ impl WorldRenderer {
         time: f32,
         depth_slot: u32,
     ) -> Result<()> {
+        // Game time in whole milliseconds, as cg.time.
+        let styles = self
+            .styles
+            .colors((f64::from(time) * 1000.0).round() as i64);
         let data = FrameData {
             view_proj: camera.view_proj(),
             view_origin: [camera.origin[0], camera.origin[1], camera.origin[2], 1.0],
@@ -1185,11 +1301,7 @@ impl WorldRenderer {
                 let f = camera.axes()[0];
                 [f[0], f[1], f[2], 0.0]
             },
-            // Game time in whole milliseconds, as cg.time.
-            styles: self
-                .styles
-                .colors((f64::from(time) * 1000.0).round() as i64)
-                .map(|c| c.map(f32::from)),
+            styles: styles.map(|c| c.map(f32::from)),
         };
         let slot = frame.slot;
         self.per_frame[slot]
@@ -1210,6 +1322,7 @@ impl WorldRenderer {
             dynamic_indexes,
             culled_indexes,
             frame_set,
+            entities,
             ..
         } = &mut self.per_frame[slot];
         let vb = dynamic_vertices.mapped_mut()?;
@@ -1261,6 +1374,37 @@ impl WorldRenderer {
             }
             if let Some(r) = self.surface_draw[s] {
                 ranges.push(r);
+            }
+        }
+        // The static models this view draws (each at its level of detail), lit from
+        // the light grid; entity n + 1 is model n.
+        let frustum = vis::Frustum::new(camera);
+        let view_cluster = self.vis.cluster(camera.origin);
+        let table = entities.mapped_mut()?;
+        table[..size_of::<GpuEntity>()].copy_from_slice(bytemuck::bytes_of(&GpuEntity::WORLD));
+        for n in 0..self.models.instances.len() {
+            let Some(level) = self
+                .models
+                .visible(n, camera, &frustum, view_cluster, &self.vis)
+            else {
+                continue;
+            };
+            let m = &self.models.instances[n];
+            let light = self.light_grid.entity_light(m.origin, &styles, [0.0; 3]);
+            let v4 = |v: [f32; 3]| [v[0], v[1], v[2], 0.0];
+            let entity = GpuEntity {
+                ambient: v4(light.ambient),
+                directed: v4(light.directed),
+                light_dir: v4(light.dir),
+                // cgame leaves a static model's shaderRGBA zeroed.
+                color: [0.0; 4],
+            };
+            let at = (n + 1) * size_of::<GpuEntity>();
+            table[at..at + size_of::<GpuEntity>()].copy_from_slice(bytemuck::bytes_of(&entity));
+            for piece in m.lods[level].pieces.clone() {
+                if let Some(r) = self.surface_draw[self.first_model_surface + piece] {
+                    ranges.push(r);
+                }
             }
         }
         ranges.sort_by_key(|r| r.0);
