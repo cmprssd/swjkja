@@ -78,7 +78,8 @@ fn every_retail_map_has_a_light_grid_and_spawns_its_static_models() {
         let grid = swjkja_world::light_grid::LightGrid::load(&bsp, 0);
         let styles = swjkja_world::style::LightStyles::spawn(&bsp.entities).colors(0);
         assert!(grid.exists(), "{name}: no light grid");
-        let models = swjkja_world::static_model::static_models(&bsp.entities, 0);
+        let mp = swjkja_world::static_model::Rules::Multiplayer { gametype: 0 };
+        let models = swjkja_world::static_model::static_models(&bsp.entities, mp);
         if name == "maps/mp/ffa5.bsp" {
             assert_eq!(models.len(), 84);
         }

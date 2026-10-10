@@ -1,7 +1,9 @@
-//! The map's static models (`misc_model_static`), as multiplayer cgame spawns them
-//! (OpenJK `codemp/cgame/cg_spawn.c`: `CG_ParseEntityFromSpawnVars` and
-//! `SP_misc_model_static`). The renderer loads the models and draws them each frame
-//! like `CG_DrawMiscStaticModels`.
+//! The map's static models (`misc_model_static`), as the game spawns them: in
+//! multiplayer, cgame (OpenJK `codemp/cgame/cg_spawn.c`: `CG_ParseEntityFromSpawnVars`
+//! and `SP_misc_model_static`); in single player, the game module (`code/game/g_spawn.cpp`:
+//! `G_SpawnGEntityFromSpawnVars`; `g_misc.cpp`: `SP_misc_model_static`, then cgame's
+//! `CG_CreateMiscEntFromGent`). The renderer loads the models and draws them each frame
+//! like `CG_DrawMiscStaticModels` (multiplayer) or `CG_DrawMiscEnts` (single player).
 
 use swjkja_bsp::Entity;
 
@@ -26,15 +28,41 @@ const GAMETYPE_NAMES: [&str; 10] = [
 const GT_SINGLE_PLAYER: usize = 5;
 const GT_TEAM: usize = 6;
 
+/// Which game's spawn rules a map follows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rules {
+    /// `gametype` indexes the game type names (0 for free-for-all).
+    Multiplayer { gametype: usize },
+    /// `skill` is `g_spskill` (0 easiest, the cvar's default).
+    SinglePlayer { skill: u32 },
+}
+
+impl Rules {
+    /// The rules for the map at `path`: the multiplayer maps (under `maps/mp/`) spawn
+    /// in free-for-all, every other map in single player at the default skill.
+    pub fn for_map(path: &str) -> Self {
+        let path = path.replace('\\', "/").to_ascii_lowercase();
+        if path.starts_with("maps/mp/") {
+            Rules::Multiplayer { gametype: 0 }
+        } else {
+            Rules::SinglePlayer { skill: 0 }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct StaticModel {
     /// The model's file, as the "model" key names it.
     pub model: String,
     pub origin: Vec3,
-    /// `AnglesToAxis(angles)` (forward, left, up), each axis scaled by its scale.
+    /// `AnglesToAxis(angles)` (forward, left, up), each axis scaled by its scale
+    /// (in single player, only by a scale other than 0 and 1: `ScaleModelAxis`).
     pub axes: [Vec3; 3],
     /// Per-axis scale ("modelscale_vec", or "modelscale" on all three).
     pub scale: Vec3,
+    /// Whether the axes are left unit length, so the renderer may cull the model by
+    /// its sphere (`nonNormalizedAxes` unset): single-player models without a scale.
+    pub normalized: bool,
     /// "zoffset": raises the point the model is culled by.
     pub zoffset: f32,
 }
@@ -57,6 +85,19 @@ fn vector(s: &str) -> Option<Vec3> {
         *x = it.next()?.parse().ok()?;
     }
     Some(v)
+}
+
+/// `sscanf("%f %f %f")` into zeros: the numbers it reads before the first that is
+/// not one.
+fn vector_prefix(s: &str) -> Vec3 {
+    let mut v = [0.0; 3];
+    for (x, word) in v.iter_mut().zip(s.split_ascii_whitespace()) {
+        match word.parse() {
+            Ok(n) => *x = n,
+            Err(_) => break,
+        }
+    }
+    v
 }
 
 /// `AnglesToAxis`: forward, left and up for pitch, yaw, roll in degrees.
@@ -95,42 +136,93 @@ fn spawns_in(e: &Entity, gametype: usize) -> bool {
     }
 }
 
-/// The static models `entities` spawn in `gametype` (0 for free-for-all), in spawn
-/// order. One without a model stops the original's map load; here it is skipped.
-pub fn static_models(entities: &[Entity], gametype: usize) -> Vec<StaticModel> {
-    let mut out = Vec::new();
-    for e in entities {
-        if !e
-            .get("classname")
-            .is_some_and(|c| c.eq_ignore_ascii_case("misc_model_static"))
-            || !spawns_in(e, gametype)
-        {
-            continue;
+/// `G_SpawnGEntityFromSpawnVars`'s filters: "notsingle", and the spawnflags bit that
+/// leaves an entity out at `skill` (256 easy, 512 medium, 1024 hard).
+fn spawns_at(e: &Entity, skill: u32) -> bool {
+    let flag = |key| e.get(key).map_or(0, atoi);
+    flag("notsingle") == 0 && flag("spawnflags") & (1 << (8 + skill)) == 0
+}
+
+/// The static models `entities` spawn under `rules`, in spawn order. One without a
+/// model stops the original's map load; here it is skipped.
+pub fn static_models(entities: &[Entity], rules: Rules) -> Vec<StaticModel> {
+    entities
+        .iter()
+        .filter(|e| {
+            e.get("classname")
+                .is_some_and(|c| c.eq_ignore_ascii_case("misc_model_static"))
+        })
+        .filter_map(|e| match rules {
+            Rules::Multiplayer { gametype } => {
+                spawns_in(e, gametype).then(|| multiplayer(e)).flatten()
+            }
+            Rules::SinglePlayer { skill } => {
+                spawns_at(e, skill).then(|| single_player(e)).flatten()
+            }
+        })
+        .collect()
+}
+
+/// cgame's `SP_misc_model_static`.
+fn multiplayer(e: &Entity) -> Option<StaticModel> {
+    let model = e.get("model").filter(|m| !m.is_empty())?;
+    // A key that is present but malformed reads as zero, like a missing one.
+    let origin = e.get("origin").and_then(vector).unwrap_or_default();
+    let zoffset = e.get("zoffset").map_or(0.0, atof);
+    let angles = match e.get("angles").and_then(vector) {
+        Some(a) => a,
+        None => [0.0, e.get("angle").map_or(0.0, atof), 0.0],
+    };
+    // A malformed "modelscale_vec" reads as zero unless "modelscale" is there.
+    let modelscale = e.get("modelscale").map(|s| [atof(s); 3]);
+    let scale = match e.get("modelscale_vec") {
+        Some(v) => vector(v).or(modelscale).unwrap_or([0.0; 3]),
+        None => modelscale.unwrap_or([1.0; 3]),
+    };
+    let axis = angles_to_axis(angles);
+    Some(StaticModel {
+        model: model.to_owned(),
+        origin,
+        axes: [0, 1, 2].map(|i| axis[i].map(|x| x * scale[i])),
+        scale,
+        normalized: false,
+        zoffset,
+    })
+}
+
+/// The game's `SP_misc_model_static`. Spawn keys fill the entity's fields in the
+/// order they appear (`G_ParseField`), so a later "angle" or "angles" replaces an
+/// earlier one; `G_SpawnString` reads the first of a key.
+fn single_player(e: &Entity) -> Option<StaticModel> {
+    let (mut origin, mut angles, mut model) = ([0.0; 3], [0.0; 3], None);
+    for (key, value) in &e.pairs {
+        match key.to_ascii_lowercase().as_str() {
+            // sscanf's missing numbers come from an unset local; read them as zero.
+            "origin" => origin = vector_prefix(value),
+            "angles" => angles = vector_prefix(value),
+            "angle" => angles = [0.0, atof(value), 0.0],
+            "model" => model = Some(value.as_str()),
+            _ => {}
         }
-        let Some(model) = e.get("model").filter(|m| !m.is_empty()) else {
-            continue;
-        };
-        // A key that is present but malformed reads as zero, like a missing one.
-        let origin = e.get("origin").and_then(vector).unwrap_or_default();
-        let zoffset = e.get("zoffset").map_or(0.0, atof);
-        let angles = match e.get("angles").and_then(vector) {
-            Some(a) => a,
-            None => [0.0, e.get("angle").map_or(0.0, atof), 0.0],
-        };
-        // A malformed "modelscale_vec" reads as zero unless "modelscale" is there.
-        let modelscale = e.get("modelscale").map(|s| [atof(s); 3]);
-        let scale = match e.get("modelscale_vec") {
-            Some(v) => vector(v).or(modelscale).unwrap_or([0.0; 3]),
-            None => modelscale.unwrap_or([1.0; 3]),
-        };
-        let axis = angles_to_axis(angles);
-        out.push(StaticModel {
-            model: model.to_owned(),
-            origin,
-            axes: [0, 1, 2].map(|i| axis[i].map(|x| x * scale[i])),
-            scale,
-            zoffset,
-        });
     }
-    out
+    // The original stops the map load on a missing or non-MD3 model.
+    let model = model.filter(|m| {
+        m.get(m.len().saturating_sub(4)..)
+            .is_some_and(|ext| ext.eq_ignore_ascii_case(".md3"))
+    })?;
+    let mut scale = vector_prefix(e.get("modelscale_vec").unwrap_or("1 1 1"));
+    let modelscale = e.get("modelscale").map_or(0.0, atof);
+    if modelscale != 0.0 {
+        scale = [modelscale; 3];
+    }
+    let axis = angles_to_axis(angles);
+    let scaled = scale.map(|s| s != 0.0 && s != 1.0);
+    Some(StaticModel {
+        model: model.to_owned(),
+        origin,
+        axes: [0, 1, 2].map(|i| axis[i].map(|x| if scaled[i] { x * scale[i] } else { x })),
+        scale,
+        normalized: !scaled.contains(&true),
+        zoffset: e.get("zoffset").map_or(0.0, atof),
+    })
 }

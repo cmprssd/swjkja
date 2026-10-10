@@ -13,6 +13,8 @@ pub type Vec3 = [f32; 3];
 pub struct FogVolume {
     /// `colorInt`: the fog colour in bytes, times tr.identityLight (1 here).
     pub color: [u8; 4],
+    /// The fogParms colour, which single player's `R_FogParmsMatch` compares.
+    pub parms_color: [f32; 3],
     /// `tcScale`: 1 / (8 * depthForOpaque), with depthForOpaque at least 1.
     pub tc_scale: f32,
     /// The fog surface plane (normal pointing into the fog, and its distance, as
@@ -56,6 +58,7 @@ impl FogVolume {
         }
         Self {
             color: [color[0], color[1], color[2], 255],
+            parms_color: parms.color,
             tc_scale: 1.0 / (depth * 8.0),
             surface,
             bounds,
@@ -154,6 +157,7 @@ mod tests {
         // A fog filling z < 100: the surface plane faces down into it, t = 100 - z.
         let fog = FogVolume {
             color: [0; 4],
+            parms_color: [0.0; 3],
             tc_scale: 1.0 / (8.0 * 400.0),
             surface: [0.0, 0.0, -1.0, -100.0],
             bounds: [[0.0; 3]; 2],
@@ -178,6 +182,7 @@ mod tests {
     fn global_fog_has_no_surface_and_fogs_everything() {
         let fog = FogVolume {
             color: [0; 4],
+            parms_color: [0.0; 3],
             tc_scale: 0.001,
             surface: [0.0; 4],
             bounds: [[0.0; 3]; 2],

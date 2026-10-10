@@ -138,3 +138,85 @@ index ceb9bd8..d899b2d 100644
  XCVAR_DEF( cg_fovAspectAdjust,					"0",					NULL,					CVAR_ARCHIVE )
  XCVAR_DEF( cg_fovViewmodel,						"0",					NULL,					CVAR_ARCHIVE )
  XCVAR_DEF( cg_fovViewmodelAdjust,				"1",					NULL,					CVAR_ARCHIVE )
+diff --git a/code/cgame/cg_lights.cpp b/code/cgame/cg_lights.cpp
+index 4891e13..51469e2 100644
+--- a/code/cgame/cg_lights.cpp
++++ b/code/cgame/cg_lights.cpp
+@@ -60,7 +60,8 @@ void CG_RunLightStyles (void)
+ 	int		i;
+ 	clightstyle_t	*ls;
+ 
+-	ofs = cg.time / 50;
++	// swjkja reference capture: a pinned time (ms) for light styles.
++	ofs = ( cg_swjkjaTime.string[0] ? cg_swjkjaTime.integer : cg.time ) / 50;
+ //	if (ofs == lastofs)
+ //		return;
+ 	lastofs = ofs;
+diff --git a/code/cgame/cg_local.h b/code/cgame/cg_local.h
+index 8c0960f..66ee7f6 100644
+--- a/code/cgame/cg_local.h
++++ b/code/cgame/cg_local.h
+@@ -603,6 +603,8 @@ extern	vmCvar_t		cg_autoswitch;
+ extern	vmCvar_t		cg_simpleItems;
+ extern	vmCvar_t		cg_fov;
+ extern	vmCvar_t		cg_fovAspectAdjust;
++extern	vmCvar_t		cg_swjkjaView;
++extern	vmCvar_t		cg_swjkjaTime;
+ extern	vmCvar_t		cg_endcredits;
+ extern	vmCvar_t		cg_updatedDataPadForcePower1;
+ extern	vmCvar_t		cg_updatedDataPadForcePower2;
+diff --git a/code/cgame/cg_main.cpp b/code/cgame/cg_main.cpp
+index db6f7dc..6c6aa0d 100644
+--- a/code/cgame/cg_main.cpp
++++ b/code/cgame/cg_main.cpp
+@@ -278,6 +278,8 @@ vmCvar_t	cg_autoswitch;
+ vmCvar_t	cg_simpleItems;
+ vmCvar_t	cg_fov;
+ vmCvar_t	cg_fovAspectAdjust;
++vmCvar_t	cg_swjkjaView;
++vmCvar_t	cg_swjkjaTime;
+ vmCvar_t	cg_endcredits;
+ vmCvar_t	cg_updatedDataPadForcePower1;
+ vmCvar_t	cg_updatedDataPadForcePower2;
+@@ -353,6 +355,8 @@ static cvarTable_t cvarTable[] = {
+ 	{ &cg_drawGun, "cg_drawGun", "1", CVAR_ARCHIVE },
+ 	{ &cg_fov, "cg_fov", "80", CVAR_ARCHIVE },
+ 	{ &cg_fovAspectAdjust, "cg_fovAspectAdjust", "0", CVAR_ARCHIVE },
++	{ &cg_swjkjaView, "cg_swjkjaView", "", 0 },
++	{ &cg_swjkjaTime, "cg_swjkjaTime", "", 0 },
+ 	{ &cg_stereoSeparation, "cg_stereoSeparation", "0.4", CVAR_ARCHIVE  },
+ 	{ &cg_shadows, "cg_shadows", "1", CVAR_ARCHIVE  },
+ 	{ &cg_renderToTextureFX, "cg_renderToTextureFX", "1", CVAR_ARCHIVE  },
+diff --git a/code/cgame/cg_view.cpp b/code/cgame/cg_view.cpp
+index c5a8fd0..ae85e11 100644
+--- a/code/cgame/cg_view.cpp
++++ b/code/cgame/cg_view.cpp
+@@ -2112,6 +2112,17 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
+ 		// build cg.refdef
+ 		inwater = CG_CalcViewValues();
+ 	}
++	// swjkja reference capture: force an exact view, "x y z pitch yaw roll", at cg_fov
++	// (also over a camera script's view).
++	if ( cg_swjkjaView.string[0] ) {
++		vec3_t o, a;
++		if ( sscanf( cg_swjkjaView.string, "%f %f %f %f %f %f", &o[0], &o[1], &o[2], &a[0], &a[1], &a[2] ) == 6 ) {
++			VectorCopy( o, cg.refdef.vieworg );
++			VectorCopy( a, cg.refdefViewAngles );
++			AnglesToAxis( a, cg.refdef.viewaxis );
++			CG_CalcFOVFromX( cg_fov.value );
++		}
++	}
+ 
+ 	if (cg.zoomMode)
+ 	{ //zooming with binoculars or sniper, set the fog range based on the zoom level -rww
+@@ -2126,6 +2137,10 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
+ 	}
+ 
+ 	cg.refdef.time = cg.time;
++	// swjkja reference capture: a pinned time (ms) for shader animation.
++	if ( cg_swjkjaTime.string[0] ) {
++		cg.refdef.time = cg_swjkjaTime.integer;
++	}
+ 
+ 	CG_DrawSkyBoxPortal();
+ 

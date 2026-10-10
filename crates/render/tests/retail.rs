@@ -28,8 +28,16 @@ fn frames_in_flight_render_like_single_frames() {
     let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/mp/ffa3.bsp").unwrap()).unwrap();
     let world = swjkja_world::World::load(&bsp, &Default::default());
     let mut textures = TextureSet::new(&gpu).unwrap();
-    let mut renderer =
-        WorldRenderer::new(&gpu, &mut textures, &vfs, &shaders, &bsp, &world).unwrap();
+    let mut renderer = WorldRenderer::new(
+        &gpu,
+        &mut textures,
+        &vfs,
+        &shaders,
+        &bsp,
+        &world,
+        swjkja_world::static_model::Rules::for_map("maps/mp/ffa3.bsp"),
+    )
+    .unwrap();
     // Two targets, alternating, so a frame's picture survives the next frame.
     let targets = [0, 1].map(|_| Target::new(&gpu, 320, 180).unwrap());
     let depth_slots = targets
