@@ -1,5 +1,5 @@
 use swjkja_bsp::Entity;
-use swjkja_world::static_model::{Rules, angles_to_axis, static_models};
+use swjkja_world::static_model::{Rules, angles_to_axis, breakables, static_models};
 
 fn entity(pairs: &[(&str, &str)]) -> Entity {
     Entity {
@@ -189,4 +189,122 @@ fn single_player_filters_by_skill_notsingle_and_model() {
     assert_eq!(count(1), 3);
     // Hard leaves out 1536.
     assert_eq!(count(2), 4);
+}
+
+fn breakable(extra: &[(&str, &str)]) -> Entity {
+    let mut pairs = vec![
+        ("classname", "misc_model_breakable"),
+        ("model", "m.md3"),
+        ("origin", "10 20 30"),
+    ];
+    pairs.extend_from_slice(extra);
+    entity(&pairs)
+}
+
+#[test]
+fn breakables_spawn_in_single_player_unless_started_off() {
+    let entities = [
+        breakable(&[]),
+        breakable(&[("spawnflags", "4096")]),
+        breakable(&[("spawnflags", "4162")]),
+        // Left out at easy, like any single-player entity.
+        breakable(&[("spawnflags", "256")]),
+        // Animated: drawn at its first frame.
+        breakable(&[("spawnflags", "2")]),
+        breakable(&[("notsingle", "1")]),
+        // Dropped to the floor in the original: left out until there is collision.
+        breakable(&[("gravity", "1")]),
+        breakable(&[("gravity", "0")]),
+        entity(&[("classname", "misc_model_breakable"), ("origin", "0 0 0")]),
+    ];
+    assert_eq!(breakables(&entities, SP).len(), 3);
+    assert_eq!(
+        breakables(&entities, Rules::SinglePlayer { skill: 1 }).len(),
+        4
+    );
+    // Multiplayer maps place none, and its game would not spawn these.
+    assert!(breakables(&entities, FFA).is_empty());
+    // Static models are not breakables, nor the other way round.
+    assert!(static_models(&entities, SP).is_empty());
+}
+
+#[test]
+fn a_breakable_is_linked_by_its_box_an_epsilon_larger() {
+    let models = breakables(
+        &[
+            breakable(&[("angle", "90")]),
+            breakable(&[("mins", "-8 -8 0"), ("maxs", "8 8 40")]),
+            breakable(&[("mins", "0 0 0"), ("maxs", "8 8 8")]),
+        ],
+        SP,
+    );
+    let [default, sized, zero_mins] = &models[..] else {
+        panic!("{models:?}")
+    };
+    // No mins and maxs: 16 units each way.
+    assert_eq!(
+        default.entity_box,
+        Some([[-7.0, 3.0, 13.0], [27.0, 37.0, 47.0]])
+    );
+    assert!(default.normalized);
+    assert_eq!(default.zoffset, 0.0);
+    assert!(
+        close(default.axes[0], [0.0, 1.0, 0.0]),
+        "{:?}",
+        default.axes
+    );
+    assert_eq!(
+        sized.entity_box,
+        Some([[1.0, 11.0, 29.0], [19.0, 29.0, 71.0]])
+    );
+    // All-zero mins read as unset.
+    assert_eq!(
+        zero_mins.entity_box,
+        Some([[-7.0, 3.0, 13.0], [19.0, 29.0, 39.0]])
+    );
+}
+
+#[test]
+fn a_scaled_breakable_scales_its_box_and_rises_by_its_sunken_bottom() {
+    let models = breakables(
+        &[
+            breakable(&[("modelscale", "2")]),
+            breakable(&[("modelscale_vec", "1 1 0.5"), ("modelscale", "3")]),
+            breakable(&[("model", "models/map_objects/ships/TIE_bomber.md3")]),
+        ],
+        SP,
+    );
+    let [doubled, squashed, bomber] = &models[..] else {
+        panic!("{models:?}")
+    };
+    // The box's bottom sinks from -16 to -32, so the origin rises 16.
+    assert_eq!(doubled.origin, [10.0, 20.0, 46.0]);
+    assert_eq!(
+        doubled.entity_box,
+        Some([[-23.0, -13.0, 13.0], [43.0, 53.0, 79.0]])
+    );
+    assert!(
+        close(doubled.axes[2], [0.0, 0.0, 2.0]),
+        "{:?}",
+        doubled.axes
+    );
+    assert!(!doubled.normalized);
+    // "modelscale_vec" wins; x and y keep unit axes, z is halved and rises -8.
+    assert_eq!(squashed.scale, [1.0, 1.0, 0.5]);
+    assert_eq!(squashed.origin, [10.0, 20.0, 22.0]);
+    assert!(
+        close(squashed.axes[0], [1.0, 0.0, 0.0]),
+        "{:?}",
+        squashed.axes
+    );
+    assert!(
+        close(squashed.axes[2], [0.0, 0.0, 0.5]),
+        "{:?}",
+        squashed.axes
+    );
+    // The tie bomber's box is fixed at 80 units each way.
+    assert_eq!(
+        bomber.entity_box,
+        Some([[-71.0, -61.0, -51.0], [91.0, 101.0, 111.0]])
+    );
 }

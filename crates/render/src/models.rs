@@ -10,6 +10,12 @@
 //! frame's sphere when the model has no scale, picks levels with `r_lodscale` 10,
 //! prefers a fog that holds the whole model, and lights the model at its cull point.
 //!
+//! Single player's breakable models (`misc_model_breakable`) are game entities: the
+//! server sends them when their box touches a cluster the view can see
+//! (`SV_AddEntitiesToPacket`), cgame adds them before the static models with no cull
+//! of its own (`CG_General`), and the renderer culls and lights them like single
+//! player's static models, lit at their origin.
+//!
 //! The models never move, so each placement's surfaces are baked into world space at
 //! load; their normals carry the axes' scale, which is what the original's lighting
 //! sees (`R_SetupEntityLighting` turns the light into the model's scaled axes).
@@ -25,7 +31,7 @@ use swjkja_world::static_model::{Rules, StaticModel};
 
 use crate::camera::Camera;
 use crate::fog::FogVolume;
-use crate::vis::{Frustum, WorldVis};
+use crate::vis::{EntityLink, Frustum, WorldVis};
 
 pub type Vec3 = [f32; 3];
 
@@ -68,6 +74,10 @@ pub struct Instance {
     /// Whether the renderer culls by the frame's sphere too (unit axes).
     pub sphere_cull: bool,
     pub cull_cluster: i32,
+    /// A game entity's linked box (see [`StaticModel::entity_box`]), and where the
+    /// server links it once located.
+    pub entity_box: Option<[Vec3; 2]>,
+    pub link: Option<EntityLink>,
     /// cgame's culling radius: the scaled bounds' (`R_ModelBounds`, level 0). In
     /// single player, the squared distance between the scaled bounds' corners.
     pub radius: f32,
@@ -78,7 +88,8 @@ pub struct Instance {
 }
 
 pub struct StaticModels {
-    /// Entity `n + 1` is instance `n` (entity 0 is the world).
+    /// Entity `n + 1` is instance `n` (entity 0 is the world): the breakables, then
+    /// the static models, in the order the original adds them to the scene.
     pub instances: Vec<Instance>,
     pub pieces: Vec<Piece>,
     /// Every shader the models register, in the order the original registers them
@@ -180,15 +191,21 @@ pub fn lod(count: usize, lod_radius: f32, origin: Vec3, camera: &Camera, scale: 
 }
 
 impl StaticModels {
-    /// Loads the models the map places under `rules` and bakes each placement (call
+    /// Loads the models the map places under `rules` (its breakables in their initial
+    /// state, then its static models) and bakes each placement (call
     /// [`StaticModels::locate`] before drawing). A model that does not load stops the
     /// original's map load; here its placements are skipped with a warning.
     ///
-    /// A single-player model's fog is the one it has seen from outside any fog: no
-    /// retail model's fog depends on where the view is (a retail-data test checks).
+    /// A single-player model's fog is the one it has seen from outside any fog. One
+    /// retail model's fog depends on where the view is (taspir1's Raven's Claw, from
+    /// inside fog 1); a retail-data test checks there are no others.
     pub fn load(vfs: &Vfs, bsp: &Bsp, fogs: &[FogVolume], rules: Rules) -> Self {
         let sp = matches!(rules, Rules::SinglePlayer { .. });
-        let placements = swjkja_world::static_model::static_models(&bsp.entities, rules);
+        let mut placements = swjkja_world::static_model::breakables(&bsp.entities, rules);
+        placements.extend(swjkja_world::static_model::static_models(
+            &bsp.entities,
+            rules,
+        ));
         let mut models: HashMap<String, Option<Md3Model>> = HashMap::new();
         let mut shaders = Vec::new();
         let mut instances = Vec::new();
@@ -206,7 +223,7 @@ impl StaticModels {
                         Some(m)
                     }
                     Err(e) => {
-                        eprintln!("warning: misc_model_static {}: {e}", p.model);
+                        eprintln!("warning: model {}: {e}", p.model);
                         None
                     }
                 });
@@ -235,6 +252,13 @@ impl StaticModels {
             let bounds = model.lods[0].frames[0].bounds;
             let scaled = bounds.map(|b| [0, 1, 2].map(|i| b[i] * p.scale[i]));
             let cull_origin = [p.origin[0], p.origin[1], p.origin[2] + 1.0 + p.zoffset];
+            // Single player lights a static model at its cull point
+            // (RF_LIGHTING_ORIGIN), an entity at its origin.
+            let light_origin = if sp && p.entity_box.is_none() {
+                cull_origin
+            } else {
+                p.origin
+            };
             let radius = if sp {
                 // CG_CreateMiscEnts: DistanceSquared(mins, maxs), squared on purpose.
                 let d = [0, 1, 2].map(|i| scaled[1][i] - scaled[0][i]);
@@ -246,9 +270,11 @@ impl StaticModels {
                 origin: p.origin,
                 axes: p.axes,
                 cull_origin,
-                light_origin: if sp { cull_origin } else { p.origin },
+                light_origin,
                 sphere_cull: sp && p.normalized,
                 cull_cluster: -1,
+                entity_box: p.entity_box,
+                link: None,
                 radius,
                 lod_radius: radius_from_bounds(bounds),
                 lods,
@@ -269,10 +295,11 @@ impl StaticModels {
         }
     }
 
-    /// Finds the cluster each model is culled by.
+    /// Finds the cluster each model is culled by, and links each entity.
     pub fn locate(&mut self, vis: &WorldVis) {
         for m in &mut self.instances {
             m.cull_cluster = vis.cluster(m.cull_origin);
+            m.link = m.entity_box.map(|b| vis.link(b));
         }
     }
 
@@ -287,8 +314,15 @@ impl StaticModels {
     ) -> Option<usize> {
         let m = &self.instances[n];
         let to_view = [0, 1, 2].map(|i| m.origin[i] - camera.origin[i]);
-        let scale = match self.rules {
-            Rules::Multiplayer { .. } => {
+        let scale = match (&m.link, self.rules) {
+            // A game entity: the server's choice, then the renderer's.
+            (Some(link), _) => {
+                if !vis.sends(view_cluster, link) {
+                    return None;
+                }
+                SP_LOD_SCALE
+            }
+            (None, Rules::Multiplayer { .. }) => {
                 // CG_DrawMiscStaticModels.
                 if m.radius != 0.0 && frustum.culls_sphere(m.cull_origin, m.radius) {
                     return None;
@@ -301,7 +335,7 @@ impl StaticModels {
                 }
                 LOD_SCALE
             }
-            Rules::SinglePlayer { .. } => {
+            (None, Rules::SinglePlayer { .. }) => {
                 // CG_DrawMiscEnts. Its inPVS also needs both points' areas connected
                 // (CM_AreasConnected): with every area portal open, as the world is
                 // drawn, that is both points being inside the map (a solid leaf has

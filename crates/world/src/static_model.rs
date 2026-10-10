@@ -4,6 +4,11 @@
 //! `G_SpawnGEntityFromSpawnVars`; `g_misc.cpp`: `SP_misc_model_static`, then cgame's
 //! `CG_CreateMiscEntFromGent`). The renderer loads the models and draws them each frame
 //! like `CG_DrawMiscStaticModels` (multiplayer) or `CG_DrawMiscEnts` (single player).
+//!
+//! Single player's breakable models (`misc_model_breakable`, [`breakables`]) are game
+//! entities instead (`code/game/g_breakable.cpp`: `SP_misc_model_breakable`): the server
+//! sends them to the client by the PVS of their box, and cgame draws them like any
+//! entity (`code/cgame/cg_ents.cpp`: `CG_General`). Multiplayer maps place none.
 
 use swjkja_bsp::Entity;
 
@@ -65,6 +70,9 @@ pub struct StaticModel {
     pub normalized: bool,
     /// "zoffset": raises the point the model is culled by.
     pub zoffset: f32,
+    /// For a game entity, its linked box in world space (`absmin`, `absmax`): the
+    /// server sends it when the box touches a cluster the view can see.
+    pub entity_box: Option<[Vec3; 2]>,
 }
 
 /// `atof`: the longest leading number, 0 for none.
@@ -187,6 +195,7 @@ fn multiplayer(e: &Entity) -> Option<StaticModel> {
         scale,
         normalized: false,
         zoffset,
+        entity_box: None,
     })
 }
 
@@ -224,5 +233,105 @@ fn single_player(e: &Entity) -> Option<StaticModel> {
         scale,
         normalized: !scaled.contains(&true),
         zoffset: e.get("zoffset").map_or(0.0, atof),
+        entity_box: None,
+    })
+}
+
+/// `misc_model_breakable`'s START_OFF: hidden until something uses it.
+const START_OFF: i64 = 4096;
+
+/// The breakable models `entities` spawn under `rules` in their initial state, in
+/// spawn order: none in multiplayer (no retail multiplayer map places one), and in
+/// single player those not left out by skill nor started off (`SP_misc_model_breakable`).
+///
+/// Each draws its first frame: an animated one (AUTOANIMATE) cycles its frames in the
+/// original. One with "gravity" is left out: the original drops it to the floor with
+/// a box trace, which needs collision this crate does not have yet. One without a
+/// model stops the original's map load; here it is skipped.
+pub fn breakables(entities: &[Entity], rules: Rules) -> Vec<StaticModel> {
+    let Rules::SinglePlayer { skill } = rules else {
+        return Vec::new();
+    };
+    entities
+        .iter()
+        .filter(|e| {
+            e.get("classname")
+                .is_some_and(|c| c.eq_ignore_ascii_case("misc_model_breakable"))
+        })
+        .filter(|e| spawns_at(e, skill))
+        .filter_map(breakable)
+        .collect()
+}
+
+/// `SP_misc_model_breakable`, for an entity that spawns.
+fn breakable(e: &Entity) -> Option<StaticModel> {
+    let (mut origin, mut angles, mut model) = ([0.0; 3], [0.0; 3], None);
+    let (mut mins, mut maxs) = ([0.0; 3], [0.0; 3]);
+    for (key, value) in &e.pairs {
+        match key.to_ascii_lowercase().as_str() {
+            "origin" => origin = vector_prefix(value),
+            "angles" => angles = vector_prefix(value),
+            "angle" => angles = [0.0, atof(value), 0.0],
+            "model" => model = Some(value.as_str()),
+            "mins" => mins = vector_prefix(value),
+            "maxs" => maxs = vector_prefix(value),
+            _ => {}
+        }
+    }
+    if e.get("spawnflags").map_or(0, atoi) & START_OFF != 0 {
+        return None;
+    }
+    if e.get("gravity").map_or(0.0, atof) != 0.0 {
+        return None;
+    }
+    let model = model.filter(|m| {
+        m.get(m.len().saturating_sub(4)..)
+            .is_some_and(|ext| ext.eq_ignore_ascii_case(".md3"))
+    })?;
+    let mut scale = [0.0; 3];
+    let mut has_scale = false;
+    if let Some(v) = e.get("modelscale_vec") {
+        scale = vector_prefix(v);
+        has_scale = true;
+    } else {
+        let s = e.get("modelscale").map_or(0.0, atof);
+        if s != 0.0 {
+            scale = [s; 3];
+            has_scale = true;
+        }
+    }
+    if mins == [0.0; 3] {
+        mins = [-16.0; 3];
+    }
+    if maxs == [0.0; 3] {
+        maxs = [16.0; 3];
+    }
+    if model.eq_ignore_ascii_case("models/map_objects/ships/tie_bomber.md3") {
+        (mins, maxs) = ([-80.0; 3], [80.0; 3]);
+    }
+    if has_scale {
+        // The box scales with the model, and the origin rises by as much as the
+        // box's bottom sinks.
+        let old_bottom = mins[2];
+        mins = [0, 1, 2].map(|i| mins[i] * scale[i]);
+        maxs = [0, 1, 2].map(|i| maxs[i] * scale[i]);
+        origin[2] += old_bottom - mins[2];
+    }
+    // SV_LinkEntity: the box around the origin, an epsilon larger.
+    let entity_box = [
+        [0, 1, 2].map(|i| origin[i] + mins[i] - 1.0),
+        [0, 1, 2].map(|i| origin[i] + maxs[i] + 1.0),
+    ];
+    // CG_General's ScaleModelAxis, as for single player's static models.
+    let axis = angles_to_axis(angles);
+    let scaled = scale.map(|s| s != 0.0 && s != 1.0);
+    Some(StaticModel {
+        model: model.to_owned(),
+        origin,
+        axes: [0, 1, 2].map(|i| axis[i].map(|x| if scaled[i] { x * scale[i] } else { x })),
+        scale,
+        normalized: !scaled.contains(&true),
+        zoffset: 0.0,
+        entity_box: Some(entity_box),
     })
 }

@@ -57,6 +57,36 @@ fn box_on_plane_side(mins: Vec3, maxs: Vec3, p: &Plane) -> u8 {
     sides
 }
 
+/// The collision model's `BoxOnPlaneSide`, which takes a fast path for planes
+/// whose normal is exactly +x, +y or +z (`PlaneTypeForNormal`): there a box touching
+/// the plane from behind counts as behind only.
+fn box_on_plane_side_typed(mins: Vec3, maxs: Vec3, p: &Plane) -> u8 {
+    match p.normal.iter().position(|&n| n == 1.0) {
+        Some(t) if p.dist <= mins[t] => 1,
+        Some(t) if p.dist >= maxs[t] => 2,
+        Some(_) => 3,
+        None => box_on_plane_side(mins, maxs, p),
+    }
+}
+
+/// `MAX_TOTAL_ENT_LEAFS` and `MAX_ENT_CLUSTERS`: how many leafs `SV_LinkEntity`
+/// gathers for an entity's box, and how many of their clusters it keeps.
+const MAX_ENT_LEAFS: usize = 128;
+const MAX_ENT_CLUSTERS: usize = 16;
+
+/// Where the server links an entity (`SV_LinkEntity`), for deciding whether a view
+/// is sent it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EntityLink {
+    /// The clusters of the first leafs the box touches (up to 16).
+    pub clusters: Vec<i32>,
+    /// When the box touches more clusters than are kept: the cluster of the last
+    /// leaf with one, else 0.
+    pub last_cluster: i32,
+    /// Whether one of the leafs is in an area (not solid).
+    pub in_area: bool,
+}
+
 /// The view's four side planes (`R_SetupFrustum`; cgame's `CG_SetupFrustum` builds
 /// the same ones).
 #[derive(Debug, Clone, Copy)]
@@ -188,6 +218,85 @@ impl WorldVis {
         self.vis.can_see(from, to)
     }
 
+    /// `CM_BoxLeafnums`: the leafs the box touches (at most 128), front child first,
+    /// and the last of them with a cluster, overflowed or not.
+    fn box_leafs(&self, mins: Vec3, maxs: Vec3) -> (Vec<usize>, usize) {
+        let mut leafs = Vec::new();
+        let mut last = 0;
+        if self.nodes.is_empty() {
+            return (leafs, last);
+        }
+        let mut stack = vec![0i32];
+        while let Some(mut node) = stack.pop() {
+            loop {
+                if node < 0 {
+                    let leaf = (-(node + 1)) as usize;
+                    if self.leafs[leaf].cluster != -1 {
+                        last = leaf;
+                    }
+                    if leafs.len() < MAX_ENT_LEAFS {
+                        leafs.push(leaf);
+                    }
+                    break;
+                }
+                let n = &self.nodes[node as usize];
+                node = match box_on_plane_side_typed(mins, maxs, &self.planes[n.plane as usize]) {
+                    1 => n.children[0],
+                    2 => n.children[1],
+                    _ => {
+                        stack.push(n.children[1]);
+                        n.children[0]
+                    }
+                };
+            }
+        }
+        (leafs, last)
+    }
+
+    /// `SV_LinkEntity`'s clusters and area for an entity's box (`absmin`, `absmax`).
+    pub fn link(&self, [mins, maxs]: [Vec3; 2]) -> EntityLink {
+        let (leafs, last_leaf) = self.box_leafs(mins, maxs);
+        let mut link = EntityLink {
+            in_area: leafs.iter().any(|&l| self.leafs[l].area != -1),
+            ..EntityLink::default()
+        };
+        let mut i = 0;
+        while i < leafs.len() {
+            let cluster = self.leafs[leafs[i]].cluster;
+            if cluster != -1 {
+                link.clusters.push(cluster);
+                if link.clusters.len() == MAX_ENT_CLUSTERS {
+                    break;
+                }
+            }
+            i += 1;
+        }
+        if i != leafs.len() {
+            link.last_cluster = self.leafs[last_leaf].cluster;
+        }
+        link
+    }
+
+    /// `SV_AddEntitiesToPacket`: whether the server sends a linked entity to a view in
+    /// `view_cluster`. Every area counts as open, so a view in solid (area -1) is sent
+    /// nothing and any other is sent what is in an area. Past the kept clusters, the
+    /// original scans the cluster numbers up to the last one with a slip: it sends the
+    /// entity unless the first visible cluster it finds is the last one.
+    pub fn sends(&self, view_cluster: i32, link: &EntityLink) -> bool {
+        if view_cluster < 0 || !link.in_area || link.clusters.is_empty() {
+            return false;
+        }
+        if link.clusters.iter().any(|&c| self.can_see(view_cluster, c)) {
+            return true;
+        }
+        if link.last_cluster == 0 {
+            return false;
+        }
+        let from = *link.clusters.last().unwrap_or(&0);
+        let first_seen = (from..=link.last_cluster).find(|&c| self.can_see(view_cluster, c));
+        first_seen != Some(link.last_cluster)
+    }
+
     /// The surfaces the original draws for this view, in the order it adds them.
     pub fn visible(&mut self, camera: &Camera, out: &mut Vec<usize>) {
         out.clear();
@@ -308,5 +417,107 @@ mod tests {
         assert_eq!(box_on_plane_side([11.0; 3], [20.0; 3], &p), 1);
         assert_eq!(box_on_plane_side([0.0; 3], [9.0; 3], &p), 2);
         assert_eq!(box_on_plane_side([0.0; 3], [20.0; 3], &p), 3);
+    }
+
+    /// A map split at x = 0 (an axial plane), its front half split again at x + y =
+    /// 100 (not axial): leaf 0 (x > 0, x + y > 100) is cluster 0, leaf 1 (x > 0, x +
+    /// y <= 100) cluster 1, leaf 2 (x <= 0) solid. Each cluster sees only itself.
+    fn split_map(clusters: usize) -> WorldVis {
+        let node = |plane, children| swjkja_bsp::Node {
+            plane,
+            children,
+            mins: [0; 3],
+            maxs: [0; 3],
+        };
+        let leaf = |cluster, area| swjkja_bsp::Leaf {
+            cluster,
+            area,
+            mins: [0; 3],
+            maxs: [0; 3],
+            first_leaf_surface: 0,
+            num_leaf_surfaces: 0,
+            first_leaf_brush: 0,
+            num_leaf_brushes: 0,
+        };
+        let bytes_per_cluster = clusters.div_ceil(8);
+        let mut bits = vec![0u8; clusters * bytes_per_cluster];
+        for c in 0..clusters {
+            bits[c * bytes_per_cluster + c / 8] |= 1 << (c % 8);
+        }
+        let diagonal = std::f32::consts::FRAC_1_SQRT_2;
+        WorldVis {
+            nodes: vec![node(0, [1, -3]), node(1, [-1, -2])],
+            leafs: vec![leaf(0, 0), leaf(1, 0), leaf(-1, -1)],
+            planes: vec![
+                Plane {
+                    normal: [1.0, 0.0, 0.0],
+                    dist: 0.0,
+                },
+                Plane {
+                    normal: [diagonal, diagonal, 0.0],
+                    dist: 100.0 * diagonal,
+                },
+            ],
+            leaf_surfaces: Vec::new(),
+            vis: swjkja_bsp::Visibility {
+                clusters,
+                bytes_per_cluster,
+                bits,
+            },
+            node_parent: Vec::new(),
+            leaf_parent: Vec::new(),
+            surface_cull: Vec::new(),
+            node_mark: Vec::new(),
+            surface_mark: Vec::new(),
+            frame: 0,
+        }
+    }
+
+    #[test]
+    fn an_entity_links_to_the_clusters_its_box_touches() {
+        let vis = split_map(2);
+        let in_cluster_0 = vis.link([[100.0; 3], [120.0; 3]]);
+        assert_eq!(in_cluster_0.clusters, [0]);
+        assert!(vis.sends(0, &in_cluster_0));
+        assert!(!vis.sends(1, &in_cluster_0));
+        // A view in solid is sent nothing.
+        assert!(!vis.sends(-1, &in_cluster_0));
+        // Across both front leafs and the solid one: front children first.
+        let across = vis.link([[-10.0, 40.0, 0.0], [70.0, 50.0, 0.0]]);
+        assert_eq!(across.clusters, [0, 1]);
+        assert!(across.in_area);
+        assert!(vis.sends(1, &across));
+        // Touching the axial plane from behind counts as behind only.
+        let behind = vis.link([[-20.0; 3], [0.0, 0.0, 0.0]]);
+        assert_eq!(behind, EntityLink::default());
+        assert!(!vis.sends(0, &behind));
+        // The diagonal plane is not axial: a box touching it from behind is on both
+        // sides.
+        let touching = vis.link([[10.0, 10.0, 0.0], [50.0, 50.0, 0.0]]);
+        assert_eq!(touching.clusters, [0, 1]);
+    }
+
+    #[test]
+    fn past_sixteen_clusters_the_server_slips() {
+        let vis = split_map(40);
+        let link = |last_cluster| EntityLink {
+            clusters: (0..16).collect(),
+            last_cluster,
+            in_area: true,
+        };
+        // Cluster 20 sees only itself: none of 0..16 is visible from it.
+        assert!(!vis.sends(
+            20,
+            &EntityLink {
+                last_cluster: 0,
+                ..link(0)
+            }
+        ));
+        // The scan from cluster 15 finds 20 before the last cluster, 30: sent.
+        assert!(vis.sends(20, &link(30)));
+        // It finds nothing up to 18: sent all the same.
+        assert!(vis.sends(20, &link(18)));
+        // The first visible cluster is the last one: not sent.
+        assert!(!vis.sends(20, &link(20)));
     }
 }
