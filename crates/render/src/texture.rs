@@ -157,9 +157,13 @@ fn upload_batch(
         slices.push((p, slice));
         rest = tail;
     }
+    // Staging memory is write-combined: reading it back is very slow, so each chain is
+    // made in ordinary memory and written to staging in one pass.
     crate::parallel::each(slices, |(p, out)| {
         if p.mipmaps {
-            swjkja_image::mip::mip_chain_into(&p.rgba, p.width, p.height, out);
+            let mut chain = vec![0; out.len()];
+            swjkja_image::mip::mip_chain_into(&p.rgba, p.width, p.height, &mut chain);
+            out.copy_from_slice(&chain);
         } else {
             out.copy_from_slice(&p.rgba);
         }
