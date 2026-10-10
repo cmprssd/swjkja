@@ -26,20 +26,8 @@ const TAG_BYTES: usize = 112;
 const SURFACE_BYTES: usize = 108;
 const SHADER_BYTES: usize = 68;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Error(pub String);
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for Error {}
-
-macro_rules! bail {
-    ($($t:tt)*) => { return Err(Error(format!($($t)*))) };
-}
+pub use crate::Error;
+use crate::{Reader, bail};
 
 /// One animation frame's bounds.
 #[derive(Debug, Clone, PartialEq)]
@@ -98,48 +86,6 @@ pub struct Md3 {
     pub tags: Vec<Tag>,
     pub tags_per_frame: usize,
     pub surfaces: Vec<Surface>,
-}
-
-/// Bounds-checked little-endian reads.
-struct Reader<'a> {
-    data: &'a [u8],
-    what: &'a str,
-}
-
-impl Reader<'_> {
-    fn bytes(&self, at: usize, n: usize) -> Result<&[u8], Error> {
-        match at.checked_add(n).and_then(|end| self.data.get(at..end)) {
-            Some(b) => Ok(b),
-            None => bail!(
-                "{}: {n} bytes at {at} run past the end ({} bytes)",
-                self.what,
-                self.data.len()
-            ),
-        }
-    }
-    fn i32(&self, at: usize) -> Result<i32, Error> {
-        Ok(i32::from_le_bytes(self.bytes(at, 4)?.try_into().unwrap()))
-    }
-    fn f32(&self, at: usize) -> Result<f32, Error> {
-        Ok(f32::from_le_bytes(self.bytes(at, 4)?.try_into().unwrap()))
-    }
-    fn i16(&self, at: usize) -> Result<i16, Error> {
-        Ok(i16::from_le_bytes(self.bytes(at, 2)?.try_into().unwrap()))
-    }
-    fn vec3(&self, at: usize) -> Result<Vec3, Error> {
-        Ok([self.f32(at)?, self.f32(at + 4)?, self.f32(at + 8)?])
-    }
-    /// A NUL-terminated string in a fixed field.
-    fn name(&self, at: usize, n: usize) -> Result<String, Error> {
-        let b = self.bytes(at, n)?;
-        let end = b.iter().position(|&c| c == 0).unwrap_or(n);
-        Ok(b[..end].iter().map(|&c| c as char).collect())
-    }
-    /// A count field: not negative.
-    fn count(&self, at: usize, field: &str) -> Result<usize, Error> {
-        let n = self.i32(at)?;
-        usize::try_from(n).map_err(|_| Error(format!("{}: {field} is {n}", self.what)))
-    }
 }
 
 /// `tr.sinTable`: `FUNCTABLE_SIZE` (1024) samples of one sine period.

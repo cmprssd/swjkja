@@ -1,4 +1,5 @@
-//! Parses every MD3 in the retail data, and registers every model the maps place.
+//! Parses every MD3 in the retail data, registers every model the maps place, and
+//! loads every Ghoul2 mesh with its skeleton.
 //! Runs only when SWJKJA_GAMEDATA points at the retail `GameData` folder
 //! (`.local-ci` sets it for the Windows run).
 
@@ -7,6 +8,8 @@ use std::path::PathBuf;
 
 use swjkja_bsp::Bsp;
 use swjkja_fs::Vfs;
+use swjkja_model::gla::{DEFAULT_NAME, Gla};
+use swjkja_model::glm::{Ghoul2Model, skin};
 use swjkja_model::md3::{MAX_LODS, Md3, Md3Model, lod_file};
 
 fn retail() -> Option<Vfs> {
@@ -79,4 +82,44 @@ fn every_model_the_maps_place_registers() {
     // hoth/bacta_tank.md3 has a second level (bacta_tank_1.md3).
     assert_eq!(models.len(), 380);
     assert_eq!(lods, [0, 379, 1, 0]);
+}
+
+#[test]
+fn every_retail_ghoul2_model_loads_with_its_skeleton() {
+    let Some(vfs) = retail() else { return };
+    let mut skeletons: Vec<&str> = vfs.files().filter(|f| f.ends_with(".gla")).collect();
+    skeletons.sort_unstable();
+    for name in &skeletons {
+        let gla = Gla::parse(&vfs.read(name).unwrap()).unwrap_or_else(|e| panic!("{name}: {e}"));
+        // Every frame poses (an index past the pool would panic).
+        for frame in [0, gla.frame_count - 1] {
+            assert_eq!(gla.pose(frame).len(), gla.bones.len(), "{name}");
+        }
+    }
+    let mut meshes: Vec<&str> = vfs.files().filter(|f| f.ends_with(".glm")).collect();
+    meshes.sort_unstable();
+    let (mut default, mut triangles) = (0, 0);
+    for name in &meshes {
+        let model = Ghoul2Model::load(&vfs, name).unwrap_or_else(|e| panic!("{e}"));
+        default += usize::from(model.glm.anim_name == DEFAULT_NAME);
+        let pose = model.gla.pose(0);
+        for lod in &model.glm.lods {
+            for s in lod {
+                let (xyz, normals) = skin(s, &pose);
+                assert!(
+                    xyz.iter().chain(&normals).flatten().all(|c| c.is_finite()),
+                    "{name}"
+                );
+                triangles += s.indexes.len() / 3;
+            }
+        }
+    }
+    eprintln!(
+        "{} glas, {} glms ({default} on the default skeleton), {triangles} triangles",
+        skeletons.len(),
+        meshes.len()
+    );
+    // Counted independently with Python's zipfile: 66 unique .gla and 127 unique
+    // .glm names, 41 meshes naming "*default".
+    assert_eq!((skeletons.len(), meshes.len(), default), (66, 127, 41));
 }
