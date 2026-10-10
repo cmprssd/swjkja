@@ -310,3 +310,24 @@ equals the same frame rendered alone (it fails if the frames share one slot).
 - **Beacons and planted bombs with a "targetname" are not drawn**, waiting to be
   used; every retail one (10, on t2_wedge) has one. One without would draw its first
   frame (a beacon animates in the original).
+
+## 2026-10-10: Ghoul2 models, first for the racks' weapons (decided by Claude, pending review)
+
+- **Ghoul2 meshes and skeletons load in `crates/model`** (`glm`, `gla`), checked like
+  MD3s, and every retail `.glm` loads with its skeleton (a retail-data test). A mesh
+  whose skeleton has another number of bones is refused; the original converts old
+  72-bone humanoids, and no retail mesh is one.
+- **A mesh is posed at frame 0 of its skeleton, from the renderer's root matrix**:
+  `RootMatrix` hands every model `tr_ghoul2.cpp`'s `identityMatrix`, which is not the
+  identity but a quarter turn about z (the mesh's -y forward). Without it the rack
+  weapons lay flat; with it they stand upright like the reference.
+- **The rack weapons are items drawn as the renderer draws Ghoul2 models**: culled by
+  a sphere of the item's radius (20) around its origin, their level of detail and
+  fog picked from the same sphere (`R_GCullModel`, `G2_ComputeLOD`,
+  `R_GComputeFogNum`), lit at their origin. Surfaces are drawn as the hierarchy walk
+  reaches them; tags and surfaces off by default are not.
+- **Weapons sit in the middle of their random range, like the other rack items**: a
+  gun rack's three 9 units apart, an ammo rack's 7 units to the right (the medpack
+  then on the left), turned around and pitched 75 degrees up (cgame's `CG_Item` for a
+  VERTICAL item). An ammo rack with a weapon and no ammo checked places a blaster at
+  the rack's own height, as the original does (its height variable stays 0).

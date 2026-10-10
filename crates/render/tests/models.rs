@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use swjkja_render::Camera;
 use swjkja_render::fog::FogVolume;
-use swjkja_render::models::{StaticModels, sp_fog_num};
+use swjkja_render::models::{GHOUL2_ITEM_RADIUS, StaticModels, md3_fog_sphere, sp_fog_num};
 use swjkja_render::vis::{Frustum, SurfaceCull, WorldVis};
 use swjkja_world::static_model::Rules;
 
@@ -111,13 +111,24 @@ fn only_one_single_player_model_fog_depends_on_the_view() {
             rules,
         ));
         for p in placements {
-            let model = md3s
-                .entry(p.model.to_ascii_lowercase())
-                .or_insert_with(|| swjkja_model::md3::Md3Model::load(&vfs, &p.model).ok());
-            let Some(model) = model else { continue };
+            // A Ghoul2 item's sphere is its radius around its origin; an MD3's,
+            // each level's frame 0.
+            let spheres = if p.model.ends_with(".glm") {
+                vec![(p.origin, GHOUL2_ITEM_RADIUS)]
+            } else {
+                let model = md3s
+                    .entry(p.model.to_ascii_lowercase())
+                    .or_insert_with(|| swjkja_model::md3::Md3Model::load(&vfs, &p.model).ok());
+                let Some(model) = model else { continue };
+                model
+                    .lods
+                    .iter()
+                    .map(|md3| md3_fog_sphere(p.origin, md3))
+                    .collect()
+            };
             placed += 1;
-            for md3 in &model.lods {
-                let outside = sp_fog_num(&fogs, p.origin, md3, 0);
+            for (center, radius) in spheres {
+                let outside = sp_fog_num(&fogs, center, radius, 0);
                 fogged += usize::from(outside != 0);
                 for view_fog in 1..=fogs.len() {
                     // The one exception: taspir1's Raven's Claw (a breakable)
@@ -126,11 +137,11 @@ fn only_one_single_player_model_fog_depends_on_the_view() {
                         && p.origin == [-1808.0, -1400.0, 624.0]
                         && view_fog == 1
                     {
-                        assert_eq!((outside, sp_fog_num(&fogs, p.origin, md3, 1)), (2, 1));
+                        assert_eq!((outside, sp_fog_num(&fogs, center, radius, 1)), (2, 1));
                         continue;
                     }
                     assert_eq!(
-                        sp_fog_num(&fogs, p.origin, md3, view_fog),
+                        sp_fog_num(&fogs, center, radius, view_fog),
                         outside,
                         "{name}: {} at {:?}, view in fog {view_fog}",
                         p.model,
@@ -248,4 +259,52 @@ fn t3_stamp_entities_cull_like_the_original() {
     // 77 breakables, and two racks with their goods.
     assert_eq!(count(&sent), 77 + 6);
     assert_eq!(count(&|n| drawn(n).is_some()), 10 + 3);
+}
+
+/// t2_dpred's rack weapons are Ghoul2 items: 18 on its six gun racks and 7 on its
+/// ammo racks. The dpred_guns view (bench/reference/model-views.txt) looks at two
+/// gun racks from 76 units: their six weapons are drawn at full detail, culled only
+/// by the item's sphere.
+#[test]
+fn t2_dpred_rack_weapons_draw_as_ghoul2_items() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t2_dpred.bsp").unwrap()).unwrap();
+    let mut models = StaticModels::load(&vfs, &bsp, &[], Rules::for_map("maps/t2_dpred.bsp"));
+    let vis = WorldVis::new(&bsp, vec![SurfaceCull::Never; bsp.surfaces.len()]);
+    models.locate(&vis);
+    let weapons: Vec<usize> = (0..models.instances.len())
+        .filter(|&n| models.instances[n].ghoul2_radius == Some(GHOUL2_ITEM_RADIUS))
+        .collect();
+    assert_eq!(weapons.len(), 25);
+    for &n in &weapons {
+        // Every rack weapon has three levels of detail.
+        assert_eq!(models.instances[n].lods.len(), 3);
+    }
+    let camera = Camera::new([95.0, -2030.0, 625.0], [15.0, 270.0, 0.0], 1280, 720);
+    let frustum = Frustum::new(&camera);
+    let cluster = vis.cluster(camera.origin);
+    let drawn: Vec<(f32, usize)> = weapons
+        .iter()
+        .filter_map(|&n| {
+            let level = models.visible(n, &camera, &frustum, cluster, &vis)?;
+            Some((models.instances[n].origin[0], level))
+        })
+        .collect();
+    // Gun racks at x 127 and 63 (in entity order), weapons 9 units apart along each
+    // rack's right (+x: the racks face +y).
+    assert_eq!(
+        drawn,
+        [
+            (118.0, 0),
+            (127.0, 0),
+            (136.0, 0),
+            (54.0, 0),
+            (63.0, 0),
+            (72.0, 0)
+        ]
+    );
 }

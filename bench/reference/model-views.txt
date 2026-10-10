@@ -5,7 +5,9 @@
 # keep NPCs and breakables out of sight; they were found around clusters of static
 # models at least 1200 units from any NPC's spawn point. The t3_stamp views look at
 # breakables (barrels and crates) 350 units away; stamp_barrels has an ammo rack in
-# sight, stamp_crates brush entities (containers, stairs), not drawn yet.
+# sight, stamp_crates brush entities (containers, stairs), not drawn yet. The
+# t2_dpred rack views look at a row of gun and ammo racks holding weapons (Ghoul2
+# items); dpred_racks also shows world flares the original does not draw.
 # Candidates whose capture had undrawn regions were dropped: single player leaves
 # the screen uncleared, and draws only the areas the player's snapshot marks
 # visible (none from an eye in solid).
@@ -18,3 +20,5 @@ t2_rancor rancor_plate  -5960 5260 1515   10 270 0  12345
 vjun1     vjun1_hall    -7052 468 824     10 0 0    12345
 t3_stamp  stamp_barrels 352 342 124       10 90 0   12345
 t3_stamp  stamp_crates  -3248 -3574 124   10 90 0   12345
+t2_dpred  dpred_racks   0 -1940 640       10 270 0  12345
+t2_dpred  dpred_guns    95 -2030 625      15 270 0  12345

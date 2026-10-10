@@ -245,15 +245,15 @@ const START_OFF: i64 = 4096;
 /// The models of the game entities `entities` spawn under `rules`, in their initial
 /// state: none in multiplayer (no retail multiplayer map places one); in single
 /// player, of those not left out by skill, in entity order, the breakables not
-/// started off, the racks, and the beacons and planted bombs not waiting to be used,
-/// then the goods on the ammo racks, which the original spawns 100 ms into the level.
+/// started off, the racks (a gun rack followed by its weapons), and the beacons and
+/// planted bombs not waiting to be used, then the goods on the ammo racks, which the
+/// original spawns 100 ms into the level.
 ///
 /// A breakable without a model stops the original's map load; here it is skipped.
 /// Each model draws its first frame: an animated breakable (AUTOANIMATE) or a beacon
 /// cycles its frames in the original. A breakable with "gravity" is left out: the
 /// original drops it to the floor with a box trace, which needs collision this crate
-/// does not have yet. The weapons on racks are Ghoul2 models, left out until those
-/// load.
+/// does not have yet. The weapons on racks are Ghoul2 models (`.glm`).
 pub fn entity_models(entities: &[Entity], rules: Rules) -> Vec<StaticModel> {
     let Rules::SinglePlayer { skill } = rules else {
         return Vec::new();
@@ -263,7 +263,10 @@ pub fn entity_models(entities: &[Entity], rules: Rules) -> Vec<StaticModel> {
         let class = e.get("classname").unwrap_or("").to_ascii_lowercase();
         match class.as_str() {
             "misc_model_breakable" => models.extend(breakable(e)),
-            "misc_model_gun_rack" => models.push(rack(e, GUN_RACK)),
+            "misc_model_gun_rack" => {
+                models.push(rack(e, GUN_RACK));
+                models.extend(gun_rack_goods(e));
+            }
             "misc_model_ammo_rack" => {
                 models.push(rack(e, AMMO_RACK));
                 rack_goods.extend(ammo_rack_goods(e));
@@ -332,8 +335,11 @@ fn usable(e: &Entity, model: &str, maxs: Vec3) -> Option<StaticModel> {
     Some(entity(model, origin, angles, [-16.0, -16.0, 0.0], maxs))
 }
 
-/// The ammo rack's spawnflags.
+/// The racks' spawnflags: both racks' blaster, then the gun rack's...
 const RACK_BLASTER: i64 = 1;
+const RACK_REPEATER: i64 = 2;
+const RACK_ROCKET: i64 = 4;
+/// ...and the ammo rack's.
 const RACK_METAL_BOLTS: i64 = 2;
 const RACK_ROCKETS: i64 = 4;
 const RACK_WEAPONS: i64 = 8;
@@ -341,21 +347,74 @@ const RACK_HEALTH: i64 = 16;
 const RACK_PWR_CELL: i64 = 32;
 const RACK_NO_FILL: i64 = 64;
 
-/// The items an ammo rack places that are MD3 models: their world models and boxes
-/// (`ext_data/items.dat`).
-const AMMO_BLASTER: (&str, Vec3) = ("models/items/energy_cell.md3", [-8.0, -8.0, 0.0]);
-const AMMO_METAL_BOLTS: (&str, Vec3) = ("models/items/metallic_bolts.md3", [-8.0, -8.0, 0.0]);
-const AMMO_POWERCELL: (&str, Vec3) = ("models/items/power_cell.md3", [-8.0, -8.0, 0.0]);
-const AMMO_ROCKETS: (&str, Vec3) = ("models/items/rockets.md3", [-8.0, -8.0, 0.0]);
-const MEDPAK: (&str, Vec3) = ("models/items/medpac.md3", [-8.0, -8.0, -3.0]);
+/// An item a rack places: its world model and box (`ext_data/items.dat`), and
+/// whether it is a weapon (turned to stand on the rack).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Item {
+    model: &'static str,
+    mins: Vec3,
+    maxs: Vec3,
+    weapon: bool,
+}
 
-/// `spawn_rack_goods`: the ammo packs and the medpack an ammo rack places
-/// (`GunRackAddItem`), the weapon left out (a Ghoul2 model).
+const fn ammo(model: &'static str, mins: Vec3) -> Item {
+    Item {
+        model,
+        mins,
+        maxs: [8.0, 8.0, 16.0],
+        weapon: false,
+    }
+}
+
+const fn weapon(model: &'static str) -> Item {
+    Item {
+        model,
+        mins: [-10.0, -10.0, -2.0],
+        maxs: [10.0, 10.0, 12.0],
+        weapon: true,
+    }
+}
+
+const AMMO_BLASTER: Item = ammo("models/items/energy_cell.md3", [-8.0, -8.0, 0.0]);
+const AMMO_METAL_BOLTS: Item = ammo("models/items/metallic_bolts.md3", [-8.0, -8.0, 0.0]);
+const AMMO_POWERCELL: Item = ammo("models/items/power_cell.md3", [-8.0, -8.0, 0.0]);
+const AMMO_ROCKETS: Item = ammo("models/items/rockets.md3", [-8.0, -8.0, 0.0]);
+const MEDPAK: Item = ammo("models/items/medpac.md3", [-8.0, -8.0, -3.0]);
+const BLASTER: Item = weapon("models/weapons2/blaster_r/blaster_w.glm");
+const REPEATER: Item = weapon("models/weapons2/heavy_repeater/heavy_repeater_w.glm");
+const ROCKET_LAUNCHER: Item = weapon("models/weapons2/merr_sonn/merr_sonn_w.glm");
+
+/// `SP_misc_model_gun_rack`: up to three weapons, 9 units apart, each at its own
+/// height; the first fills the shelf. With no weapon checked, blasters. The
+/// original jitters each by up to 2 units; here each sits in the middle.
+fn gun_rack_goods(e: &Entity) -> Vec<StaticModel> {
+    let flags = e.get("spawnflags").map_or(0, atoi);
+    let none = flags & (RACK_BLASTER | RACK_REPEATER | RACK_ROCKET) == 0;
+    let mut guns: Vec<(Item, f32)> = [
+        (flags & RACK_BLASTER != 0 || none, BLASTER, 23.0),
+        (flags & RACK_REPEATER != 0, REPEATER, 24.5),
+        (flags & RACK_ROCKET != 0, ROCKET_LAUNCHER, 25.5),
+    ]
+    .into_iter()
+    .filter_map(|(on, item, up)| on.then_some((item, up)))
+    .collect();
+    while guns.len() < 3 {
+        guns.push(guns[0]);
+    }
+    let (origin, angles) = origin_and_angles(e);
+    guns.iter()
+        .enumerate()
+        .map(|(i, &(item, up))| rack_item(item, origin, angles, (i as f32 - 1.0) * 9.0, up))
+        .collect()
+}
+
+/// `spawn_rack_goods`: the ammo packs, the weapon and the medpack an ammo rack
+/// places (`GunRackAddItem`).
 ///
 /// The original spreads them with the game's random numbers, whose sequence depends
 /// on everything spawned before: each item here sits in the middle of its range, and
-/// a medpack picks the right side unless a weapon took it (the original picks either
-/// side at random, then the weapon's other side).
+/// the weapon takes the right side, the medpack the other one (the original picks
+/// the first side at random).
 fn ammo_rack_goods(e: &Entity) -> Vec<StaticModel> {
     let flags = e.get("spawnflags").map_or(0, atoi);
     let any_ammo = RACK_BLASTER | RACK_METAL_BOLTS | RACK_ROCKETS | RACK_PWR_CELL;
@@ -381,32 +440,47 @@ fn ammo_rack_goods(e: &Entity) -> Vec<StaticModel> {
         .enumerate()
         .map(|(i, &item)| rack_item(item, origin, angles, (i as f32 - 1.0) * 8.0, 7.0))
         .collect();
-    // A weapon: with no ammo type checked, a blaster; otherwise the first of the
-    // blaster, repeater and rocket launcher whose ammo is checked (not the power cell's).
-    let weapon = flags & RACK_WEAPONS != 0
-        && (flags & any_ammo == 0 || flags & (RACK_BLASTER | RACK_METAL_BOLTS | RACK_ROCKETS) != 0);
+    // A weapon: with no ammo type checked, a blaster at the rack's own height (the
+    // original leaves its height at 0 then); otherwise the first of the blaster,
+    // repeater and rocket launcher whose ammo is checked (not the power cell's), 7
+    // units right (4 to 10 in the original).
+    let weapon = if flags & RACK_WEAPONS == 0 {
+        None
+    } else if flags & any_ammo == 0 {
+        Some((BLASTER, 0.0))
+    } else if flags & RACK_BLASTER != 0 {
+        Some((BLASTER, 25.5))
+    } else if flags & RACK_METAL_BOLTS != 0 {
+        Some((REPEATER, 27.0))
+    } else if flags & RACK_ROCKETS != 0 {
+        Some((ROCKET_LAUNCHER, 28.0))
+    } else {
+        None
+    };
+    if let Some((item, up)) = weapon {
+        goods.push(rack_item(item, origin, angles, 7.0, up));
+    }
     if flags & RACK_HEALTH != 0 {
-        let side = if weapon { -1.0 } else { 1.0 };
+        let side = if weapon.is_some() { -1.0 } else { 1.0 };
         goods.push(rack_item(MEDPAK, origin, angles, 6.0 * side, 24.0));
     }
     goods
 }
 
-/// `GunRackAddItem` for an item that is not a weapon, `right` units to the rack's
-/// right and `up` units above its origin: turned 90 degrees from the rack, linked
-/// with the item's box.
-fn rack_item(
-    (model, mins): (&str, Vec3),
-    origin: Vec3,
-    angles: Vec3,
-    right: f32,
-    up: f32,
-) -> StaticModel {
+/// `GunRackAddItem`, `right` units to the rack's right and `up` units above its
+/// origin, linked with the item's box: an item turned 90 degrees from the rack, a
+/// weapon turned around and stood up (cgame's `CG_Item` pitches a VERTICAL item
+/// 75 degrees up).
+fn rack_item(item: Item, origin: Vec3, angles: Vec3, right: f32, up: f32) -> StaticModel {
     let axis = angles_to_axis(angles);
     let mut at = [0, 1, 2].map(|i| origin[i] - right * axis[1][i]);
     at[2] += up;
-    let turned = [angles[0], angles[1] + 90.0, angles[2]];
-    entity(model, at, turned, mins, [8.0, 8.0, 16.0])
+    let turned = if item.weapon {
+        [angles[0] - 75.0, angles[1] + 180.0, angles[2]]
+    } else {
+        [angles[0], angles[1] + 90.0, angles[2]]
+    };
+    entity(item.model, at, turned, item.mins, item.maxs)
 }
 
 /// `SP_misc_model_breakable`, for an entity that spawns.

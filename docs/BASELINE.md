@@ -247,6 +247,32 @@ also shows one world flare near the floor that the original does not draw.
 The 19 world views (references taken with `r_drawentities 0`) are unchanged by the
 models: all within 0.41 mean difference, at most 0.1% of pixels off by more than 16.
 
+## Single-player rack weapons compared with the reference, 2026-10-10
+
+Two t2_dpred views in `bench/reference/model-views.txt` look at a row of seven racks:
+dpred_racks the whole row from 170 units (gun racks with blasters and repeaters, an
+ammo rack with a blaster), dpred_guns two gun racks from 76 units. The weapons are
+Ghoul2 models (`.glm`); they stand upright in the racks only once posed from the
+renderer's root matrix, a quarter turn about z (see DECISIONS.md).
+
+| View | Mean difference | Pixels off by > 16 | Flares left out | Without weapons, flares left out |
+|------|------|------|------|------|
+| dpred_racks | 7.14 | 12.3% | 0.68, 1.6% | 0.64, 1.6% |
+| dpred_guns | 6.72 | 12.3% | 1.29, 3.0% | 1.33, 3.5% |
+
+Most of the difference is world flares the original does not draw (as on ffa5_rings
+and t2_rancor). With them patched out of this renderer for a measurement (both
+columns on the right; the weaponless renders are from `main`), what remains is the
+weapons' outlines: the original turns each one at random (up to 14 degrees of yaw
+and 4 of pitch and roll) and moves it up to 2 units, which this renderer leaves out,
+so a drawn weapon is a little off its reference and counts twice. Up close the
+models, heights and shading match (`dpred_guns`).
+
+The other model views are unchanged (dpred_canopy 1.34, ffa5 0.17, 3.87 and 0.22,
+stamp_barrels 0.13, stamp_crates 5.00, vjun1_hall 1.48). hoth2_fog and rancor_plate
+were not rendered: both maps now stop `render_world` on the Windows GPU with
+`ERROR_DEVICE_LOST`, on `main` too.
+
 ## Single-player ammo rack compared with the reference, 2026-10-10
 
 stamp_barrels (above) has an ammo rack on the wall with a blaster pack and a medpack.

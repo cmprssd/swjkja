@@ -322,9 +322,8 @@ fn rack(class: &str, extra: &[(&str, &str)]) -> Entity {
 
 #[test]
 fn racks_draw_their_own_model_linked_by_a_point() {
-    // The gun rack's weapons are Ghoul2 models, not drawn yet.
     let models = entity_models(&[rack("misc_model_gun_rack", &[("spawnflags", "7")])], SP);
-    let [gun_rack] = &models[..] else {
+    let [gun_rack, _, _, _] = &models[..] else {
         panic!("{models:?}")
     };
     assert_eq!(gun_rack.model, "models/map_objects/kejim/weaponsrack.md3");
@@ -393,8 +392,15 @@ fn an_ammo_rack_places_checked_ammo_then_a_medpack_beside_the_weapon() {
             (medpac(), [106.0, 200.0, 24.0 + 50.0])
         ]
     );
-    // With a weapon (a repeater, not drawn) on the right, the medpack goes left.
-    assert_eq!(models("90")[1], (medpac(), [94.0, 200.0, 74.0]));
+    // With a weapon (a repeater) on the right, the medpack goes left.
+    let repeater = "models/weapons2/heavy_repeater/heavy_repeater_w.glm".to_owned();
+    assert_eq!(
+        models("90")[1..],
+        [
+            (repeater, [107.0, 200.0, 77.0]),
+            (medpac(), [94.0, 200.0, 74.0])
+        ]
+    );
     // A power cell's rack takes no weapon, so the medpack stays right.
     assert_eq!(models("120")[1].1, [106.0, 200.0, 74.0]);
     // Every ammo type, in the original's order: one each.
@@ -408,6 +414,65 @@ fn an_ammo_rack_places_checked_ammo_then_a_medpack_beside_the_weapon() {
             "models/items/rockets.md3",
         ]
     );
+}
+
+#[test]
+fn a_gun_rack_stands_its_weapons_up_turned_around() {
+    let blaster = "models/weapons2/blaster_r/blaster_w.glm";
+    let repeater = "models/weapons2/heavy_repeater/heavy_repeater_w.glm";
+    let rocket = "models/weapons2/merr_sonn/merr_sonn_w.glm";
+    let goods = |flags: &str| {
+        entity_models(&[rack("misc_model_gun_rack", &[("spawnflags", flags)])], SP)
+            .into_iter()
+            .skip(1)
+            .collect::<Vec<_>>()
+    };
+    // Nothing checked: three blasters, 9 units apart along the rack's right (+x at
+    // yaw 90), 23 units up.
+    let blasters = goods("0");
+    let placed: Vec<_> = blasters
+        .iter()
+        .map(|m| (m.model.as_str(), m.origin))
+        .collect();
+    assert_eq!(
+        placed,
+        [
+            (blaster, [91.0, 200.0, 73.0]),
+            (blaster, [100.0, 200.0, 73.0]),
+            (blaster, [109.0, 200.0, 73.0])
+        ]
+    );
+    // Facing yaw 270 and pitched 75 degrees up: forward mostly up, a little toward
+    // -y; up mostly toward +y.
+    let (s, c) = 75f32.to_radians().sin_cos();
+    let m = &blasters[0];
+    assert!(close(m.axes[0], [0.0, -c, s]), "{:?}", m.axes);
+    assert!(close(m.axes[2], [0.0, s, c]), "{:?}", m.axes);
+    assert_eq!(
+        m.entity_box,
+        Some([[80.0, 189.0, 70.0], [102.0, 211.0, 86.0]])
+    );
+    // Each checked weapon at its own height, the first filling the shelf.
+    let placed: Vec<_> = goods("6")
+        .iter()
+        .map(|m| (m.model.clone(), m.origin[2]))
+        .collect();
+    assert_eq!(
+        placed,
+        [
+            (repeater.to_owned(), 74.5),
+            (rocket.to_owned(), 75.5),
+            (repeater.to_owned(), 74.5)
+        ]
+    );
+}
+
+#[test]
+fn an_ammo_rack_weapon_with_no_ammo_checked_sits_at_the_rack_height() {
+    let models = entity_models(&[rack("misc_model_ammo_rack", &[("spawnflags", "8")])], SP);
+    let weapon = models.last().unwrap();
+    assert_eq!(weapon.model, "models/weapons2/blaster_r/blaster_w.glm");
+    assert_eq!(weapon.origin, [107.0, 200.0, 50.0]);
 }
 
 #[test]
