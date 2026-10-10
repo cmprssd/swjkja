@@ -16,6 +16,11 @@
 //! of its own (`CG_General`), and the renderer culls and lights them like single
 //! player's static models, lit at their origin.
 //!
+//! The weapons on single player's racks are Ghoul2 models, items drawn by the
+//! renderer's `R_AddGhoulSurfaces`: culled by a sphere of the entity's radius (20 for
+//! an item) around its origin, their level of detail and fog picked from the same
+//! sphere, and their meshes posed at frame 0 of their skeleton.
+//!
 //! The models never move, so each placement's surfaces are baked into world space at
 //! load; their normals carry the axes' scale, which is what the original's lighting
 //! sees (`R_SetupEntityLighting` turns the light into the model's scaled axes).
@@ -25,6 +30,7 @@ use std::ops::Range;
 
 use swjkja_bsp::{Bsp, DrawVert};
 use swjkja_fs::Vfs;
+use swjkja_model::glm::{self, Ghoul2Model};
 use swjkja_model::md3::{Md3, Md3Model};
 use swjkja_world::Geometry;
 use swjkja_world::static_model::{Rules, StaticModel};
@@ -42,6 +48,9 @@ const SP_LOD_SCALE: f32 = 10.0;
 const SP_DISTANCE_CULL_SQ: f32 = 8192.0 * 8192.0;
 /// The worldspawn's "distanceCull" when it has none (`DEFAULT_DISTANCE_CULL`).
 const DEFAULT_DISTANCE_CULL: f32 = 6000.0;
+/// An item's radius (`FinishSpawningItem`: `s.radius`), which a Ghoul2 item is
+/// culled, leveled and fogged by.
+pub const GHOUL2_ITEM_RADIUS: f32 = 20.0;
 
 /// One surface of one level of one placed model, in world space.
 pub struct Piece {
@@ -54,7 +63,7 @@ pub struct Piece {
 }
 
 pub struct ModelLod {
-    /// Frame 0's bounds in the model's own space.
+    /// Frame 0's bounds in the model's own space (a Ghoul2 mesh's, posed).
     pub bounds: [Vec3; 2],
     /// Frame 0's sphere in the model's own space (centre, radius).
     pub sphere: (Vec3, f32),
@@ -81,8 +90,12 @@ pub struct Instance {
     /// cgame's culling radius: the scaled bounds' (`R_ModelBounds`, level 0). In
     /// single player, the squared distance between the scaled bounds' corners.
     pub radius: f32,
-    /// `R_ComputeLOD`'s radius: level 0's frame 0 bounds, unscaled.
+    /// `R_ComputeLOD`'s radius: level 0's frame 0 bounds, unscaled; for a Ghoul2
+    /// model, three quarters of its radius (`G2_ComputeLOD`).
     pub lod_radius: f32,
+    /// A Ghoul2 model's radius: the renderer culls it by this sphere around its
+    /// origin (`R_GCullModel`), not by its levels' spheres and boxes.
+    pub ghoul2_radius: Option<f32>,
     /// Most detailed first.
     pub lods: Vec<ModelLod>,
 }
@@ -117,31 +130,34 @@ fn transform(origin: Vec3, axes: &[Vec3; 3], v: Vec3) -> Vec3 {
     [0, 1, 2].map(|i| origin[i] + v[0] * axes[0][i] + v[1] * axes[1][i] + v[2] * axes[2][i])
 }
 
-/// `R_ComputeFogNum`: the first fog whose bounds the frame's sphere (the origin plus
-/// the frame's unrotated, unscaled local origin) overlaps.
-pub fn fog_num(fogs: &[FogVolume], origin: Vec3, md3: &Md3) -> usize {
+/// The sphere an MD3 at `origin` picks its fog by: frame 0's, its local origin
+/// unrotated and unscaled.
+pub fn md3_fog_sphere(origin: Vec3, md3: &Md3) -> (Vec3, f32) {
     let frame = &md3.frames[0];
     let center = [0, 1, 2].map(|i| origin[i] + frame.local_origin[i]);
+    (center, frame.radius)
+}
+
+/// `R_ComputeFogNum`: the first fog whose bounds the frame's sphere overlaps.
+pub fn fog_num(fogs: &[FogVolume], origin: Vec3, md3: &Md3) -> usize {
+    let (center, radius) = md3_fog_sphere(origin, md3);
     fogs.iter()
         .position(|f| {
-            (0..3).all(|j| {
-                center[j] - frame.radius < f.bounds[1][j]
-                    && center[j] + frame.radius > f.bounds[0][j]
-            })
+            (0..3)
+                .all(|j| center[j] - radius < f.bounds[1][j] && center[j] + radius > f.bounds[0][j])
         })
         .map_or(0, |i| i + 1)
 }
 
-/// Single player's `R_ComputeFogNum`, seen from fog `view_fog` (0 for none): the
-/// first fog that holds the frame's box (centre ± radius) whole; before it, a fog
-/// that holds one of the box's two extreme corners and matches the view's fog
-/// (`R_FogParmsMatch`: the same red and green, fog 0's being zero); failing both, the
-/// first fog holding a corner.
-pub fn sp_fog_num(fogs: &[FogVolume], origin: Vec3, md3: &Md3, view_fog: usize) -> usize {
-    let frame = &md3.frames[0];
-    let center = [0, 1, 2].map(|i| origin[i] + frame.local_origin[i]);
-    let lo = center.map(|c| c - frame.radius);
-    let hi = center.map(|c| c + frame.radius);
+/// Single player's `R_ComputeFogNum` (and `R_GComputeFogNum`, for a Ghoul2 model's
+/// sphere), for a sphere seen from fog `view_fog` (0 for none): the first fog that
+/// holds the sphere's box (centre ± radius) whole; before it, a fog that holds one of
+/// the box's two extreme corners and matches the view's fog (`R_FogParmsMatch`: the
+/// same red and green, fog 0's being zero); failing both, the first fog holding a
+/// corner.
+pub fn sp_fog_num(fogs: &[FogVolume], center: Vec3, radius: f32, view_fog: usize) -> usize {
+    let lo = center.map(|c| c - radius);
+    let hi = center.map(|c| c + radius);
     let inside =
         |p: Vec3, f: &FogVolume| (0..3).all(|j| p[j] >= f.bounds[0][j] && p[j] <= f.bounds[1][j]);
     let parms = |n: usize| match n {
@@ -206,20 +222,16 @@ impl StaticModels {
             &bsp.entities,
             rules,
         ));
-        let mut models: HashMap<String, Option<Md3Model>> = HashMap::new();
+        let mut models: HashMap<String, Option<Model>> = HashMap::new();
         let mut shaders = Vec::new();
         let mut instances = Vec::new();
         let mut pieces = Vec::new();
         for p in &placements {
             let model = models
                 .entry(p.model.to_ascii_lowercase())
-                .or_insert_with(|| match Md3Model::load(vfs, &p.model) {
+                .or_insert_with(|| match Model::load(vfs, &p.model) {
                     Ok(m) => {
-                        for md3 in m.lods.iter().rev() {
-                            for s in &md3.surfaces {
-                                shaders.extend(s.shaders.iter().cloned());
-                            }
-                        }
+                        shaders.extend(m.shaders());
                         Some(m)
                     }
                     Err(e) => {
@@ -227,7 +239,15 @@ impl StaticModels {
                         None
                     }
                 });
-            let Some(model) = model else { continue };
+            let model = match model {
+                Some(Model::Md3(m)) => m,
+                Some(Model::Ghoul2(m)) => {
+                    let entity = instances.len() + 1;
+                    instances.push(ghoul2_instance(m, p, entity, fogs, &mut pieces));
+                    continue;
+                }
+                None => continue,
+            };
             let entity = instances.len() + 1;
             let lods = model
                 .lods
@@ -235,12 +255,16 @@ impl StaticModels {
                 .map(|md3| {
                     let first = pieces.len();
                     let fog = if sp {
-                        sp_fog_num(fogs, p.origin, md3, 0)
+                        let (center, radius) = md3_fog_sphere(p.origin, md3);
+                        sp_fog_num(fogs, center, radius, 0)
                     } else {
                         fog_num(fogs, p.origin, md3)
                     };
                     for s in &md3.surfaces {
-                        pieces.push(bake(s, p, entity, fog));
+                        let (xyz, normals) = s.frame(0);
+                        let shader = s.shaders.first().map_or("", String::as_str);
+                        let mesh = (xyz, normals, &s.st[..], &s.indexes[..]);
+                        pieces.push(bake(mesh, shader, p, entity, fog));
                     }
                     ModelLod {
                         bounds: md3.frames[0].bounds,
@@ -277,6 +301,7 @@ impl StaticModels {
                 link: None,
                 radius,
                 lod_radius: radius_from_bounds(bounds),
+                ghoul2_radius: None,
                 lods,
             });
         }
@@ -352,8 +377,12 @@ impl StaticModels {
                 SP_LOD_SCALE
             }
         };
-        // R_AddMD3Surfaces: the level, then its sphere and box (R_CullModel).
         let level = lod(m.lods.len(), m.lod_radius, m.origin, camera, scale);
+        // R_AddGhoulSurfaces: the entity's sphere (R_GCullModel).
+        if let Some(radius) = m.ghoul2_radius {
+            return (!frustum.culls_sphere(m.origin, radius)).then_some(level);
+        }
+        // R_AddMD3Surfaces: the level's sphere and box (R_CullModel).
         let (center, radius) = m.lods[level].sphere;
         if m.sphere_cull && frustum.culls_sphere(transform(m.origin, &m.axes, center), radius) {
             return None;
@@ -371,14 +400,122 @@ impl StaticModels {
     }
 }
 
-/// One surface's frame 0 in world space (`RB_SurfaceMesh`), with white vertex
-/// colours and the entity number for the shader's entity table.
-fn bake(s: &swjkja_model::md3::Surface, p: &StaticModel, entity: usize, fog: usize) -> Piece {
-    let (xyz, normals) = s.frame(0);
+/// A model of either kind, as `RE_RegisterModel` loads it.
+enum Model {
+    Md3(Md3Model),
+    Ghoul2(Ghoul2Model),
+}
+
+impl Model {
+    /// A ".glm" is a Ghoul2 mesh, anything else an MD3.
+    fn load(vfs: &Vfs, name: &str) -> Result<Self, swjkja_model::Error> {
+        let glm = name
+            .get(name.len().saturating_sub(4)..)
+            .is_some_and(|ext| ext.eq_ignore_ascii_case(".glm"));
+        Ok(if glm {
+            Model::Ghoul2(Ghoul2Model::load(vfs, name)?)
+        } else {
+            Model::Md3(Md3Model::load(vfs, name)?)
+        })
+    }
+
+    /// The shaders the model registers, in order: an MD3's surfaces' by level from
+    /// least detailed to most (`R_LoadMD3`), a Ghoul2 mesh's surfaces' (`R_LoadMDXM`).
+    fn shaders(&self) -> Vec<String> {
+        match self {
+            Model::Md3(m) => m
+                .lods
+                .iter()
+                .rev()
+                .flat_map(|md3| &md3.surfaces)
+                .flat_map(|s| s.shaders.iter().cloned())
+                .collect(),
+            Model::Ghoul2(m) => m
+                .glm
+                .surfaces
+                .iter()
+                .filter(|s| !s.shader.is_empty())
+                .map(|s| s.shader.clone())
+                .collect(),
+        }
+    }
+}
+
+/// A Ghoul2 item placed by `p`: each level's drawn surfaces posed at frame 0, fogged
+/// by the item's sphere as seen from outside any fog.
+fn ghoul2_instance(
+    model: &Ghoul2Model,
+    p: &StaticModel,
+    entity: usize,
+    fogs: &[FogVolume],
+    pieces: &mut Vec<Piece>,
+) -> Instance {
+    let radius = GHOUL2_ITEM_RADIUS;
+    let fog = sp_fog_num(fogs, p.origin, radius, 0);
+    let pose = model.gla.pose(0);
+    let drawn = model.glm.drawn_surfaces();
+    let lods = model
+        .glm
+        .lods
+        .iter()
+        .map(|surfaces| {
+            let first = pieces.len();
+            let mut bounds: [Vec3; 2] = [[f32::MAX; 3], [f32::MIN; 3]];
+            for &s in &drawn {
+                let surface = &surfaces[s];
+                let (xyz, normals) = glm::skin(surface, &pose);
+                for v in &xyz {
+                    bounds[0] = [0, 1, 2].map(|k| bounds[0][k].min(v[k]));
+                    bounds[1] = [0, 1, 2].map(|k| bounds[1][k].max(v[k]));
+                }
+                let mesh = (
+                    &xyz[..],
+                    &normals[..],
+                    &surface.st[..],
+                    &surface.indexes[..],
+                );
+                let shader = &model.glm.surfaces[s].shader;
+                pieces.push(bake(mesh, shader, p, entity, fog));
+            }
+            ModelLod {
+                bounds,
+                sphere: ([0.0; 3], radius),
+                pieces: first..pieces.len(),
+            }
+        })
+        .collect();
+    Instance {
+        origin: p.origin,
+        axes: p.axes,
+        cull_origin: p.origin,
+        light_origin: p.origin,
+        sphere_cull: true,
+        cull_cluster: -1,
+        entity_box: p.entity_box,
+        link: None,
+        radius,
+        lod_radius: 0.75 * radius,
+        ghoul2_radius: Some(radius),
+        lods,
+    }
+}
+
+/// A surface's positions, normals, texture coordinates and triangles.
+type Mesh<'a> = (&'a [Vec3], &'a [Vec3], &'a [[f32; 2]], &'a [u32]);
+
+/// One posed surface in world space (`RB_SurfaceMesh`, `RB_SurfaceGhoul`), with white
+/// vertex colours and the entity number for the shader's entity table.
+fn bake(
+    (xyz, normals, st, indexes): Mesh,
+    shader: &str,
+    p: &StaticModel,
+    entity: usize,
+    fog: usize,
+) -> Piece {
     let verts: Vec<DrawVert> = xyz
         .iter()
         .zip(normals)
-        .zip(&s.st)
+        .zip(st)
         .map(|((&v, &n), &st)| DrawVert {
             xyz: transform(p.origin, &p.axes, v),
             st,
@@ -393,11 +530,11 @@ fn bake(s: &swjkja_model::md3::Surface, p: &StaticModel, entity: usize, fog: usi
         bounds[1] = [0, 1, 2].map(|k| bounds[1][k].max(v.xyz[k]));
     }
     Piece {
-        shader: s.shaders.first().cloned().unwrap_or_default(),
+        shader: shader.to_owned(),
         fog,
         geometry: Geometry::Triangles {
             verts,
-            indexes: s.indexes.clone(),
+            indexes: indexes.to_vec(),
             bounds,
         },
     }
@@ -419,20 +556,7 @@ mod tests {
 
     #[test]
     fn single_player_fog_prefers_a_whole_fit_then_the_view_fog() {
-        // A model of radius 10 at the origin: its box is -10..10.
-        let md3 = Md3 {
-            name: String::new(),
-            flags: 0,
-            frames: vec![swjkja_model::md3::Frame {
-                bounds: [[-10.0; 3], [10.0; 3]],
-                local_origin: [0.0; 3],
-                radius: 10.0,
-                name: String::new(),
-            }],
-            tags: Vec::new(),
-            tags_per_frame: 0,
-            surfaces: Vec::new(),
-        };
+        // A sphere of radius 10 at the origin: its box is -10..10.
         let red = [1.0, 0.0, 0.0];
         let blue = [0.0, 0.0, 1.0];
         // Fog 1 holds the box's low corner only, fog 2 its high corner only, fog 3
@@ -443,17 +567,17 @@ mod tests {
         let fogs = [low, high, whole];
         // From outside any fog: neither partial fog matches fog 0's zero colour, so
         // the whole fit wins.
-        assert_eq!(sp_fog_num(&fogs, [0.0; 3], &md3, 0), 3);
+        assert_eq!(sp_fog_num(&fogs, [0.0; 3], 10.0, 0), 3);
         // From inside fog 2 (or one of the same colour): fog 1 already matches.
-        assert_eq!(sp_fog_num(&fogs, [0.0; 3], &md3, 2), 1);
+        assert_eq!(sp_fog_num(&fogs, [0.0; 3], 10.0, 2), 1);
         // A blue fog has fog 0's red and green (zero): it matches from outside.
         let fogs = [fog([[-20.0; 3], [0.0; 3]], blue), high];
-        assert_eq!(sp_fog_num(&fogs, [0.0; 3], &md3, 0), 1);
+        assert_eq!(sp_fog_num(&fogs, [0.0; 3], 10.0, 0), 1);
         // Only partial fits of other colours: the first of them.
         let fogs = [high, low];
-        assert_eq!(sp_fog_num(&fogs, [0.0; 3], &md3, 0), 1);
+        assert_eq!(sp_fog_num(&fogs, [0.0; 3], 10.0, 0), 1);
         // Out of every fog.
-        assert_eq!(sp_fog_num(&fogs, [100.0; 3], &md3, 0), 0);
+        assert_eq!(sp_fog_num(&fogs, [100.0; 3], 10.0, 0), 0);
     }
 
     #[test]

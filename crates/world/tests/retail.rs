@@ -93,9 +93,10 @@ fn every_retail_map_has_a_light_grid_and_spawns_its_static_models() {
     }
     // All on single-player maps: 490 breakables, of which 6 start off and 4 fall to
     // the floor (left out for now); 106 racks, whose ammo racks place 209 ammo packs
-    // and medpacks (counted independently with Python); 10 beacons and planted bombs,
-    // all waiting to be used.
-    assert_eq!(entity_models, 480 + 106 + 209);
+    // and medpacks (counted independently with Python); 130 rack weapons, three on
+    // each of 38 gun racks and one on each of 16 ammo racks (counted the same way);
+    // 10 beacons and planted bombs, all waiting to be used.
+    assert_eq!(entity_models, 480 + 106 + 209 + 130);
     // Counted independently with Python: every misc_model_static with a model spawns
     // in free-for-all.
     assert_eq!(total, 6684);
