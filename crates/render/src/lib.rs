@@ -18,7 +18,7 @@ pub mod world;
 
 pub use ash::vk;
 pub use camera::Camera;
-pub use frames::{FRAMES_IN_FLIGHT, FrameLoop, Presented};
+pub use frames::{FRAMES_IN_FLIGHT, FrameLoop, GpuTimes, Presented, Steps};
 pub use gpu::{DeviceKind, Error, Gpu, Result};
 pub use pipeline::{Pipeline, State, spirv};
 pub use resource::{Buffer, Frame, Image, Target};

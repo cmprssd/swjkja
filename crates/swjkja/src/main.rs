@@ -14,6 +14,7 @@ const USAGE: &str = "usage:
       draw a recorded camera path once (bench/reference/*.path) and write it with
       this viewer's frame timestamps to <out> (for `bench_path --stats`)
   --fullscreen: exclusive fullscreen at 1280x720 instead of a window
+  --timings <file>: write each frame's CPU step and GPU times to <file> on quitting
   swjkja --version";
 
 fn main() {
@@ -34,12 +35,18 @@ fn main() {
 
 fn view_options(args: &[String]) -> Result<view::Options, String> {
     let mut positional = Vec::new();
-    let (mut vsync, mut fullscreen, mut replay) = (false, false, None);
+    let (mut vsync, mut fullscreen, mut replay, mut timings) = (false, false, None, None);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--vsync" => vsync = true,
             "--fullscreen" => fullscreen = true,
+            "--timings" => {
+                let Some(out) = it.next() else {
+                    return Err(format!("--timings needs an output file\n{USAGE}"));
+                };
+                timings = Some(PathBuf::from(out));
+            }
             "--replay" => {
                 let (Some(file), Some(out)) = (it.next(), it.next()) else {
                     return Err(format!("--replay needs a path and an output file\n{USAGE}"));
@@ -64,5 +71,6 @@ fn view_options(args: &[String]) -> Result<view::Options, String> {
         vsync,
         fullscreen,
         replay,
+        timings,
     })
 }

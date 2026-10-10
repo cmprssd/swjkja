@@ -5,6 +5,7 @@
 //! owner and chosen with [`crate::Frame::slot`].
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use ash::vk;
 
@@ -17,12 +18,21 @@ struct Slot {
     cmd: vk::CommandBuffer,
     /// Signalled when the slot's last frame is done (created signalled).
     fence: vk::Fence,
-    /// Two timestamps around the slot's last frame.
+    /// Timestamps of the slot's last frame: start, world drawn, and copied to the
+    /// swapchain image if it was.
     queries: vk::QueryPool,
     /// Signalled when the swapchain image for the slot's frame is ready to draw to.
     acquired: vk::Semaphore,
-    /// Whether the fence and timestamps belong to a submitted frame not yet collected.
-    pending: bool,
+    /// The submitted frame the fence and timestamps belong to, not yet collected.
+    pending: Option<Kind>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    /// Drawn into the target, or straight into a swapchain image.
+    Drawn,
+    /// Drawn into the target and copied to a swapchain image.
+    Copied,
 }
 
 pub struct FrameLoop {
@@ -75,7 +85,7 @@ impl FrameLoop {
                 d.create_query_pool(
                     &vk::QueryPoolCreateInfo::default()
                         .query_type(vk::QueryType::TIMESTAMP)
-                        .query_count(2),
+                        .query_count(3),
                     None,
                 )
             };
@@ -102,7 +112,7 @@ impl FrameLoop {
                 fence,
                 queries,
                 acquired,
-                pending: false,
+                pending: None,
             });
         }
         Ok(frames)
@@ -120,16 +130,18 @@ impl FrameLoop {
     ) -> Result<Option<f64>> {
         let slot = self.next;
         self.next = (slot + 1) % FRAMES_IN_FLIGHT;
-        let gpu_ms = self.collect(slot)?;
+        let gpu = self.collect(slot)?;
         self.submit(slot, target, clear, draw, None)?;
-        Ok(gpu_ms)
+        Ok(gpu.map(|g| g.world_ms))
     }
 
-    /// [`FrameLoop::render`], then copies the target to the window's next image and
-    /// presents it. The target should have the swapchain's size (it is scaled if
-    /// not). `out_of_date` means the swapchain no longer matches the window: wait
-    /// with [`FrameLoop::finish`], then [`Swapchain::resize`]. The frame may then not
-    /// have been drawn.
+    /// [`FrameLoop::render`] into the window's next image, and presents it. With
+    /// [`Swapchain::direct`] and the swapchain's size and format, the target only
+    /// lends its depth and the frame is drawn straight into the image; otherwise it is
+    /// drawn into the target and copied (scaled if the sizes differ). `out_of_date`
+    /// means the swapchain no longer matches the window: wait with
+    /// [`FrameLoop::finish`], then [`Swapchain::resize`]. The frame may then not have
+    /// been drawn.
     pub fn present(
         &mut self,
         swapchain: &Swapchain,
@@ -139,7 +151,9 @@ impl FrameLoop {
     ) -> Result<Presented> {
         let slot = self.next;
         self.next = (slot + 1) % FRAMES_IN_FLIGHT;
-        let gpu_ms = self.collect(slot)?;
+        let t0 = Instant::now();
+        let gpu = self.collect(slot)?;
+        let t1 = Instant::now();
         let acquired = unsafe {
             swapchain.swapchain_fn.acquire_next_image(
                 swapchain.swapchain,
@@ -152,13 +166,20 @@ impl FrameLoop {
             Ok(a) => a,
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                 return Ok(Presented {
-                    gpu_ms,
+                    gpu,
+                    cpu: Steps {
+                        wait_ms: ms(t1 - t0),
+                        acquire_ms: ms(t1.elapsed()),
+                        ..Steps::default()
+                    },
                     out_of_date: true,
                 });
             }
             Err(e) => return Err(e.into()),
         };
+        let t2 = Instant::now();
         self.submit(slot, target, clear, draw, Some((swapchain, image)))?;
+        let t3 = Instant::now();
         let waits = [swapchain.rendered[image as usize]];
         let swapchains = [swapchain.swapchain];
         let images = [image];
@@ -177,13 +198,20 @@ impl FrameLoop {
             Err(e) => return Err(e.into()),
         };
         Ok(Presented {
-            gpu_ms,
+            gpu,
+            cpu: Steps {
+                wait_ms: ms(t1 - t0),
+                acquire_ms: ms(t2 - t1),
+                submit_ms: ms(t3 - t2),
+                present_ms: ms(t3.elapsed()),
+            },
             out_of_date,
         })
     }
 
-    /// Records the slot's frame and submits it; with a swapchain image, also copies
-    /// the target to it (waiting for the image, and signalling it rendered).
+    /// Records the slot's frame and submits it; with a swapchain image, draws into it
+    /// or copies the target to it (waiting for the image, and signalling it
+    /// rendered).
     fn submit(
         &mut self,
         slot: usize,
@@ -194,6 +222,14 @@ impl FrameLoop {
     ) -> Result<()> {
         let (gpu, d) = (&self.gpu, &self.gpu.device);
         let s = &mut self.slots[slot];
+        let direct = present
+            .filter(|(swapchain, _)| {
+                swapchain.direct
+                    && swapchain.format == Target::COLOR_FORMAT
+                    && swapchain.extent == target.color.extent
+            })
+            .map(|(swapchain, i)| (swapchain.images[i as usize], swapchain.views[i as usize]));
+        let copy = present.filter(|_| direct.is_none());
         unsafe {
             d.reset_fences(&[s.fence])?;
             d.begin_command_buffer(
@@ -201,15 +237,21 @@ impl FrameLoop {
                 &vk::CommandBufferBeginInfo::default()
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )?;
-            d.cmd_reset_query_pool(s.cmd, s.queries, 0, 2);
-            target.record(gpu, s.cmd, clear, slot, (s.queries, 0), draw);
-            if let Some((swapchain, image)) = present {
+            d.cmd_reset_query_pool(s.cmd, s.queries, 0, 3);
+            target.record(gpu, s.cmd, clear, slot, (s.queries, 0), direct, draw);
+            if let Some((swapchain, image)) = copy {
                 blit_to(
                     gpu,
                     s.cmd,
                     target,
                     swapchain.images[image as usize],
                     swapchain.extent,
+                );
+                d.cmd_write_timestamp2(
+                    s.cmd,
+                    vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
+                    s.queries,
+                    2,
                 );
             }
             d.end_command_buffer(s.cmd)?;
@@ -231,7 +273,10 @@ impl FrameLoop {
                 s.fence,
             )?;
         }
-        s.pending = true;
+        s.pending = Some(match copy {
+            Some(_) => Kind::Copied,
+            None => Kind::Drawn,
+        });
         Ok(())
     }
 
@@ -241,31 +286,35 @@ impl FrameLoop {
         let mut times = Vec::new();
         for i in 0..FRAMES_IN_FLIGHT {
             let slot = (self.next + i) % FRAMES_IN_FLIGHT;
-            times.extend(self.collect(slot)?);
+            times.extend(self.collect(slot)?.map(|g| g.world_ms));
         }
         Ok(times)
     }
 
-    /// Waits for the slot's last frame and reads its GPU time, if one is pending.
-    fn collect(&mut self, slot: usize) -> Result<Option<f64>> {
+    /// Waits for the slot's last frame and reads its GPU times, if one is pending.
+    fn collect(&mut self, slot: usize) -> Result<Option<GpuTimes>> {
         let d = &self.gpu.device;
         let s = &mut self.slots[slot];
         unsafe { d.wait_for_fences(&[s.fence], true, u64::MAX)? };
-        if !std::mem::take(&mut s.pending) {
+        let Some(kind) = s.pending.take() else {
             return Ok(None);
-        }
-        let mut stamps = [0u64; 2];
+        };
+        let mut stamps = [0u64; 3];
+        let n = if kind == Kind::Copied { 3 } else { 2 };
         unsafe {
             d.get_query_pool_results(
                 s.queries,
                 0,
-                &mut stamps,
+                &mut stamps[..n],
                 vk::QueryResultFlags::TYPE_64 | vk::QueryResultFlags::WAIT,
             )?
         };
-        Ok(Some(
-            stamps[1].wrapping_sub(stamps[0]) as f64 * self.period / 1e6,
-        ))
+        let between = |a: u64, b: u64| b.wrapping_sub(a) as f64 * self.period / 1e6;
+        Ok(Some(GpuTimes {
+            start_ms: stamps[0] as f64 * self.period / 1e6,
+            world_ms: between(stamps[0], stamps[1]),
+            blit_ms: (kind == Kind::Copied).then(|| between(stamps[1], stamps[2])),
+        }))
     }
 }
 
@@ -288,10 +337,43 @@ impl Drop for FrameLoop {
 /// What [`FrameLoop::present`] did.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Presented {
-    /// The GPU time of the frame [`FRAMES_IN_FLIGHT`] frames ago, in ms.
-    pub gpu_ms: Option<f64>,
+    /// The GPU times of the frame [`FRAMES_IN_FLIGHT`] frames ago.
+    pub gpu: Option<GpuTimes>,
+    /// How long each step of this call took on the CPU.
+    pub cpu: Steps,
     /// The swapchain must be resized before the next frame.
     pub out_of_date: bool,
+}
+
+/// One frame's GPU timestamps, in ms.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GpuTimes {
+    /// When the GPU started the frame, on the GPU's clock (only differences between
+    /// frames mean anything: the gap from the previous frame's end is time the GPU
+    /// spent on other work, such as presenting, or idle).
+    pub start_ms: f64,
+    /// Drawing the world into the target.
+    pub world_ms: f64,
+    /// Copying the target to the swapchain image (only when it is not drawn into
+    /// directly).
+    pub blit_ms: Option<f64>,
+}
+
+/// The CPU time of each step of [`FrameLoop::present`], in ms.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Steps {
+    /// Waiting for the frame [`FRAMES_IN_FLIGHT`] frames ago.
+    pub wait_ms: f64,
+    /// `vkAcquireNextImageKHR`.
+    pub acquire_ms: f64,
+    /// Recording and submitting the frame.
+    pub submit_ms: f64,
+    /// `vkQueuePresentKHR`.
+    pub present_ms: f64,
+}
+
+fn ms(d: std::time::Duration) -> f64 {
+    d.as_secs_f64() * 1000.0
 }
 
 /// Copies the target's colour (in `TRANSFER_SRC_OPTIMAL`, as [`Target::record`]
