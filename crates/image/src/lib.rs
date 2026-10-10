@@ -6,6 +6,8 @@
 //! the same name with `.jpg`, `.png` and `.tga`. A file that exists but fails to decode
 //! is skipped like a missing one, and the failure is reported.
 
+pub mod mip;
+
 use swjkja_fs::Vfs;
 use zune_core::bytestream::ZCursor;
 use zune_core::colorspace::ColorSpace;

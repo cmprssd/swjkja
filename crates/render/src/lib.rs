@@ -5,6 +5,7 @@ pub mod camera;
 pub mod deform;
 pub mod fog;
 pub mod gpu;
+pub mod parallel;
 pub mod pipeline;
 pub mod resource;
 pub mod sky;

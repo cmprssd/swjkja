@@ -254,6 +254,28 @@ arena, so nearly everything is in view and culling saves nothing. In the quiet r
 the whole frame took 2.4-5.8 ms (170-420 FPS): 1-1.5 ms more than the GPU time,
 spent recording and waiting.
 
+## Loading map textures (swjkja-render), 2026-10-10
+
+`load_profile <GameData> <runs> <map>...` times each loading phase. Textures are
+most of a map's load: ffa3 at full quality (`r_picmip 0`, uncompressed) is 188 MB of
+texture data with mipmaps. Mipmaps are now made as the original makes them
+(`R_MipMap`, box filter), which brought every reference view closer (worst 0.53 ->
+0.41). Decoding runs on all cores, and uploads go in a few batches instead of one
+GPU round trip per texture.
+
+Renderer load (materials, decoding, mipmaps, uploads), ms, 6 runs each, old and new
+alternating on a busy machine (60-70% CPU load from other programs):
+
+| Map | Old, best | New, best | Old, median | New, median |
+|-----|------|------|------|------|
+| mp/ffa3 | 998 | 531 | 2636 | 1217 |
+| mp/ctf1 | 810 | 514 | 1542 | 1039 |
+| mp/duel5 | 576 | 382 | 1046 | 950 |
+
+Lesson from this measurement: mip chains must be built in ordinary memory and
+written once to the staging buffer. Building them in place in the staging memory
+(write-combined, very slow to read back) made loading 3x slower.
+
 ## Not measured yet
 
 - **Frame-time spikes** (1% lows): `timedemo` reports only the average. Needs

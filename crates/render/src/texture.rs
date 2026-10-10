@@ -15,10 +15,28 @@ pub struct Texture {
     pub mip_levels: u32,
 }
 
+/// Pixels waiting to be copied into textures: queued by [`Texture::queued`], sent
+/// to the GPU together by [`Uploads::flush`].
+#[derive(Default)]
+pub struct Uploads {
+    pending: Vec<Pending>,
+}
+
+struct Pending {
+    image: vk::Image,
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+    mipmaps: bool,
+}
+
+/// Staging memory per submit: large enough that a map's textures go in a few
+/// submits, small enough not to matter next to the textures themselves.
+const STAGING_BYTES: usize = 64 << 20;
+
 impl Texture {
-    /// Uploads RGBA8 pixels (top row first). With `mipmaps`, the smaller levels are
-    /// made on the GPU by halving with a linear filter. (The original makes them on
-    /// the CPU with its own filter; matching that comes with texture fidelity.)
+    /// A texture of RGBA8 pixels (top row first), uploaded now. With `mipmaps`, the
+    /// smaller levels are made as the original makes them (`swjkja_image::mip`).
     pub fn new(
         gpu: &Arc<Gpu>,
         width: u32,
@@ -26,114 +44,180 @@ impl Texture {
         rgba: &[u8],
         mipmaps: bool,
     ) -> Result<Self> {
+        let mut uploads = Uploads::default();
+        let texture = Self::queued(gpu, width, height, rgba.to_vec(), mipmaps, &mut uploads)?;
+        uploads.flush(gpu)?;
+        Ok(texture)
+    }
+
+    /// A texture whose pixels are copied at the next `uploads.flush`; it must not be
+    /// drawn before then.
+    pub fn queued(
+        gpu: &Arc<Gpu>,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+        mipmaps: bool,
+        uploads: &mut Uploads,
+    ) -> Result<Self> {
         let mip_levels = if mipmaps {
             32 - width.max(height).leading_zeros()
         } else {
             1
         };
-        let format = vk::Format::R8G8B8A8_UNORM;
         let image = Image::new_mipmapped(
             gpu,
             vk::Extent2D { width, height },
-            format,
+            vk::Format::R8G8B8A8_UNORM,
             mip_levels,
-            vk::ImageUsageFlags::SAMPLED
-                | vk::ImageUsageFlags::TRANSFER_DST
-                | vk::ImageUsageFlags::TRANSFER_SRC,
+            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
         )?;
-        let staging = Buffer::with_data(gpu, vk::BufferUsageFlags::TRANSFER_SRC, rgba)?;
-        let d = &gpu.device;
-        let color = vk::ImageAspectFlags::COLOR;
-        let level_range = |base: u32, count: u32| vk::ImageSubresourceRange {
-            aspect_mask: color,
-            base_mip_level: base,
-            level_count: count,
-            base_array_layer: 0,
-            layer_count: 1,
+        uploads.pending.push(Pending {
+            image: image.image,
+            width,
+            height,
+            rgba,
+            mipmaps,
+        });
+        Ok(Self { image, mip_levels })
+    }
+}
+
+impl Uploads {
+    /// Copies every queued texture to the GPU, mip levels included, and leaves them
+    /// ready for sampling. Levels are made in parallel straight into the staging
+    /// memory, in batches of about `STAGING_BYTES` (a bigger texture goes alone).
+    pub fn flush(&mut self, gpu: &Arc<Gpu>) -> Result<()> {
+        let pending = std::mem::take(&mut self.pending);
+        let size = |p: &Pending| {
+            if p.mipmaps {
+                swjkja_image::mip::chain_size(p.width, p.height)
+            } else {
+                p.rgba.len()
+            }
         };
-        let barrier = |cmd, base, count, from, to| {
-            let b = [vk::ImageMemoryBarrier2::default()
-                .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
-                .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                .dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
-                .old_layout(from)
-                .new_layout(to)
-                .image(image.image)
-                .subresource_range(level_range(base, count))];
-            unsafe {
-                d.cmd_pipeline_barrier2(
-                    cmd,
-                    &vk::DependencyInfo::default().image_memory_barriers(&b),
-                )
-            };
-        };
-        gpu.submit_and_wait(|cmd| unsafe {
-            barrier(
-                cmd,
-                0,
-                mip_levels,
-                vk::ImageLayout::UNDEFINED,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            );
+        let mut start = 0;
+        while start < pending.len() {
+            let (mut end, mut bytes) = (start, 0);
+            while end < pending.len()
+                && (end == start || bytes + size(&pending[end]) <= STAGING_BYTES)
+            {
+                bytes += size(&pending[end]);
+                end += 1;
+            }
+            upload_batch(gpu, &pending[start..end], bytes, size)?;
+            start = end;
+        }
+        Ok(())
+    }
+}
+
+fn upload_batch(
+    gpu: &Arc<Gpu>,
+    pending: &[Pending],
+    bytes: usize,
+    size: impl Fn(&Pending) -> usize,
+) -> Result<()> {
+    let mut staging = Buffer::new(
+        gpu,
+        vk::BufferUsageFlags::TRANSFER_SRC,
+        bytes as u64,
+        gpu_allocator::MemoryLocation::CpuToGpu,
+    )?;
+    // Each texture's slice of the staging memory, and its copy regions.
+    let mut regions: Vec<Vec<vk::BufferImageCopy>> = Vec::with_capacity(pending.len());
+    let mut offset = 0u64;
+    for p in pending {
+        let (mut w, mut h) = (p.width, p.height);
+        let mut r = Vec::new();
+        loop {
+            r.push(vk::BufferImageCopy {
+                buffer_offset: offset,
+                image_subresource: layers(r.len() as u32),
+                image_extent: vk::Extent3D {
+                    width: w,
+                    height: h,
+                    depth: 1,
+                },
+                ..Default::default()
+            });
+            offset += u64::from(w) * u64::from(h) * 4;
+            if !p.mipmaps || (w == 1 && h == 1) {
+                break;
+            }
+            w = (w / 2).max(1);
+            h = (h / 2).max(1);
+        }
+        regions.push(r);
+    }
+    let mut slices: Vec<(&Pending, &mut [u8])> = Vec::with_capacity(pending.len());
+    let mut rest = staging.mapped_mut()?;
+    for p in pending {
+        let (slice, tail) = rest.split_at_mut(size(p));
+        slices.push((p, slice));
+        rest = tail;
+    }
+    // Staging memory is write-combined: reading it back is very slow, so each chain is
+    // made in ordinary memory and written to staging in one pass.
+    crate::parallel::each(slices, |(p, out)| {
+        if p.mipmaps {
+            let mut chain = vec![0; out.len()];
+            swjkja_image::mip::mip_chain_into(&p.rgba, p.width, p.height, &mut chain);
+            out.copy_from_slice(&chain);
+        } else {
+            out.copy_from_slice(&p.rgba);
+        }
+    });
+    let d = &gpu.device;
+    let barriers = |from, to| -> Vec<vk::ImageMemoryBarrier2> {
+        pending
+            .iter()
+            .map(|p| {
+                vk::ImageMemoryBarrier2::default()
+                    .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                    .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                    .dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
+                    .old_layout(from)
+                    .new_layout(to)
+                    .image(p.image)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: vk::REMAINING_MIP_LEVELS,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+            })
+            .collect()
+    };
+    let to_dst = barriers(
+        vk::ImageLayout::UNDEFINED,
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+    );
+    let to_read = barriers(
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+    );
+    gpu.submit_and_wait(|cmd| unsafe {
+        d.cmd_pipeline_barrier2(
+            cmd,
+            &vk::DependencyInfo::default().image_memory_barriers(&to_dst),
+        );
+        for (p, r) in pending.iter().zip(&regions) {
             d.cmd_copy_buffer_to_image(
                 cmd,
                 staging.buffer,
-                image.image,
+                p.image,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                &[vk::BufferImageCopy {
-                    image_subresource: layers(0),
-                    image_extent: vk::Extent3D {
-                        width,
-                        height,
-                        depth: 1,
-                    },
-                    ..Default::default()
-                }],
+                r,
             );
-            let (mut w, mut h) = (width as i32, height as i32);
-            for level in 1..mip_levels {
-                barrier(
-                    cmd,
-                    level - 1,
-                    1,
-                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                    vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                );
-                let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
-                d.cmd_blit_image(
-                    cmd,
-                    image.image,
-                    vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                    image.image,
-                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                    &[vk::ImageBlit {
-                        src_subresource: layers(level - 1),
-                        src_offsets: [vk::Offset3D::default(), vk::Offset3D { x: w, y: h, z: 1 }],
-                        dst_subresource: layers(level),
-                        dst_offsets: [vk::Offset3D::default(), vk::Offset3D { x: nw, y: nh, z: 1 }],
-                    }],
-                    vk::Filter::LINEAR,
-                );
-                barrier(
-                    cmd,
-                    level - 1,
-                    1,
-                    vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                );
-                (w, h) = (nw, nh);
-            }
-            barrier(
-                cmd,
-                mip_levels - 1,
-                1,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            );
-        })?;
-        Ok(Self { image, mip_levels })
-    }
+        }
+        d.cmd_pipeline_barrier2(
+            cmd,
+            &vk::DependencyInfo::default().image_memory_barriers(&to_read),
+        );
+    })
 }
 
 fn layers(level: u32) -> vk::ImageSubresourceLayers {
