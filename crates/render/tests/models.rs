@@ -105,7 +105,7 @@ fn only_one_single_player_model_fog_depends_on_the_view() {
                 FogVolume::load(&bsp, i, &parms)
             })
             .collect();
-        let mut placements = swjkja_world::static_model::breakables(&bsp.entities, rules);
+        let mut placements = swjkja_world::static_model::entity_models(&bsp.entities, rules);
         placements.extend(swjkja_world::static_model::static_models(
             &bsp.entities,
             rules,
@@ -185,11 +185,11 @@ fn single_player_draws_no_models_from_a_view_in_solid() {
     assert!(drawn(tree_cluster) > 0);
 }
 
-/// t3_stamp's breakables (crates and barrels) in the stamp_barrels view
-/// (bench/reference/model-views.txt): the server sends those whose box touches a
-/// cluster the view sees, the renderer culls them by the frustum.
+/// t3_stamp's game entities (crates and barrels, ammo racks and their goods) in the
+/// stamp_barrels view (bench/reference/model-views.txt): the server sends those whose
+/// box touches a cluster the view sees, the renderer culls them by the frustum.
 #[test]
-fn t3_stamp_breakables_cull_like_the_original() {
+fn t3_stamp_entities_cull_like_the_original() {
     let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
         eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
         return;
@@ -199,12 +199,13 @@ fn t3_stamp_breakables_cull_like_the_original() {
     let mut models = StaticModels::load(&vfs, &bsp, &[], Rules::for_map("maps/t3_stamp.bsp"));
     let vis = WorldVis::new(&bsp, vec![SurfaceCull::Never; bsp.surfaces.len()]);
     models.locate(&vis);
-    let breakables = models
+    let entities = models
         .instances
         .iter()
         .take_while(|m| m.entity_box.is_some())
         .count();
-    assert_eq!(breakables, 193);
+    // 193 breakables, 5 ammo racks and the 12 packs and medpacks on them.
+    assert_eq!(entities, 193 + 5 + 12);
     // The eye 350 units south of the barrels, looking north.
     let camera = Camera::new([352.0, 342.0, 124.0], [10.0, 90.0, 0.0], 1280, 720);
     let frustum = Frustum::new(&camera);
@@ -234,7 +235,17 @@ fn t3_stamp_breakables_cull_like_the_original() {
     let elsewhere = find([-1578.0, -1742.0, 152.0]);
     assert!(!sent(elsewhere));
     assert_eq!(drawn(elsewhere), None);
-    let count = |f: &dyn Fn(usize) -> bool| (0..breakables).filter(|&n| f(n)).count();
-    assert_eq!(count(&sent), 77);
-    assert_eq!(count(&|n| drawn(n).is_some()), 10);
+    // The ammo rack ahead (a medpack and a blaster pack): its goods sit 7 and 24
+    // units up, 8 units to its left and 6 to its right (-x and +x at yaw 270).
+    for rack in [
+        [128.0, 762.0, 80.0],
+        [136.0, 762.0, 87.0],
+        [122.0, 762.0, 104.0],
+    ] {
+        assert!(drawn(find(rack)).is_some(), "{rack:?}");
+    }
+    let count = |f: &dyn Fn(usize) -> bool| (0..entities).filter(|&n| f(n)).count();
+    // 77 breakables, and two racks with their goods.
+    assert_eq!(count(&sent), 77 + 6);
+    assert_eq!(count(&|n| drawn(n).is_some()), 10 + 3);
 }

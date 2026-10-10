@@ -72,7 +72,7 @@ fn every_retail_map_has_a_light_grid_and_spawns_its_static_models() {
         return;
     };
     let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
-    let (mut total, mut lit, mut breakables) = (0, 0, 0);
+    let (mut total, mut lit, mut entity_models) = (0, 0, 0);
     for name in vfs.files().filter(|f| f.ends_with(".bsp")) {
         let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
         let grid = swjkja_world::light_grid::LightGrid::load(&bsp, 0);
@@ -89,11 +89,13 @@ fn every_retail_map_has_a_light_grid_and_spawns_its_static_models() {
         }
         total += models.len();
         let rules = swjkja_world::static_model::Rules::for_map(name);
-        breakables += swjkja_world::static_model::breakables(&bsp.entities, rules).len();
+        entity_models += swjkja_world::static_model::entity_models(&bsp.entities, rules).len();
     }
-    // The retail maps place 490 breakables, all on single-player maps; 6 start off
-    // and 4 fall to the floor (left out for now).
-    assert_eq!(breakables, 480);
+    // All on single-player maps: 490 breakables, of which 6 start off and 4 fall to
+    // the floor (left out for now); 106 racks, whose ammo racks place 209 ammo packs
+    // and medpacks (counted independently with Python); 10 beacons and planted bombs,
+    // all waiting to be used.
+    assert_eq!(entity_models, 480 + 106 + 209);
     // Counted independently with Python: every misc_model_static with a model spawns
     // in free-for-all.
     assert_eq!(total, 6684);

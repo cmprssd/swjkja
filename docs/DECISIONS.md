@@ -289,3 +289,24 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   and freeze NPCs** (`bench/capture-reference.sh`): a saber holder is drawn in third
   person, around the eye, and one capture with NPCs free found t3_stamp's crates
   already broken.
+
+## 2026-10-10: Single player's racks, beacons and planted bombs (decided by Claude, pending review)
+
+- **Racks draw their own model, whatever their "model" key says**, as the original
+  does: `kejim/weaponsrack.md3` for a gun rack, `kejim/weaponsrung.md3` for an ammo
+  rack (t3_stamp's racks name `imperial/weaponsrung.md3`, which no retail archive
+  holds). A rack is linked with no box of its own (its origin, an epsilon larger).
+- **The items on racks are drawn where they are MD3 models**: ammo packs and
+  medpacks, turned 90 degrees from the rack and linked by their `items.dat` boxes.
+  The weapons (blaster, repeater, rocket launcher) are Ghoul2 models and wait for
+  Ghoul2; gun racks hold only weapons, so they show empty for now.
+- **No random spread**: the original jitters each item (up to 2 units and 14 degrees
+  for weapons, 0.5 units and 4 degrees for ammo, a medpack 4 to 8 units aside) with
+  the game module's random numbers, whose sequence depends on everything that ran
+  before. Items sit in the middle of their range, and a medpack takes the right
+  side unless a weapon took it (the original picks a side at random).
+- **Ammo racks' goods come after every map entity**: the original spawns them
+  100 ms into the level, after the map's entities.
+- **Beacons and planted bombs with a "targetname" are not drawn**, waiting to be
+  used; every retail one (10, on t2_wedge) has one. One without would draw its first
+  frame (a beacon animates in the original).

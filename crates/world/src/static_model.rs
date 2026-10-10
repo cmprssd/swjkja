@@ -5,10 +5,12 @@
 //! `CG_CreateMiscEntFromGent`). The renderer loads the models and draws them each frame
 //! like `CG_DrawMiscStaticModels` (multiplayer) or `CG_DrawMiscEnts` (single player).
 //!
-//! Single player's breakable models (`misc_model_breakable`, [`breakables`]) are game
-//! entities instead (`code/game/g_breakable.cpp`: `SP_misc_model_breakable`): the server
-//! sends them to the client by the PVS of their box, and cgame draws them like any
-//! entity (`code/cgame/cg_ents.cpp`: `CG_General`). Multiplayer maps place none.
+//! Single player's breakable models, racks, beacons and planted bombs ([`entity_models`])
+//! are game entities instead (`code/game/g_breakable.cpp`: `SP_misc_model_breakable`;
+//! `g_misc_model.cpp`: the racks; `g_misc.cpp`: beacons and bombs): the server sends
+//! them to the client by the PVS of their box, and cgame draws them like any entity
+//! (`code/cgame/cg_ents.cpp`: `CG_General`, and `CG_Item` for the items on a rack).
+//! Multiplayer maps place none.
 
 use swjkja_bsp::Entity;
 
@@ -240,27 +242,171 @@ fn single_player(e: &Entity) -> Option<StaticModel> {
 /// `misc_model_breakable`'s START_OFF: hidden until something uses it.
 const START_OFF: i64 = 4096;
 
-/// The breakable models `entities` spawn under `rules` in their initial state, in
-/// spawn order: none in multiplayer (no retail multiplayer map places one), and in
-/// single player those not left out by skill nor started off (`SP_misc_model_breakable`).
+/// The models of the game entities `entities` spawn under `rules`, in their initial
+/// state: none in multiplayer (no retail multiplayer map places one); in single
+/// player, of those not left out by skill, in entity order, the breakables not
+/// started off, the racks, and the beacons and planted bombs not waiting to be used,
+/// then the goods on the ammo racks, which the original spawns 100 ms into the level.
 ///
-/// Each draws its first frame: an animated one (AUTOANIMATE) cycles its frames in the
-/// original. One with "gravity" is left out: the original drops it to the floor with
-/// a box trace, which needs collision this crate does not have yet. One without a
-/// model stops the original's map load; here it is skipped.
-pub fn breakables(entities: &[Entity], rules: Rules) -> Vec<StaticModel> {
+/// A breakable without a model stops the original's map load; here it is skipped.
+/// Each model draws its first frame: an animated breakable (AUTOANIMATE) or a beacon
+/// cycles its frames in the original. A breakable with "gravity" is left out: the
+/// original drops it to the floor with a box trace, which needs collision this crate
+/// does not have yet. The weapons on racks are Ghoul2 models, left out until those
+/// load.
+pub fn entity_models(entities: &[Entity], rules: Rules) -> Vec<StaticModel> {
     let Rules::SinglePlayer { skill } = rules else {
         return Vec::new();
     };
-    entities
+    let (mut models, mut rack_goods) = (Vec::new(), Vec::new());
+    for e in entities.iter().filter(|e| spawns_at(e, skill)) {
+        let class = e.get("classname").unwrap_or("").to_ascii_lowercase();
+        match class.as_str() {
+            "misc_model_breakable" => models.extend(breakable(e)),
+            "misc_model_gun_rack" => models.push(rack(e, GUN_RACK)),
+            "misc_model_ammo_rack" => {
+                models.push(rack(e, AMMO_RACK));
+                rack_goods.extend(ammo_rack_goods(e));
+            }
+            "misc_model_beacon" => models.extend(usable(e, BEACON, [16.0, 16.0, 24.0])),
+            "misc_model_bomb_planted" => models.extend(usable(e, BOMB, [16.0, 16.0, 70.0])),
+            _ => {}
+        }
+    }
+    models.extend(rack_goods);
+    models
+}
+
+/// The racks' models, whatever their "model" key says.
+const GUN_RACK: &str = "models/map_objects/kejim/weaponsrack.md3";
+const AMMO_RACK: &str = "models/map_objects/kejim/weaponsrung.md3";
+/// The beacon's and the planted bomb's models, whatever their "model" key says.
+const BEACON: &str = "models/map_objects/wedge/beacon.md3";
+const BOMB: &str = "models/map_objects/factory/bomb_new_deact.md3";
+
+/// The origin and angles spawn keys, in the order they appear (`G_ParseField`).
+fn origin_and_angles(e: &Entity) -> (Vec3, Vec3) {
+    let (mut origin, mut angles) = ([0.0; 3], [0.0; 3]);
+    for (key, value) in &e.pairs {
+        match key.to_ascii_lowercase().as_str() {
+            "origin" => origin = vector_prefix(value),
+            "angles" => angles = vector_prefix(value),
+            "angle" => angles = [0.0, atof(value), 0.0],
+            _ => {}
+        }
+    }
+    (origin, angles)
+}
+
+/// An unscaled entity model linked with the box `mins`..`maxs` around its origin
+/// (`SV_LinkEntity`: an epsilon larger).
+fn entity(model: &str, origin: Vec3, angles: Vec3, mins: Vec3, maxs: Vec3) -> StaticModel {
+    StaticModel {
+        model: model.to_owned(),
+        origin,
+        axes: angles_to_axis(angles),
+        scale: [1.0; 3],
+        normalized: true,
+        zoffset: 0.0,
+        entity_box: Some([
+            [0, 1, 2].map(|i| origin[i] + mins[i] - 1.0),
+            [0, 1, 2].map(|i| origin[i] + maxs[i] + 1.0),
+        ]),
+    }
+}
+
+/// `SP_misc_model_gun_rack` and `SP_misc_model_ammo_rack`: the rack, linked with no
+/// box of its own.
+fn rack(e: &Entity, model: &str) -> StaticModel {
+    let (origin, angles) = origin_and_angles(e);
+    entity(model, origin, angles, [0.0; 3], [0.0; 3])
+}
+
+/// `SP_misc_model_beacon` and `SP_misc_model_bomb_planted`: one with a "targetname"
+/// is not drawn until something uses it.
+fn usable(e: &Entity, model: &str, maxs: Vec3) -> Option<StaticModel> {
+    if e.get("targetname").is_some() {
+        return None;
+    }
+    let (origin, angles) = origin_and_angles(e);
+    Some(entity(model, origin, angles, [-16.0, -16.0, 0.0], maxs))
+}
+
+/// The ammo rack's spawnflags.
+const RACK_BLASTER: i64 = 1;
+const RACK_METAL_BOLTS: i64 = 2;
+const RACK_ROCKETS: i64 = 4;
+const RACK_WEAPONS: i64 = 8;
+const RACK_HEALTH: i64 = 16;
+const RACK_PWR_CELL: i64 = 32;
+const RACK_NO_FILL: i64 = 64;
+
+/// The items an ammo rack places that are MD3 models: their world models and boxes
+/// (`ext_data/items.dat`).
+const AMMO_BLASTER: (&str, Vec3) = ("models/items/energy_cell.md3", [-8.0, -8.0, 0.0]);
+const AMMO_METAL_BOLTS: (&str, Vec3) = ("models/items/metallic_bolts.md3", [-8.0, -8.0, 0.0]);
+const AMMO_POWERCELL: (&str, Vec3) = ("models/items/power_cell.md3", [-8.0, -8.0, 0.0]);
+const AMMO_ROCKETS: (&str, Vec3) = ("models/items/rockets.md3", [-8.0, -8.0, 0.0]);
+const MEDPAK: (&str, Vec3) = ("models/items/medpac.md3", [-8.0, -8.0, -3.0]);
+
+/// `spawn_rack_goods`: the ammo packs and the medpack an ammo rack places
+/// (`GunRackAddItem`), the weapon left out (a Ghoul2 model).
+///
+/// The original spreads them with the game's random numbers, whose sequence depends
+/// on everything spawned before: each item here sits in the middle of its range, and
+/// a medpack picks the right side unless a weapon took it (the original picks either
+/// side at random, then the weapon's other side).
+fn ammo_rack_goods(e: &Entity) -> Vec<StaticModel> {
+    let flags = e.get("spawnflags").map_or(0, atoi);
+    let any_ammo = RACK_BLASTER | RACK_METAL_BOLTS | RACK_ROCKETS | RACK_PWR_CELL;
+    let blaster = flags & RACK_BLASTER != 0 || flags & any_ammo == 0;
+    let mut ammo: Vec<_> = [
+        (blaster, AMMO_BLASTER),
+        (flags & RACK_METAL_BOLTS != 0, AMMO_METAL_BOLTS),
+        (flags & RACK_PWR_CELL != 0, AMMO_POWERCELL),
+        (flags & RACK_ROCKETS != 0, AMMO_ROCKETS),
+    ]
+    .into_iter()
+    .filter_map(|(on, item)| on.then_some(item))
+    .collect();
+    if flags & RACK_NO_FILL == 0 {
+        // The first item fills the shelf.
+        while ammo.len() < 3 {
+            ammo.push(ammo[0]);
+        }
+    }
+    let (origin, angles) = origin_and_angles(e);
+    let mut goods: Vec<_> = ammo
         .iter()
-        .filter(|e| {
-            e.get("classname")
-                .is_some_and(|c| c.eq_ignore_ascii_case("misc_model_breakable"))
-        })
-        .filter(|e| spawns_at(e, skill))
-        .filter_map(breakable)
-        .collect()
+        .enumerate()
+        .map(|(i, &item)| rack_item(item, origin, angles, (i as f32 - 1.0) * 8.0, 7.0))
+        .collect();
+    // A weapon: with no ammo type checked, a blaster; otherwise the first of the
+    // blaster, repeater and rocket launcher whose ammo is checked (not the power cell's).
+    let weapon = flags & RACK_WEAPONS != 0
+        && (flags & any_ammo == 0 || flags & (RACK_BLASTER | RACK_METAL_BOLTS | RACK_ROCKETS) != 0);
+    if flags & RACK_HEALTH != 0 {
+        let side = if weapon { -1.0 } else { 1.0 };
+        goods.push(rack_item(MEDPAK, origin, angles, 6.0 * side, 24.0));
+    }
+    goods
+}
+
+/// `GunRackAddItem` for an item that is not a weapon, `right` units to the rack's
+/// right and `up` units above its origin: turned 90 degrees from the rack, linked
+/// with the item's box.
+fn rack_item(
+    (model, mins): (&str, Vec3),
+    origin: Vec3,
+    angles: Vec3,
+    right: f32,
+    up: f32,
+) -> StaticModel {
+    let axis = angles_to_axis(angles);
+    let mut at = [0, 1, 2].map(|i| origin[i] - right * axis[1][i]);
+    at[2] += up;
+    let turned = [angles[0], angles[1] + 90.0, angles[2]];
+    entity(model, at, turned, mins, [8.0, 8.0, 16.0])
 }
 
 /// `SP_misc_model_breakable`, for an entity that spawns.
