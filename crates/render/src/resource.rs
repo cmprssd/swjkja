@@ -239,8 +239,9 @@ pub fn transition(
     };
 }
 
-/// An offscreen colour (RGBA8) and depth target that can be read back to the CPU,
-/// plus a sampleable copy of the depth (for flares' occlusion test).
+/// An offscreen colour (8-bit BGRA, the usual swapchain format) and depth target
+/// that can be read back to the CPU, plus a sampleable copy of the depth (for
+/// flares' occlusion test).
 pub struct Target {
     pub color: Image,
     pub depth: Image,
@@ -256,6 +257,8 @@ pub struct Frame<'a> {
     pub slot: usize,
     gpu: &'a Gpu,
     target: &'a Target,
+    /// The colour image drawn to: the target's own, or a swapchain image.
+    color: vk::ImageView,
 }
 
 impl Frame<'_> {
@@ -322,13 +325,13 @@ impl Frame<'_> {
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                 vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
             );
-            t.begin(gpu, cmd, None);
+            t.begin(gpu, cmd, self.color, None);
         }
     }
 }
 
 impl Target {
-    pub const COLOR_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
+    pub const COLOR_FORMAT: vk::Format = vk::Format::B8G8R8A8_UNORM;
     pub const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
 
     pub fn new(gpu: &Arc<Gpu>, width: u32, height: u32) -> Result<Self> {
@@ -389,9 +392,16 @@ impl Target {
         Ok(target)
     }
 
-    /// Begins rendering into the target: clearing to `clear` (and depth to 0) if
-    /// given, else keeping what is there.
-    fn begin(&self, gpu: &Gpu, cmd: vk::CommandBuffer, clear: Option<[f32; 4]>) {
+    /// Begins rendering into `color` (of the target's size and format) and the
+    /// target's depth: clearing to `clear` (and depth to 0) if given, else keeping
+    /// what is there.
+    fn begin(
+        &self,
+        gpu: &Gpu,
+        cmd: vk::CommandBuffer,
+        color: vk::ImageView,
+        clear: Option<[f32; 4]>,
+    ) {
         let extent = self.color.extent;
         let load = if clear.is_some() {
             vk::AttachmentLoadOp::CLEAR
@@ -399,7 +409,7 @@ impl Target {
             vk::AttachmentLoadOp::LOAD
         };
         let color = [vk::RenderingAttachmentInfo::default()
-            .image_view(self.color.view)
+            .image_view(color)
             .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
             .load_op(load)
             .store_op(vk::AttachmentStoreOp::STORE)
@@ -446,8 +456,11 @@ impl Target {
     }
 
     /// Records one frame: clears to `clear` (and depth to 0), runs `draw` with per-frame
-    /// `slot`, and leaves the colour ready to read or copy. Timestamps go to queries
-    /// `first` and `first + 1` of `queries`, which must have been reset.
+    /// `slot`, and leaves the colour ready to read or copy. With `window`, draws into
+    /// that swapchain image (and view) instead of the target's colour and leaves it
+    /// ready to present. Timestamps go to queries `first` and `first + 1` of
+    /// `queries`, which must have been reset.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn record(
         &self,
         gpu: &Gpu,
@@ -455,15 +468,24 @@ impl Target {
         clear: [f32; 4],
         slot: usize,
         (queries, first): (vk::QueryPool, u32),
+        window: Option<(vk::Image, vk::ImageView)>,
         draw: impl FnOnce(&mut Frame),
     ) {
         let d = &gpu.device;
+        let (image, view, done) = match window {
+            Some((image, view)) => (image, view, vk::ImageLayout::PRESENT_SRC_KHR),
+            None => (
+                self.color.image,
+                self.color.view,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            ),
+        };
         unsafe {
             d.cmd_write_timestamp2(cmd, vk::PipelineStageFlags2::TOP_OF_PIPE, queries, first);
             transition(
                 gpu,
                 cmd,
-                self.color.image,
+                image,
                 vk::ImageAspectFlags::COLOR,
                 vk::ImageLayout::UNDEFINED,
                 vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
@@ -476,21 +498,22 @@ impl Target {
                 vk::ImageLayout::UNDEFINED,
                 vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
             );
-            self.begin(gpu, cmd, Some(clear));
+            self.begin(gpu, cmd, view, Some(clear));
             draw(&mut Frame {
                 cmd,
                 slot,
                 gpu,
                 target: self,
+                color: view,
             });
             d.cmd_end_rendering(cmd);
             transition(
                 gpu,
                 cmd,
-                self.color.image,
+                image,
                 vk::ImageAspectFlags::COLOR,
                 vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                done,
             );
             d.cmd_write_timestamp2(
                 cmd,
@@ -527,7 +550,7 @@ impl Target {
         };
         let result = gpu.submit_and_wait(|cmd| unsafe {
             d.cmd_reset_query_pool(cmd, pool, 0, 2);
-            self.record(gpu, cmd, clear, 0, (pool, 0), draw);
+            self.record(gpu, cmd, clear, 0, (pool, 0), None, draw);
         });
         let mut stamps = [0u64; 2];
         let read = unsafe {
@@ -583,6 +606,10 @@ impl Target {
                 }],
             )
         })?;
-        Ok(staging.mapped()?.to_vec())
+        let mut rgba = staging.mapped()?.to_vec();
+        for p in rgba.as_chunks_mut::<4>().0 {
+            p.swap(0, 2);
+        }
+        Ok(rgba)
     }
 }

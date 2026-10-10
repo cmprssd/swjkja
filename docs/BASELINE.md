@@ -398,11 +398,73 @@ GeForce NOW):
   Intel's Windows Vulkan presentation. PresentMon (its present mode per frame)
   would show it; it needs administrator rights.
 - Our fullscreen runs have stalls the reference does not (worst frames 86-141 ms,
-  1% lows 27-28 FPS against 41-44): not looked into yet.
+  1% lows 27-28 FPS against 41-44): explained below (one stall in the first frames
+  after the mode switch).
 
 To rerun these: `FULLSCREEN=1 bench/path-reference.sh` and `swjkja view ...
 --replay ... --fullscreen` (exclusive fullscreen at 1280x720; the screen switches
 to that mode).
+
+**Where presenting goes, 2026-10-10.** `swjkja view ... --timings <file>` writes
+every frame's CPU steps (event loop, fence wait, acquire, record and submit,
+present) and GPU timestamps (the world, the copy to the swapchain image, the gap
+since the previous frame's GPU work); `bench/timings.py` summarises them. PresentMon
+2.6 (run as administrator alongside) shows how Windows presented each frame.
+
+- **No hidden presentation copy in fullscreen.** PresentMon reports "Hardware:
+  Legacy Flip" for both engines in exclusive fullscreen, and the GPU gap between our
+  frames is 0.02 ms (median). In a window both engines are "Composed: Copy with GPU
+  GDI", and the gap is 1.1-1.25 ms: the compositor's copy.
+- **The leftover is our own copy to the swapchain image: 0.6-0.8 ms of GPU per
+  frame** (0.6 in a window, 0.8 in fullscreen), plus a slightly slower world in
+  fullscreen than offscreen (2.5-2.7 against 2.3-2.5 ms). A plain `vkCmdCopyImage`
+  from a BGRA target costs the same 0.8 ms as the swizzling blit (two runs each).
+- **Drawing straight into the swapchain image** saves the copy in a window (GPU
+  period 5.7 -> 4.9 ms, world unchanged at 3.1 ms) but costs more than it saves in
+  exclusive fullscreen: the world takes 4.1 ms there instead of 2.5 ms (likely
+  because those images are the ones the display scans out, which the driver does
+  not compress). So the viewer draws straight into the image in a window and keeps
+  the copy in exclusive fullscreen (`Swapchain::direct`).
+- **The fullscreen worst frames were one stall right after the mode switch**: the
+  third frame waits 68-160 ms in the event loop, every run. It made the max 86-160
+  ms and pulled the 1% lows down (the slowest 1% is 12 frames, and one of them was
+  that stall). The original's timed demo starts seconds after its mode switch, so
+  replays now draw their first view for 100 frames (about half a second) before the
+  timed path starts.
+- **The other slow frames (15-30 ms, every 100-200 ms) are the machine's load**,
+  not presenting: their time lands in recording (one thread, no per-frame threads),
+  the fence wait or the event loop, a different one each time, in window and
+  fullscreen alike. Their number follows the background load (28-60 per run when
+  Chrome, Steam and GeForce NOW took half the CPU, few on a quieter machine).
+
+Before and after (old build: copy always, no warm-up; new: direct in a window, copy
+in fullscreen, warm-up), alternating, three runs each, busy machine:
+
+| Run | FPS (each run) | Median ms | p99 ms | 1% low FPS | Max ms |
+|------|------|------|------|------|------|
+| Old, window | 148.5, 135.9, 143.6 | 5.13-5.91 | 26.1-28.7 | 27-33 | 39-56 |
+| New, window | 168.5, 159.9, 172.2 | 4.00-4.50 | 22.3-24.4 | 33-39 | 34-49 |
+| Old, fullscreen | 219.1, 207.7, 191.8 | 3.43-3.97 | 25.0-26.1 | 27-33 | 46-116 |
+| Direct, fullscreen | 186.1, 186.0, 177.2 | 4.05-4.33 | 28.6-29.6 | 31-33 | 33-38 |
+
+(The last row is the rejected variant, direct drawing in fullscreen too; the new
+build copies in fullscreen like the old one.) Then the new build against the
+reference, alternating, three rounds, same busy machine:
+
+| Run | FPS (each run) | Median ms | p99 ms | 1% low FPS | Max ms |
+|------|------|------|------|------|------|
+| Reference, window | 122.5, 137.2, 107.8 | 5.12-8.33 | 28.7-30.3 | 26-31 | 42-67 |
+| New renderer, window | 157.9, 157.8, 159.3 | 4.59-4.71 | 22.4-26.6 | 35-40 | 32-37 |
+| Reference, fullscreen | 142.5, 159.0, 145.1 | 4.78-5.24 | 17.4-36.0 | 24-34 | 52-58 |
+| New renderer, fullscreen | 209.2, 196.8, 192.3 | 3.72-4.26 | 16.6-27.3 | 34-48 | 27-34 |
+
+**Under load the new renderer is now 1.15-1.45x the original in a window and
+1.2-1.45x in exclusive fullscreen, with better 1% lows and worst frames in both.**
+The load favours us (the original is bound by its one CPU thread); in the quieter
+fullscreen run earlier in the day the two were level (216.5 against 214.7 FPS,
+both with the copy, before the warm-up). What limits our fullscreen frame now is
+the GPU: world 2.5-2.7 ms plus the 0.8 ms copy. Not tried: doing the copy in a
+compute shader.
 
 To rerun (opens a game window per run; see `bench/lib.sh`):
 

@@ -9,7 +9,10 @@ use std::time::{Duration, Instant};
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use swjkja_render::path::{self, PathFrame};
-use swjkja_render::{Camera, FrameLoop, Gpu, Swapchain, Target, TextureSet, WorldRenderer};
+use swjkja_render::{
+    Camera, FRAMES_IN_FLIGHT, FrameLoop, Gpu, Presented, Swapchain, Target, TextureSet,
+    WorldRenderer,
+};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, WindowEvent};
@@ -27,10 +30,18 @@ pub struct Options {
     /// Exclusive fullscreen at [`SIZE`] (the screen switches to that mode), so the
     /// desktop compositor is out of the way.
     pub fullscreen: bool,
-    /// Replay this path once instead of flying, then write it with this viewer's
-    /// timestamps to `out` and quit.
+    /// Replay this path once instead of flying (after [`WARM_UP_FRAMES`] of its first
+    /// view), then write it with this viewer's timestamps to `out` and quit.
     pub replay: Option<(Vec<PathFrame>, PathBuf)>,
+    /// Write every frame's step times (see [`write_timings`]) here on quitting.
+    pub timings: Option<PathBuf>,
 }
+
+/// Frames of a replay's first view drawn before the timed replay starts. The first
+/// presents after the window opens (in fullscreen, after the mode switch) stall for
+/// up to 160 ms, while the original's timed demo starts long after its own. 100
+/// frames is about half a second.
+const WARM_UP_FRAMES: usize = 100;
 
 /// The window's size when it opens: the benchmark's 1280x720, in physical pixels.
 const SIZE: (u32, u32) = (1280, 720);
@@ -70,10 +81,26 @@ struct View {
     keys: Keys,
     start: Instant,
     last_frame: Instant,
+    /// When the last frame's work ended (the event loop runs until the next).
+    frame_end: Instant,
     /// Frame times since the title was last updated, and GPU times.
     stats: (Vec<f64>, Vec<f64>, Instant),
-    /// Replay: the next frame and each frame's timestamp so far.
-    replay: Option<(usize, Vec<i64>)>,
+    /// Replay: warm-up frames left, the next frame and each frame's timestamp so far.
+    replay: Option<(usize, usize, Vec<i64>)>,
+    /// With `--timings`: every frame's [`Timing`].
+    timings: Option<Vec<Timing>>,
+}
+
+/// One frame's line in the `--timings` file (times in ms).
+#[derive(Clone, Copy)]
+struct Timing {
+    /// When the frame started, since the view opened.
+    t: f64,
+    /// Since the previous frame started.
+    dt: f64,
+    /// In the event loop between the previous frame's end and this one's start.
+    event_loop: f64,
+    presented: Presented,
 }
 
 impl App {
@@ -102,8 +129,9 @@ impl App {
         )
         .map_err(|e| e.to_string())?;
         let size = window.inner_size();
-        let swapchain = Swapchain::new(&gpu, surface, (size.width, size.height), o.vsync)
+        let mut swapchain = Swapchain::new(&gpu, surface, (size.width, size.height), o.vsync)
             .map_err(|e| e.to_string())?;
+        swapchain.direct = !o.fullscreen;
 
         let vfs = swjkja_fs::Vfs::mount_game(std::slice::from_ref(&o.game_data), &["base"])
             .map_err(|e| format!("{}: {e}", o.game_data.display()))?;
@@ -155,8 +183,10 @@ impl App {
             keys: Keys::default(),
             start: now,
             last_frame: now,
+            frame_end: now,
             stats: (Vec::new(), Vec::new(), now),
-            replay: o.replay.as_ref().map(|_| (0, Vec::new())),
+            replay: o.replay.as_ref().map(|_| (WARM_UP_FRAMES, 0, Vec::new())),
+            timings: o.timings.as_ref().map(|_| Vec::new()),
         })
     }
 }
@@ -198,13 +228,18 @@ impl View {
         let now = Instant::now();
         let dt = now - self.last_frame;
         self.last_frame = now;
+        let event_loop = now - self.frame_end;
         let (camera, time) = match (&mut self.replay, replay) {
-            (Some((next, usec)), Some((path, _))) => {
+            (Some((warm_up, next, usec)), Some((path, _))) => {
                 let Some(f) = path.get(*next) else {
                     return Ok(false);
                 };
-                usec.push((now - self.start).as_micros() as i64);
-                *next += 1;
+                if *warm_up > 0 {
+                    *warm_up -= 1;
+                } else {
+                    usec.push((now - self.start).as_micros() as i64);
+                    *next += 1;
+                }
                 let e = self.swapchain.extent;
                 (f.camera(e.width, e.height), f.time_ms as f32 / 1000.0)
             }
@@ -231,8 +266,16 @@ impl View {
         if presented.out_of_date {
             self.resize()?;
         }
+        if let Some(t) = &mut self.timings {
+            t.push(Timing {
+                t: (now - self.start).as_secs_f64() * 1000.0,
+                dt: dt.as_secs_f64() * 1000.0,
+                event_loop: event_loop.as_secs_f64() * 1000.0,
+                presented,
+            });
+        }
         self.stats.0.push(dt.as_secs_f64() * 1000.0);
-        self.stats.1.extend(presented.gpu_ms);
+        self.stats.1.extend(presented.gpu.map(|g| g.world_ms));
         if now - self.stats.2 >= Duration::from_millis(500) {
             let (frames, gpu, since) = &mut self.stats;
             let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len().max(1) as f64;
@@ -247,6 +290,7 @@ impl View {
             gpu.clear();
             *since = now;
         }
+        self.frame_end = Instant::now();
         Ok(true)
     }
 
@@ -322,7 +366,7 @@ impl ApplicationHandler for App {
                 Ok(true) => {}
                 Ok(false) => {
                     // Replay done: write this viewer's timestamps and quit.
-                    if let (Some((path, out)), Some((_, usec))) =
+                    if let (Some((path, out)), Some((_, _, usec))) =
                         (&self.options.replay, &view.replay)
                     {
                         if let Err(e) = std::fs::write(out, path::write(path, usec)) {
@@ -360,7 +404,98 @@ impl ApplicationHandler for App {
     fn exiting(&mut self, _: &ActiveEventLoop) {
         if let Some(view) = &mut self.view {
             let _ = view.frames.finish();
+            if let (Some(out), Some(rows)) = (&self.options.timings, &view.timings) {
+                match std::fs::write(out, write_timings(rows)) {
+                    Ok(()) => eprintln!(
+                        "{} frames' timings written to {}",
+                        rows.len(),
+                        out.display()
+                    ),
+                    Err(e) => self.error = Some(format!("{}: {e}", out.display())),
+                }
+            }
         }
         self.view = None;
+    }
+}
+
+/// The `--timings` file: a header, then one tab-separated line per frame. CPU
+/// columns are the steps of presenting that frame; GPU columns are that frame's own
+/// timestamps (reported [`FRAMES_IN_FLIGHT`] frames later, so the last frames have
+/// none and show `-`). `gpu_start_ms` is on the GPU's clock, relative to the first
+/// frame: the gap to the previous frame's end is GPU time spent on other work.
+fn write_timings(rows: &[Timing]) -> String {
+    let mut out = String::from(
+        "frame\tt_ms\tdt_ms\tloop_ms\twait_ms\tacquire_ms\tsubmit_ms\tpresent_ms\t\
+         gpu_start_ms\tgpu_world_ms\tgpu_blit_ms\n",
+    );
+    let first = rows
+        .iter()
+        .find_map(|r| r.presented.gpu)
+        .map_or(0.0, |g| g.start_ms);
+    let opt = |v: Option<f64>| v.map_or("-".to_string(), |v| format!("{v:.3}"));
+    for (i, r) in rows.iter().enumerate() {
+        let gpu = rows.get(i + FRAMES_IN_FLIGHT).and_then(|r| r.presented.gpu);
+        let c = r.presented.cpu;
+        out += &format!(
+            "{i}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{}\t{}\t{}\n",
+            r.t,
+            r.dt,
+            r.event_loop,
+            c.wait_ms,
+            c.acquire_ms,
+            c.submit_ms,
+            c.present_ms,
+            opt(gpu.map(|g| g.start_ms - first)),
+            opt(gpu.map(|g| g.world_ms)),
+            opt(gpu.and_then(|g| g.blit_ms)),
+        );
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use swjkja_render::{GpuTimes, Steps};
+
+    #[test]
+    fn timings_put_gpu_times_on_the_frame_they_belong_to() {
+        let frame = |i: usize, gpu: Option<GpuTimes>| Timing {
+            t: i as f64 * 4.0,
+            dt: 4.0,
+            event_loop: 0.0625,
+            presented: Presented {
+                gpu,
+                cpu: Steps {
+                    wait_ms: 1.0,
+                    acquire_ms: 0.5,
+                    submit_ms: 0.25,
+                    present_ms: 0.125,
+                },
+                out_of_date: false,
+            },
+        };
+        // Frame 2 reports frame 0's times, frame 3 frame 1's.
+        let gpu = |start_ms| GpuTimes {
+            start_ms,
+            world_ms: 3.0,
+            blit_ms: Some(0.2),
+        };
+        let rows = [
+            frame(0, None),
+            frame(1, None),
+            frame(2, Some(gpu(100.0))),
+            frame(3, Some(gpu(104.5))),
+        ];
+        assert_eq!(
+            write_timings(&rows),
+            "frame\tt_ms\tdt_ms\tloop_ms\twait_ms\tacquire_ms\tsubmit_ms\tpresent_ms\t\
+             gpu_start_ms\tgpu_world_ms\tgpu_blit_ms\n\
+             0\t0.000\t4.000\t0.062\t1.000\t0.500\t0.250\t0.125\t0.000\t3.000\t0.200\n\
+             1\t4.000\t4.000\t0.062\t1.000\t0.500\t0.250\t0.125\t4.500\t3.000\t0.200\n\
+             2\t8.000\t4.000\t0.062\t1.000\t0.500\t0.250\t0.125\t-\t-\t-\n\
+             3\t12.000\t4.000\t0.062\t1.000\t0.500\t0.250\t0.125\t-\t-\t-\n"
+        );
     }
 }

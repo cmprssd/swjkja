@@ -27,7 +27,9 @@ flies through a map: mouse to look, W A S D to move, Space and C up and down, Sh
 to go faster, Esc to quit. The window title shows the frame rate and frame time.
 `--vsync` caps the frame rate to the display, and `--replay <path> <out>` draws a
 recorded camera path (`bench/reference/*.path`) once and writes its frame times.
-`--fullscreen` uses exclusive fullscreen at 1280x720 instead of a window.
+`--fullscreen` uses exclusive fullscreen at 1280x720 instead of a window, and
+`--timings <file>` writes each frame's CPU steps and GPU times on quitting
+(summarised by `bench/timings.py`).
 
 Build output and caches are kept bounded: `scripts/disk.sh` lists everything the
 project stores and where, `.local-ci` shrinks any Rust build folder over 3 GB after

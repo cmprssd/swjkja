@@ -162,8 +162,26 @@ equals the same frame rendered alone (it fails if the frames share one slot).
 - **Frames are rendered into the offscreen target and copied to the swapchain
   image**, so the renderer, its pipelines and the tests are the same with and
   without a window. The copy is one of the suspects for the cost of presenting.
+  (Changed on 2026-10-10, see below: in a window, frames are drawn straight into
+  the swapchain image.)
 - **Frame rate and frame time in the window title**, updated twice a second: there
   is no text rendering yet.
 - **Controls like the original's noclip**: 250 units/s (`g_speed`), Shift for 3x,
   forward follows the view, mouse at 0.11 degrees per count (`sensitivity` 5).
   The viewer starts at the first player start, eyes 36 units up.
+
+## 2026-10-10: Drawing straight into the window's image (decided by Claude, pending review)
+
+- **The target's colour is 8-bit BGRA** (was RGBA), the format Windows swapchains
+  offer, so a frame can be drawn straight into a swapchain image with the same
+  pipelines. `Target::read_rgba` swaps the channels back, so tests and screenshots
+  are unchanged.
+- **In a window the viewer draws straight into the swapchain image; in exclusive
+  fullscreen it draws into the target and copies** (`Swapchain::direct`, on by
+  default). Measured on the Intel HD 630: in a window direct drawing saves the
+  0.6 ms copy and the world costs the same; in exclusive fullscreen the world costs
+  4.1 ms in the swapchain image against 2.5 ms in the target, more than the 0.8 ms
+  copy. The copy stays as the fallback whenever the sizes or formats differ.
+- **Replays draw their first view for 100 frames before the timed path starts**, to
+  leave out the 68-160 ms stall right after the window opens (in fullscreen, the
+  mode switch). The original's timed demo starts seconds after its own mode switch.
