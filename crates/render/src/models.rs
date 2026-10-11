@@ -23,16 +23,20 @@
 //! frame 0 of their skeleton.
 //!
 //! Single player's NPCs are Ghoul2 entities too, drawn by cgame as players
-//! (`CG_Player`): their skin on, their surfaces switched, posed as they start
-//! (`BOTH_STAND1`), culled and leveled by their radius times their largest scale, and
+//! (`CG_Player`): their skin on, their surfaces switched, posed as they stand at the
+//! time drawn, culled and leveled by their radius times their largest scale, and
 //! lit at their origin.
 //!
 //! The models never move, so each placement's surfaces are baked into world space at
 //! load; their normals carry the axes' scale, which is what the original's lighting
-//! sees (`R_SetupEntityLighting` turns the light into the model's scaled axes).
+//! sees (`R_SetupEntityLighting` turns the light into the model's scaled axes). An
+//! NPC's pose changes as time passes: its [`Rig`] gives its bones at a time, in
+//! world space, for the renderer to skin its surfaces by
+//! ([`StaticModels::bones`]).
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::Arc;
 
 use swjkja_bsp::{Bsp, DrawVert};
 use swjkja_fs::Vfs;
@@ -68,6 +72,19 @@ pub struct Piece {
     pub fog: usize,
     /// A triangle soup whose vertices hold the entity number in `lightmap[3][1]`.
     pub geometry: Geometry,
+    /// For a posed model's surface, which of its rig's surfaces it is: it is posed
+    /// again as time passes ([`StaticModels::animate`]).
+    pub source: Option<Source>,
+}
+
+/// A surface of instance `instance`'s rig: part `part` (0 the body), level `lod`
+/// of its mesh, surface `surface`.
+#[derive(Debug, Clone, Copy)]
+pub struct Source {
+    pub instance: usize,
+    pub part: usize,
+    pub lod: usize,
+    pub surface: usize,
 }
 
 pub struct ModelLod {
@@ -106,6 +123,8 @@ pub struct Instance {
     pub ghoul2_radius: Option<f32>,
     /// Most detailed first.
     pub lods: Vec<ModelLod>,
+    /// What poses it as time passes: an NPC's skeleton and animations.
+    pub rig: Option<Rig>,
 }
 
 pub struct StaticModels {
@@ -224,7 +243,7 @@ impl StaticModels {
     /// retail model's fog depends on where the view is (taspir1's Raven's Claw, from
     /// inside fog 1); a retail-data test checks there are no others.
     ///
-    /// NPCs are posed as they stand at game time `time` (ms).
+    /// NPCs are baked as they stand at game time `time` (ms).
     pub fn load(vfs: &Vfs, bsp: &Bsp, fogs: &[FogVolume], rules: Rules, time: i32) -> Self {
         let sp = matches!(rules, Rules::SinglePlayer { .. });
         let mut world = Collision::at_spawn(bsp, rules);
@@ -286,39 +305,43 @@ impl StaticModels {
                         eprintln!("warning: model {}: a Ghoul2 mesh placed as an MD3", p.model);
                         continue;
                     };
-                    let body = Part::new(
-                        m,
-                        body_pose(vfs, m, g.pose.as_ref(), time),
-                        skin(&g.skin),
-                        &g.switches,
-                    );
+                    let rig = g.pose.as_ref().map(|pose| Rig::new(vfs, m, pose));
+                    let pose = match &rig {
+                        Some(rig) => rig.body_pose(time),
+                        None => m.gla.pose(0),
+                    };
+                    let body = Part::new(m, pose, skin(&g.skin), &g.switches);
                     let mut parts = Vec::new();
+                    let mut attached = Vec::new();
                     for a in &g.attached {
                         // G_CreateG2AttachedWeaponModel: nothing without the model or
                         // the bolt.
                         let Some(Model::Ghoul2(w)) = &models[&a.model.to_ascii_lowercase()] else {
                             continue;
                         };
-                        let Some(root) = m
+                        let Some((s, root)) = m
                             .glm
                             .find_surface(a.bolt)
-                            .and_then(|s| glm::bolt(&m.glm, s, &body.pose))
+                            .and_then(|s| glm::bolt(&m.glm, s, &body.pose).map(|root| (s, root)))
                         else {
                             continue;
                         };
-                        let pose = w.gla.pose_frames(&root, &vec![0; w.gla.bones.len()]);
-                        parts.push(Part::new(w, pose, skin(&a.skin), &[]));
+                        parts.push(Part::new(w, attached_pose(w, &root), skin(&a.skin), &[]));
+                        attached.push((w.clone(), s));
                     }
                     parts.insert(0, body);
                     let entity = instances.len() + 1;
-                    instances.push(ghoul2_instance(
+                    let mut instance = ghoul2_instance(
                         &parts,
                         p,
                         g.radius,
                         entity,
                         fogs,
+                        rig.is_some(),
                         &mut pieces,
-                    ));
+                    );
+                    instance.rig = rig.map(|rig| Rig { attached, ..rig });
+                    instances.push(instance);
                     continue;
                 }
                 None => continue,
@@ -339,7 +362,7 @@ impl StaticModels {
                         let (xyz, normals) = s.frame(0);
                         let shader = s.shaders.first().map_or("", String::as_str);
                         let mesh = (xyz, normals, &s.st[..], &s.indexes[..]);
-                        pieces.push(bake(mesh, shader, p, entity, fog));
+                        pieces.push(bake(mesh, shader, p, entity, fog, None));
                     }
                     ModelLod {
                         bounds: md3.frames[0].bounds,
@@ -378,6 +401,7 @@ impl StaticModels {
                 lod_radius: radius_from_bounds(bounds),
                 ghoul2_radius: None,
                 lods,
+                rig: None,
             });
         }
         let distance_cull = bsp
@@ -401,6 +425,43 @@ impl StaticModels {
             m.cull_cluster = vis.cluster(m.cull_origin);
             m.link = m.entity_box.map(|b| vis.link(b));
         }
+    }
+
+    /// Instance `n`'s bones as it stands at game time `time` (ms), in world space:
+    /// each part's skeleton (the body's, then each bolted model's) after the
+    /// instance's origin and axes, so a vertex skinned by them (as
+    /// [`glm::skin`] does) lands where [`Piece::geometry`] has it. None for a model
+    /// without a rig.
+    pub fn bones(&self, n: usize, time: i32) -> Vec<Mat34> {
+        let m = &self.instances[n];
+        let Some(rig) = &m.rig else {
+            return Vec::new();
+        };
+        let poses = rig.poses(time);
+        let place = |b: &Mat34| -> Mat34 {
+            std::array::from_fn(|i| {
+                let t = [0, 1, 2].map(|k| m.axes[k][i]);
+                let mut r: [f32; 4] =
+                    std::array::from_fn(|j| t[0] * b[0][j] + t[1] * b[1][j] + t[2] * b[2][j]);
+                r[3] += m.origin[i];
+                r
+            })
+        };
+        poses.iter().flatten().map(place).collect()
+    }
+
+    /// The surface posed piece `k` draws, and where its part's bones start in its
+    /// instance's [`StaticModels::bones`]; `None` for a piece that is not posed.
+    pub fn posed_surface(&self, k: usize) -> Option<(&glm::Surface, usize)> {
+        let Source {
+            instance,
+            part,
+            lod,
+            surface,
+        } = self.pieces[k].source?;
+        let rig = self.instances[instance].rig.as_ref()?;
+        let (model, first) = rig.part(part);
+        Some((&model.glm.lods[lod][surface], first))
     }
 
     /// The level of detail instance `n` draws in this view, or `None` if culled.
@@ -478,7 +539,7 @@ impl StaticModels {
 /// A model of either kind, as `RE_RegisterModel` loads it.
 enum Model {
     Md3(Md3Model),
-    Ghoul2(Ghoul2Model),
+    Ghoul2(Arc<Ghoul2Model>),
 }
 
 impl Model {
@@ -488,7 +549,7 @@ impl Model {
             .get(name.len().saturating_sub(4)..)
             .is_some_and(|ext| ext.eq_ignore_ascii_case(".glm"));
         Ok(if glm {
-            Model::Ghoul2(Ghoul2Model::load(vfs, name)?)
+            Model::Ghoul2(Arc::new(Ghoul2Model::load(vfs, name)?))
         } else {
             Model::Md3(Md3Model::load(vfs, name)?)
         })
@@ -554,40 +615,116 @@ fn register_skin(
     });
 }
 
-/// The pose of a Ghoul2 entity's skeleton: frame 0, or standing in `pose` at game
-/// time `time` (ms), each part at the frame its animation has reached
-/// ([`npc::standing_at`], `G2_TimingModel`). A part whose animation the skeleton
-/// lacks (or a skeleton with no animation file) plays `BOTH_STAND1` instead, as
-/// `NPC_Begin` started it, or stays at frame 0 without that too (`PM_SetAnimFinal`
-/// sets nothing then); so does a part whose bone the skeleton lacks.
-fn body_pose(vfs: &Vfs, model: &Ghoul2Model, pose: Option<&Pose>, time: i32) -> Vec<Mat34> {
-    let gla = &model.gla;
-    let Some(pose) = pose else {
-        return gla.pose(0);
-    };
-    let text = animation::config_file(vfs, &model.glm.anim_name)
-        .and_then(|file| vfs.read(&file).ok())
-        .map(|text| String::from_utf8_lossy(&text).into_owned())
-        .unwrap_or_default();
-    let find = |name| animation::find(&text, name).filter(|a| a.first + a.count <= gla.frame_count);
-    let idle = pose.idle.and_then(find).map(|a| {
-        let lerp = a.frame_lerp.abs();
-        ((a.count as i32 - 1) * lerp, a.count as i32 * lerp)
-    });
-    let (legs, torso, start) = npc::standing_at(pose, idle, time);
-    let stand = find(animation::STAND);
-    let mut anims = Vec::new();
-    for (bone, anim) in [
-        ("model_root", legs),
-        ("lower_lumbar", torso),
-        ("Motion", torso),
-    ] {
-        if let (Some(bone), Some(anim)) = (gla.find_bone(bone), find(anim).or(stand)) {
-            let (frame, next, lerp) = anim.frame_at(time - start);
-            anims.push((bone, gla::Frame { frame, next, lerp }));
+/// An NPC's skeleton, the models bolted to it, and the animations it stands in.
+pub struct Rig {
+    body: Arc<Ghoul2Model>,
+    pose: Pose,
+    /// Its idle animation's hold and length (ms), if its skeleton has the idle.
+    idle: Option<(i32, i32)>,
+    /// The animations it can play (its stance's, its idle and `BOTH_STAND1`), by
+    /// name, those its skeleton has.
+    anims: Vec<(&'static str, animation::Animation)>,
+    /// Bones "model_root", "lower_lumbar" and "Motion", if the skeleton has them.
+    bones: [Option<usize>; 3],
+    /// The models bolted to it and the body's surfaces they are bolted to.
+    attached: Vec<(Arc<Ghoul2Model>, usize)>,
+}
+
+impl Rig {
+    /// `model` standing in `pose`, its animations from its animation file.
+    fn new(vfs: &Vfs, model: &Arc<Ghoul2Model>, pose: &Pose) -> Self {
+        let gla = &model.gla;
+        let text = animation::config_file(vfs, &model.glm.anim_name)
+            .and_then(|file| vfs.read(&file).ok())
+            .map(|text| String::from_utf8_lossy(&text).into_owned())
+            .unwrap_or_default();
+        let find =
+            |name| animation::find(&text, name).filter(|a| a.first + a.count <= gla.frame_count);
+        let idle = pose.idle.and_then(find).map(|a| {
+            let lerp = a.frame_lerp.abs();
+            ((a.count as i32 - 1) * lerp, a.count as i32 * lerp)
+        });
+        let names = [
+            Some(pose.legs),
+            Some(pose.torso),
+            pose.idle,
+            Some(animation::STAND),
+        ];
+        let anims = names
+            .into_iter()
+            .flatten()
+            .filter_map(|name| Some((name, find(name)?)))
+            .collect();
+        Self {
+            body: model.clone(),
+            pose: pose.clone(),
+            idle,
+            anims,
+            bones: ["model_root", "lower_lumbar", "Motion"].map(|b| gla.find_bone(b)),
+            attached: Vec::new(),
         }
     }
-    gla.pose_frames(&gla::ROOT, &gla.frames(&anims))
+
+    /// The body's pose standing at game time `time` (ms), each part at the frame its
+    /// animation has reached ([`npc::standing_at`], `G2_TimingModel`). A part whose
+    /// animation the skeleton lacks (or a skeleton with no animation file) plays
+    /// `BOTH_STAND1` instead, as `NPC_Begin` started it, or stays at frame 0 without
+    /// that too (`PM_SetAnimFinal` sets nothing then); so does a part whose bone the
+    /// skeleton lacks.
+    fn body_pose(&self, time: i32) -> Vec<Mat34> {
+        let gla = &self.body.gla;
+        let (legs, torso, start) = npc::standing_at(&self.pose, self.idle, time);
+        let find = |name| self.anims.iter().find(|(n, _)| *n == name).map(|(_, a)| *a);
+        let stand = find(animation::STAND);
+        let mut anims = Vec::new();
+        for (bone, anim) in self.bones.into_iter().zip([legs, torso, torso]) {
+            if let (Some(bone), Some(anim)) = (bone, find(anim).or(stand)) {
+                let (frame, next, lerp) = anim.frame_at(time - start);
+                anims.push((bone, gla::Frame { frame, next, lerp }));
+            }
+        }
+        gla.pose_frames(&gla::ROOT, &gla.frames(&anims))
+    }
+
+    /// How many bones its parts have.
+    pub fn bone_count(&self) -> usize {
+        let attached = self.attached.iter().map(|(w, _)| w.gla.bones.len());
+        self.body.gla.bones.len() + attached.sum::<usize>()
+    }
+
+    /// Part `part`'s model (0 the body, then the bolted models) and where its bones
+    /// start among the parts'.
+    fn part(&self, part: usize) -> (&Ghoul2Model, usize) {
+        let mut first = self.body.gla.bones.len();
+        for (w, _) in &self.attached[..part.saturating_sub(1)] {
+            first += w.gla.bones.len();
+        }
+        match part {
+            0 => (&self.body, 0),
+            p => (&self.attached[p - 1].0, first),
+        }
+    }
+
+    /// Each part's pose at game time `time` (ms): the body's, then each bolted
+    /// model's from where its bolt is.
+    fn poses(&self, time: i32) -> Vec<Vec<Mat34>> {
+        let body = self.body_pose(time);
+        let attached: Vec<_> = self
+            .attached
+            .iter()
+            .map(|(w, s)| {
+                // A bolt that held at load holds: it needs only the surface's vertices.
+                let root = glm::bolt(&self.body.glm, *s, &body).unwrap_or(gla::IDENTITY);
+                attached_pose(w, &root)
+            })
+            .collect();
+        std::iter::once(body).chain(attached).collect()
+    }
+}
+
+/// A bolted model's pose: frame 0 of its skeleton, from its bolt's matrix `root`.
+fn attached_pose(model: &Ghoul2Model, root: &Mat34) -> Vec<Mat34> {
+    model.gla.pose_frames(root, &vec![0; model.gla.bones.len()])
 }
 
 /// One Ghoul2 model of an entity: its pose and the surfaces it draws.
@@ -626,7 +763,7 @@ impl<'a> Part<'a> {
 /// of detail, with the skin's shader for their name or their own
 /// (`RenderSurfaces`). Culled by a sphere of `radius` times its largest scale,
 /// leveled by three quarters of that, and fogged by `radius` as seen from outside
-/// any fog.
+/// any fog. A `rigged` entity's pieces keep their [`Source`].
 ///
 /// Each part picks its level from its own number of levels (`G2_ComputeLOD`): with
 /// as many entity levels as the least common multiple of the parts' counts, entity
@@ -638,6 +775,7 @@ fn ghoul2_instance(
     radius: f32,
     entity: usize,
     fogs: &[FogVolume],
+    rigged: bool,
     pieces: &mut Vec<Piece>,
 ) -> Instance {
     let largest = p.scale.into_iter().fold(f32::MIN, f32::max);
@@ -651,9 +789,10 @@ fn ghoul2_instance(
         .map(|level| {
             let first = pieces.len();
             let mut bounds: [Vec3; 2] = [[f32::MAX; 3], [f32::MIN; 3]];
-            for part in parts {
+            for (n, part) in parts.iter().enumerate() {
                 let glm = &part.model.glm;
-                let surfaces = &glm.lods[level * glm.lods.len() / count];
+                let lod = level * glm.lods.len() / count;
+                let surfaces = &glm.lods[lod];
                 for &s in &part.drawn {
                     let surface = &surfaces[s];
                     let (xyz, normals) = glm::skin(surface, &part.pose);
@@ -672,7 +811,13 @@ fn ghoul2_instance(
                         .skin
                         .and_then(|skin| skin.shader(&info.name))
                         .unwrap_or(&info.shader);
-                    pieces.push(bake(mesh, shader, p, entity, fog));
+                    let source = rigged.then_some(Source {
+                        instance: entity - 1,
+                        part: n,
+                        lod,
+                        surface: s,
+                    });
+                    pieces.push(bake(mesh, shader, p, entity, fog, source));
                 }
             }
             ModelLod {
@@ -695,6 +840,7 @@ fn ghoul2_instance(
         lod_radius: 0.75 * scaled_radius,
         ghoul2_radius: Some(scaled_radius),
         lods,
+        rig: None,
     }
 }
 
@@ -719,6 +865,7 @@ fn bake(
     p: &StaticModel,
     entity: usize,
     fog: usize,
+    source: Option<Source>,
 ) -> Piece {
     let verts: Vec<DrawVert> = xyz
         .iter()
@@ -745,6 +892,7 @@ fn bake(
             indexes: indexes.to_vec(),
             bounds,
         },
+        source,
     }
 }
 
