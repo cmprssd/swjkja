@@ -235,7 +235,8 @@ pub fn lod(count: usize, lod_radius: f32, origin: Vec3, camera: &Camera, scale: 
 
 impl StaticModels {
     /// Loads the models the map places under `rules` (its game entities in their initial
-    /// state, then its static models) and bakes each placement (call
+    /// state, the secondary models of its brush entities, its NPCs, then its static
+    /// models) and bakes each placement (call
     /// [`StaticModels::locate`] before drawing). A model that does not load stops the
     /// original's map load; here its placements are skipped with a warning.
     ///
@@ -249,6 +250,11 @@ impl StaticModels {
         let mut world = Collision::at_spawn(bsp, rules);
         let mut placements =
             swjkja_world::static_model::entity_models(&bsp.entities, rules, &mut world);
+        placements.extend(
+            swjkja_world::brush_entity::brush_entities(&bsp.entities, &bsp.models, rules)
+                .into_iter()
+                .filter_map(|e| e.model2),
+        );
         if sp {
             let text = |folder: &str, ext: &str| {
                 let files: Vec<Vec<u8>> = vfs
