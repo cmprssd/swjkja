@@ -381,6 +381,12 @@ impl WorldVis {
         }
     }
 
+    /// `R_CullSurface` for a surface drawn outside the world's leaves (a brush
+    /// entity's, placed in the world).
+    pub fn culls_surface(&self, s: usize, origin: Vec3, frustum: &Frustum) -> bool {
+        self.culled(s, origin, &frustum.planes)
+    }
+
     /// `R_CullSurface`.
     fn culled(&self, s: usize, origin: Vec3, frustum: &[Plane; 4]) -> bool {
         match self.surface_cull[s] {

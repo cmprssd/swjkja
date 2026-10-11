@@ -534,3 +534,24 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   their radius around their origin (`R_GCullModel`), as the original does, so their
   pose changes nothing. Their levels' bounds (the load pose's) are not used to
   cull them.
+
+## 2026-10-11: Brush entities drawn where they spawn (decided by Claude, pending review)
+
+- **The renderer draws the map's brush entities** (`bsp.models[1..]`) as the game
+  spawns them (`swjkja_world::brush_entity`): func_door (at pos2 when it starts
+  open), func_plat (at the bottom), func_static (turned by its angles, the only
+  class that keeps them), func_rotating (at zero), func_breakable, func_glass, and
+  func_wall and func_usable unless started off. Rail movers (`EF_NODRAW`) are not
+  drawn. Each is sent by the server's PVS of its linked box (or broadcast), culled
+  by its model's box (`R_CullLocalBox`), then each surface as the world's. Locked
+  doors and other `EF_SHADER_ANIM` entities hold their animMap at frame 0.
+- **Placed once at load**: vertices, normals and planes are moved to where the
+  entity stands; moving them is game logic (roadmap 4). Rotated entities cull by
+  the placed surfaces' looser box.
+- **Reference views**: stamp_crates 5.00 -> 0.25 mean diff (13.8% -> 0.0% off).
+  stamp_barrels 0.13 -> 0.32: t3_stamp's `big_door` is opened by the intro's
+  scripts. ffa5_lamps 0.17 -> 0.21: of two identical doors, the left now matches
+  the reference, the right was open in the capture (game state after spawn).
+  ffa3_spawn3 differs where the world-only reference leaves out a platform.
+- **Cost**: bench_world within main's spread (three runs of 600 frames on the
+  changed views); load up to 0.2 s more on t3_stamp.
