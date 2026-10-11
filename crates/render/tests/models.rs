@@ -319,9 +319,9 @@ fn t2_dpred_rack_weapons_draw_as_ghoul2_items() {
 }
 
 /// t2_dpred's stormtroopers near the start (-1100 -4300) spawn with the map: drawn
-/// as Ghoul2 characters with their skin, standing.
+/// as Ghoul2 characters with their skin, standing with their guns in hand.
 #[test]
-fn t2_dpred_stormtroopers_draw_skinned_and_standing() {
+fn t2_dpred_stormtroopers_draw_skinned_and_armed() {
     let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
         eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
         return;
@@ -347,17 +347,22 @@ fn t2_dpred_stormtroopers_draw_skinned_and_standing() {
     };
     // The default skin hides the pauldron ("*off"); the officer skin shows it.
     let (t, c) = (shaders(trooper), shaders(commander));
-    assert_eq!((t.len(), c.len()), (21, 20));
+    assert_eq!((t.len(), c.len()), (21 + 2, 20 + 2));
+    // Then their guns' two surfaces: a trooper's blaster, a commander's repeater.
+    assert_eq!(t[21..], ["blaster_w.tga", "blaster_w.tga"]);
+    assert_eq!(c[20..], ["heavy_repeater_w.tga", "heavy_repeater_w.tga"]);
     assert!(t.contains(&"helmet.tga".into()) && !t.contains(&"shoulder.tga".into()));
     assert!(c.contains(&"shoulder.tga".into()));
     // Radius "height" (64, 68), times the scale.
     assert_eq!(trooper.ghoul2_radius, Some(64.0));
     assert!((commander.ghoul2_radius.unwrap() - 68.0 * 1.05).abs() < 1e-3);
-    // Standing (BOTH_STAND1): feet at the box's bottom, 24 below the origin, the
-    // head 64 above them.
+    // Standing (legs in BOTH_STAND3): feet at the box's bottom, 24 below the
+    // origin, the head (a little bent over the gun) 63 above them; the gun held
+    // 20 units ahead (+x, forward in the model's space).
     let [mins, maxs] = trooper.lods[0].bounds;
     assert!(
-        (mins[2] + 24.0).abs() < 0.5 && (maxs[2] - 40.0).abs() < 0.5,
+        (mins[2] + 24.0).abs() < 0.5 && (maxs[2] - 39.0).abs() < 0.5,
         "{mins:?} {maxs:?}"
     );
+    assert!((maxs[0] - 20.7).abs() < 0.5, "{mins:?} {maxs:?}");
 }

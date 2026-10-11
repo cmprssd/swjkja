@@ -1,6 +1,6 @@
 use swjkja_bsp::Entity;
-use swjkja_world::npc::{npc_look, npc_models, npc_spawns};
-use swjkja_world::static_model::{Rules, angles_to_axis};
+use swjkja_world::npc::{attached_model, npc_gear, npc_look, npc_models, npc_spawns, saber_look};
+use swjkja_world::static_model::{Attached, Pose, Rules, angles_to_axis};
 
 fn entity(pairs: &[(&str, &str)]) -> Entity {
     Entity {
@@ -110,6 +110,7 @@ trooper
 }
 Officer { playerModel stormtrooper customSkin officer scale 105 scaleZ 110
     surfOff \"torso_armor_neck_augment torso_body_neck_augment\" surfOn torso_pauldron
+    weapon WP_BLASTER playerTeam TEAM_ENEMY
 }
 Commander
 {
@@ -208,7 +209,7 @@ fn npcs_stand_upright_at_their_spawner_scaled_from_their_feet() {
         ),
         npc("NPC_Player", &[]),
     ];
-    let models = npc_models(&entities, SP, PARMS);
+    let models = npc_models(&entities, SP, PARMS, b"");
     let [officer, player] = &models[..] else {
         panic!("{models:?}")
     };
@@ -231,7 +232,22 @@ fn npcs_stand_upright_at_their_spawner_scaled_from_their_feet() {
         g.skin.as_deref(),
         Some("models/players/stormtrooper/model_officer.skin")
     );
-    assert!(g.stand);
+    // A blaster in the right hand, legs apart, the torso holding it idle.
+    assert_eq!(
+        g.pose,
+        Some(Pose {
+            legs: "BOTH_STAND3",
+            torso: "TORSO_WEAPONIDLE3"
+        })
+    );
+    assert_eq!(
+        g.attached,
+        [Attached {
+            model: "models/weapons2/blaster_r/blaster_w.glm".into(),
+            bolt: "*r_hand",
+            skin: None
+        }]
+    );
     // A three-part skin names the folder and the parts.
     assert_eq!(player.model, "models/players/jedi_tf/model.glm");
     assert_eq!(
@@ -240,4 +256,132 @@ fn npcs_stand_upright_at_their_spawner_scaled_from_their_feet() {
     );
     assert_eq!(player.origin, [1.0, 2.0, 3.0]);
     assert!(player.normalized);
+}
+
+const GEAR: &[u8] = b"
+jedi { playerModel jedi_hm weapon WP_SABER playerTeam TEAM_PLAYER class CLASS_JEDI
+    saber single saber2 wrist }
+staff { playerModel jedi_hm weapon WP_SABER playerTeam TEAM_PLAYER class CLASS_JEDI
+    saber staff saber2 single }
+imperial { playerModel imperial weapon WP_BLASTER_RIFLE playerTeam TEAM_ENEMY
+    class CLASS_IMPERIAL }
+ugnaught_imp { playerModel imperial playerTeam enemy class CLASS_IMPERIAL weapon WP_NONE }
+cultist { playerModel cultist weapon WP_BLASTER_PISTOL playerTeam TEAM_ENEMY
+    class CLASS_REBORN rank ltcomm }
+ugnaught { playerModel ugnaught weapon WP_BLASTER playerTeam TEAM_NEUTRAL }
+noghri { playerModel noghri weapon WP_NOGHRI_STICK playerTeam TEAM_FREE }
+";
+
+const SABERS: &[u8] = b"
+single { name \"one\" saberModel models/weapons2/saber_1/saber_1.glm }
+wrist { saberModel \"models/weapons2/saber_2/saber_2.glm\" boltToWrist 1
+    customSkin models/weapons2/saber_2/red.skin }
+staff { saberModel models/weapons2/saber_dual_1/saber_dual_1.glm twoHanded 1 }
+";
+
+fn gear(npc_type: &str, flags: i64) -> (Pose, Vec<(String, &'static str)>) {
+    let look = npc_look(GEAR, npc_type, false).unwrap();
+    let (pose, attached) = npc_gear(&look, npc_type, flags, SABERS);
+    let held = attached.into_iter().map(|a| (a.model, a.bolt)).collect();
+    (pose, held)
+}
+
+fn pose(legs: &'static str, torso: &'static str) -> Pose {
+    Pose { legs, torso }
+}
+
+#[test]
+fn npcs_hold_their_weapons_and_stand_with_them() {
+    // Two sabers, blades off: hilts in both hands (one at the wrist, with its skin),
+    // the torso following the legs.
+    let look = npc_look(GEAR, "jedi", false).unwrap();
+    let (p, attached) = npc_gear(&look, "jedi", 0, SABERS);
+    assert_eq!(p, pose("BOTH_STAND1", "BOTH_STAND1"));
+    assert_eq!(
+        attached,
+        [
+            Attached {
+                model: "models/weapons2/saber_1/saber_1.glm".into(),
+                bolt: "*r_hand",
+                skin: None
+            },
+            Attached {
+                model: "models/weapons2/saber_2/saber_2.glm".into(),
+                bolt: "*l_hand_cap_l_arm",
+                skin: Some("models/weapons2/saber_2/red.skin".into())
+            },
+        ]
+    );
+    // A two-handed saber takes no second.
+    let (_, held) = gear("staff", 0);
+    assert_eq!(
+        held,
+        [(
+            "models/weapons2/saber_dual_1/saber_dual_1.glm".into(),
+            "*r_hand"
+        )]
+    );
+    // An unknown weapon name: the team's weapon for the type, a pistol; legs apart.
+    assert_eq!(
+        gear("imperial", 0),
+        (
+            pose("BOTH_STAND3", "TORSO_WEAPONIDLE2"),
+            vec![(
+                "models/weapons2/blaster_pistol/blaster_pistol_w.glm".into(),
+                "*r_hand"
+            )]
+        )
+    );
+    // No weapon for this type from its team (an ugnaught): an imperial's stance.
+    assert_eq!(
+        gear("ugnaught_imp", 0),
+        (pose("BOTH_STAND4", "BOTH_STAND4"), vec![])
+    );
+    // A reborn officer's pistols, one in each hand, arms down.
+    let pistol = "models/weapons2/blaster_pistol/blaster_pistol_w.glm";
+    assert_eq!(
+        gear("cultist", 0),
+        (
+            pose("BOTH_STAND3", "BOTH_STAND1"),
+            vec![(pistol.into(), "*r_hand"), (pistol.into(), "*l_hand")]
+        )
+    );
+    // Neutrals hold nothing, though they stand as with their weapon.
+    assert_eq!(
+        gear("ugnaught", 0),
+        (pose("BOTH_STAND3", "TORSO_WEAPONIDLE3"), vec![])
+    );
+    // A weapon past the detonation pack is no gun to the legs.
+    assert_eq!(
+        gear("noghri", 0),
+        (
+            pose("BOTH_STAND1", "TORSO_WEAPONIDLE3"),
+            vec![(
+                "models/weapons2/noghri_stick/noghri_stick_w.glm".into(),
+                "*r_hand"
+            )]
+        )
+    );
+}
+
+#[test]
+fn weapon_models_become_their_ghoul2_models() {
+    assert_eq!(
+        attached_model("models/weapons2/blaster_r/blaster.md3"),
+        "models/weapons2/blaster_r/blaster_w.glm"
+    );
+    assert_eq!(
+        attached_model("models/weapons2/saber/saber_w.md3"),
+        "models/weapons2/saber/saber_w.glm"
+    );
+    assert_eq!(
+        attached_model("models/weapons2/noweap/noweap.md3"),
+        "models/weapons2/noweap/noweap.glm"
+    );
+    assert_eq!(attached_model("models/a/b.glm"), "models/a/b.glm");
+    // A saber no block names keeps the default hilt.
+    assert_eq!(
+        saber_look(SABERS, "nothing").model,
+        "models/weapons2/saber_reborn/saber_w.glm"
+    );
 }

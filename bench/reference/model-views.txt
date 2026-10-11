@@ -8,10 +8,10 @@
 # sight, stamp_crates brush entities (containers, stairs), not drawn yet. The
 # t2_dpred rack views look at a row of gun and ammo racks holding weapons (Ghoul2
 # items); dpred_racks also shows world flares the original does not draw. The NPC
-# views look at NPCs that spawn with the map, frozen as the capture script leaves
-# them: dpred_troopers two stormtroopers from behind, vjun2_officer an alternate
-# officer (its pauldron shown by stofficeralt.npc, the second block of that name),
-# kor2_troopers two stormtroopers by a landed shuttle.
+# views look at NPCs that spawn with the map, frozen from the first frame by the
+# capture script: dpred_troopers two stormtroopers from behind, vjun2_officer an
+# alternate officer (its pauldron shown by stofficeralt.npc, the second block of
+# that name), kor2_troopers two stormtroopers by a landed shuttle.
 # Candidates whose capture had undrawn regions were dropped: single player leaves
 # the screen uncleared, and draws only the areas the player's snapshot marks
 # visible (none from an eye in solid).

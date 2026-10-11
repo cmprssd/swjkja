@@ -89,8 +89,30 @@ pub struct Ghoul2 {
     /// The entity's radius (`s.radius`): the renderer culls it by a sphere of this
     /// radius around its origin, times its largest scale.
     pub radius: f32,
-    /// Posed as an NPC starts (its skeleton's `BOTH_STAND1`), or at frame 0.
-    pub stand: bool,
+    /// The animations it stands in, or `None` for frame 0 of its skeleton.
+    pub pose: Option<Pose>,
+    /// Models bolted to it, in the order the original attaches them.
+    pub attached: Vec<Attached>,
+}
+
+/// The animations (named as in `animation.cfg`) an NPC's legs and torso start
+/// in: the legs' on bone "model_root", the torso's on "lower_lumbar" and "Motion"
+/// (`PM_SetAnimFinal`), every other bone playing its parent's. A part whose
+/// animation the skeleton lacks stays in "BOTH_STAND1", as it started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pose {
+    pub legs: &'static str,
+    pub torso: &'static str,
+}
+
+/// A Ghoul2 model bolted to another (`G_CreateG2AttachedWeaponModel`), posed at
+/// frame 0 of its skeleton from where the bolt is, with its own shaders or a skin.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Attached {
+    pub model: String,
+    /// The surface of the carrier it is bolted to, as "*r_hand".
+    pub bolt: &'static str,
+    pub skin: Option<String>,
 }
 
 /// `atof`: the longest leading number, 0 for none.
@@ -508,7 +530,8 @@ fn rack_item(item: Item, origin: Vec3, angles: Vec3, right: f32, up: f32) -> Sta
             skin: None,
             switches: Vec::new(),
             radius: ITEM_RADIUS,
-            stand: false,
+            pose: None,
+            attached: Vec::new(),
         });
     }
     m

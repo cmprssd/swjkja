@@ -1,5 +1,5 @@
 use swjkja_model::gla::{Gla, IDENTITY, Mat34, ROOT, multiply, uncompress};
-use swjkja_model::glm::{Glm, SURFACE_IS_BOLT, SURFACE_NO_DESCENDANTS, SURFACE_OFF, skin};
+use swjkja_model::glm::{Glm, SURFACE_IS_BOLT, SURFACE_NO_DESCENDANTS, SURFACE_OFF, bolt, skin};
 use swjkja_model::skin::Skin;
 
 fn ints(v: &[i32]) -> Vec<u8> {
@@ -124,6 +124,51 @@ fn poses_chain_parents_listed_after_their_children() {
 }
 
 #[test]
+fn bones_play_their_own_frame_or_their_parents() {
+    // 0 <- 1 <- 2 and 0 <- 3; bone 1 plays frame 7, the root frame 5 or nothing.
+    let t = comp([1.0, 0.0, 0.0, 0.0], [0.0; 3]);
+    let gla = Gla::parse(&gla(&[-1, 0, 1, 0], &[t, t, t, t])).unwrap();
+    assert_eq!(gla.frames(&[(1, 7)]), [0, 7, 7, 0]);
+    assert_eq!(gla.frames(&[(0, 5), (1, 7)]), [5, 7, 7, 5]);
+    // The last frame given for a bone wins.
+    assert_eq!(gla.frames(&[(0, 5), (0, 2)]), [2; 4]);
+    assert_eq!(gla.find_bone("BONE2"), Some(2));
+    assert_eq!(gla.find_bone("bone9"), None);
+}
+
+#[test]
+fn an_attached_model_hangs_from_its_root() {
+    // Bone 1 moves 10 along its parent's x.
+    let t = |x| comp([1.0, 0.0, 0.0, 0.0], [x, 0.0, 0.0]);
+    let gla = Gla::parse(&gla(&[-1, 0], &[t(0.0), t(10.0)])).unwrap();
+    let root = translation([1.0, 2.0, 3.0]);
+    let pose = gla.pose_frames(&root, &[0, 0]);
+    assert!(close(&pose[1], &translation([11.0, 2.0, 3.0])), "{pose:?}");
+}
+
+#[test]
+fn tags_give_axes_from_their_triangle() {
+    // The longest side runs +x (vertex 0 to 1), the shortest -y (vertex 2 to 0);
+    // the origin is vertex 2.
+    let hierarchy: [Hier; 1] = [("*r_hand", SURFACE_IS_BOLT, "", -1, &[])];
+    let points = [[0.0; 3], [4.0, 0.0, 0.0], [0.0, 2.0, 0.0]];
+    let surfaces = [surface_at(0, &[0], ONE_WEIGHT, points)];
+    let glm = Glm::parse(&glm(&hierarchy, 1, &surfaces)).unwrap();
+    // The attached model's x along the shortest side, its y along the longest,
+    // its z against their cross product (which points down).
+    let expected = [
+        [0.0, 1.0, 0.0, 0.0],
+        [-1.0, 0.0, 0.0, 2.0],
+        [0.0, 0.0, 1.0, 0.0],
+    ];
+    let m = bolt(&glm, 0, &[IDENTITY]).unwrap();
+    assert!(close(&m, &expected), "{m:?}");
+    // Posed: the tag moves with its bone.
+    let m = bolt(&glm, 0, &[translation([0.0, 0.0, 5.0])]).unwrap();
+    assert_eq!([m[0][3], m[1][3], m[2][3]], [0.0, 2.0, 5.0]);
+}
+
+#[test]
 fn skeletons_with_a_second_root_or_a_parent_loop_are_refused() {
     let t = comp([1.0, 0.0, 0.0, 0.0], [0.0; 3]);
     let err = Gla::parse(&gla(&[-1, -1], &[t, t])).unwrap_err();
@@ -138,6 +183,12 @@ type Hier<'a> = (&'a str, u32, &'a str, i32, &'a [i32]);
 /// One triangle: vertex `v` at x = v, weighted by `weights` (packed word and low
 /// bytes), with `refs` as the surface's bone references.
 fn surface(index: i32, refs: &[i32], weights: (u32, [u8; 4])) -> Vec<u8> {
+    let points = [[0.0; 3], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+    surface_at(index, refs, weights, points)
+}
+
+/// One triangle of vertices at `points`.
+fn surface_at(index: i32, refs: &[i32], weights: (u32, [u8; 4]), points: [[f32; 3]; 3]) -> Vec<u8> {
     let ofs_refs = 40;
     let ofs_triangles = ofs_refs + 4 * refs.len();
     let ofs_verts = ofs_triangles + 12;
@@ -156,8 +207,9 @@ fn surface(index: i32, refs: &[i32], weights: (u32, [u8; 4])) -> Vec<u8> {
     ]);
     b.extend(ints(refs));
     b.extend(ints(&[0, 1, 2]));
-    for v in 0..3 {
-        b.extend(floats(&[0.0, 0.0, 1.0, v as f32, 0.0, 0.0]));
+    for p in points {
+        b.extend(floats(&[0.0, 0.0, 1.0]));
+        b.extend(floats(&p));
         b.extend(weights.0.to_le_bytes());
         b.extend(weights.1);
     }

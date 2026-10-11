@@ -221,6 +221,41 @@ impl Gla {
     /// entity's: each bone's parent's after its own, the root bone's [`ROOT`]
     /// (`G2_TransformBone`). These skin the mesh's vertices directly.
     pub fn pose(&self, frame: usize) -> Vec<Mat34> {
+        self.pose_frames(&ROOT, &vec![frame; self.bones.len()])
+    }
+
+    /// The bone named `name`, ignoring case (`G2API_GetBoneIndex`).
+    pub fn find_bone(&self, name: &str) -> Option<usize> {
+        self.bones
+            .iter()
+            .position(|b| b.name.eq_ignore_ascii_case(name))
+    }
+
+    /// Each bone's frame when the bones of `anims` play their frames (bone, frame;
+    /// the last of a bone wins) and every other bone plays its parent's
+    /// (`CBoneCache::EvalLow`), the root bone frame 0 unless set.
+    pub fn frames(&self, anims: &[(usize, usize)]) -> Vec<usize> {
+        let mut own = vec![None; self.bones.len()];
+        for &(bone, frame) in anims {
+            own[bone] = Some(frame);
+        }
+        (0..self.bones.len())
+            .map(|mut b| {
+                loop {
+                    match (own[b], self.bones[b].parent) {
+                        (Some(frame), _) => break frame,
+                        (None, Some(parent)) => b = parent,
+                        (None, None) => break 0,
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// Every bone's transform with each bone in its own frame of `frames` (one per
+    /// bone, each below `frame_count`), the root bone's parent `root`
+    /// (`G2_TransformGhoulBones`; an attached model's root is its bolt).
+    pub fn pose_frames(&self, root: &Mat34, frames: &[usize]) -> Vec<Mat34> {
         let mut pose: Vec<Option<Mat34>> = vec![None; self.bones.len()];
         for b in 0..self.bones.len() {
             // Pose the unposed chain above this bone, from the top down.
@@ -235,8 +270,8 @@ impl Gla {
                 if pose[c].is_some() {
                     continue;
                 }
-                let parent = self.bones[c].parent.map_or(ROOT, |p| pose[p].unwrap());
-                pose[c] = Some(multiply(&parent, &self.local(frame, c)));
+                let parent = self.bones[c].parent.map_or(*root, |p| pose[p].unwrap());
+                pose[c] = Some(multiply(&parent, &self.local(frames[c], c)));
             }
         }
         pose.into_iter().map(Option::unwrap).collect()

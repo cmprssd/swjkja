@@ -112,12 +112,18 @@ fn single_player_npcs_find_their_looks() {
         return;
     };
     let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
-    let files: Vec<Vec<u8>> = vfs
-        .list("ext_data/npcs", ".npc")
-        .iter()
-        .map(|f| vfs.read(&format!("ext_data/npcs/{f}")).unwrap())
-        .collect();
-    let parms = npc::join_parms(files.iter().map(Vec::as_slice));
+    let text = |folder: &str, ext: &str| {
+        let files: Vec<Vec<u8>> = vfs
+            .list(folder, ext)
+            .iter()
+            .map(|f| vfs.read(&format!("{folder}/{f}")).unwrap())
+            .collect();
+        npc::join_parms(files.iter().map(Vec::as_slice))
+    };
+    let (parms, sabers) = (
+        text("ext_data/npcs", ".npc"),
+        text("ext_data/sabers", ".sab"),
+    );
     let mut maps: Vec<&str> = vfs
         .files()
         .filter(|f| f.ends_with(".bsp") && !f.starts_with("maps/mp/"))
@@ -125,6 +131,8 @@ fn single_player_npcs_find_their_looks() {
     maps.sort_unstable();
     let (mut spawns, mut drawn) = (0, 0);
     let mut not_drawn = std::collections::BTreeSet::new();
+    let mut poses = std::collections::BTreeMap::new();
+    let mut held = std::collections::BTreeMap::new();
     for name in &maps {
         let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
         let rules = Rules::for_map(name);
@@ -144,13 +152,17 @@ fn single_player_npcs_find_their_looks() {
                 }
             }
         }
-        let models = npc::npc_models(&bsp.entities, rules, &parms);
-        assert!(
-            models
-                .iter()
-                .all(|m| m.ghoul2.as_ref().is_some_and(|g| g.stand))
-        );
+        for m in npc::npc_models(&bsp.entities, rules, &parms, &sabers) {
+            let g = m.ghoul2.unwrap();
+            let pose = g.pose.unwrap();
+            *poses.entry((pose.legs, pose.torso)).or_insert(0) += 1;
+            for a in g.attached {
+                *held.entry(a.model).or_insert(0) += 1;
+            }
+        }
     }
+    eprintln!("poses: {poses:?}");
+    eprintln!("held: {held:?}");
     eprintln!("{spawns} NPCs spawn at load, {drawn} drawn; not drawn: {not_drawn:?}");
     // Counted independently with Python: 267 spawners without a targetname, less 21
     // vehicles, 1 left out at the easiest skill, and 0 typeless spawners. The two
