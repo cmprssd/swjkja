@@ -434,3 +434,46 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   taspir2 (scripted crates, thrown later) land 24 and 40 units below where they are
   placed: the note in the breakables entry above, that three hang 2000 units above
   any floor, was wrong (a `bespin/n_floor01` brush lies under all three).
+
+## 2026-10-11: Single player's NPCs at the frame the original reaches (decided by Claude, pending review)
+
+- **The reference captures pin the original's ghoul2 clock too**: with
+  `cg_swjkjaTime` set, the client poses ghoul2 models at that time
+  (`G2API_SetTime`), as the cgame already pinned the shader clock. Asked first (it
+  meant rebuilding OpenJK and opening game windows): before, a looping or held
+  animation's frame depended on how long the capture ran, which no rule can
+  reproduce. The patched cgame also prints each NPC's legs and torso animation as
+  ghoul2 holds it (start time, frames, speed), which `capture-reference.sh` keeps as
+  `<map>-npcs.txt`; console notify lines are off (`con_notifytime 0`) so the log
+  stays out of the screenshots. The three NPC views were captured again.
+- **NPCs standing still play their stance's idle animation after five seconds**
+  (`G_CheckClientIdle`): on the first server frame at which the level's time is more
+  than 5000 ms past the NPC's `idleTime`, both parts play `BOTH_STAND1IDLE1`,
+  `BOTH_STAND3IDLE1` or `BOTH_STAND5IDLE1` for those stances (`BOTH_STAND2` picks
+  one of two idles at random: the first), held for its length less a frame; the
+  stance comes back, and the next idle 5 s after its full length (plus 0 of a
+  random 0 to 2 s). The log found every NPC in the three views in its idle, not its
+  stance.
+- **Times**: the server's first frame is at 1550 ms and frames are 50 ms apart
+  (`SV_SpawnServer`, `sv_fps` 20). `PM_SetAnimFinal` starts an animation at the
+  client's time when it has one and the level's otherwise; the client draws by a
+  clock one frame behind the level's (measured: idles the level starts at 5050 start
+  at 4989-5003 on the client's), so an idle starts 50 ms before its server frame,
+  and the stance at 1550 (no client time yet). The views' time is the client's.
+- **`idleTime` stays 0 for an NPC still from the start; one that lands on a slope
+  moves on its first frame (1550)**: measured with a temporary log of every NPC's
+  state over the first second (not kept). NPCs that fell 8 units onto flat floor
+  were already still; the three that landed on sloping ground or a ramp had their
+  `idleTime` set at 1550, consistent with landing clipping the fall's speed into
+  the slope's plane. `settle` reports it: a fall of more than a quarter unit
+  (`PM_GroundTrace`'s reach) onto a plane that is not flat. Longer falls (more
+  than one frame in the air) are not modelled.
+- **Frames**: ghoul2's `G2_TimingModel`: frame = first + elapsed / 50 ms x speed (50 /
+  the animation's ms per frame), wrapping over all its frames when it loops (the
+  last lerping into the first), held on its last when it does not; each bone's
+  transform is lerped component by component toward the next frame
+  (`CBoneCache::EvalLow`). Blending from the previous animation (100 ms) is left
+  out; animations played backwards stay at their start (no stance or idle does).
+- **Models are posed once, when the map loads, at a given time**: `render_world` at
+  the map's first view's time (every NPC view is at 12345 ms), the viewer at 0.
+  Animating them as time passes is the next step.

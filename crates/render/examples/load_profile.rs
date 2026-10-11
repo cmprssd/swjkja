@@ -40,6 +40,7 @@ fn main() {
                 &bsp,
                 &world,
                 swjkja_world::static_model::Rules::for_map(&format!("maps/{map}.bsp")),
+                0.0,
             )
             .unwrap();
             let renderer_time = t.elapsed();

@@ -1,4 +1,4 @@
-use swjkja_model::gla::{Gla, IDENTITY, Mat34, ROOT, multiply, uncompress};
+use swjkja_model::gla::{Frame, Gla, IDENTITY, Mat34, ROOT, multiply, uncompress};
 use swjkja_model::glm::{Glm, SURFACE_IS_BOLT, SURFACE_NO_DESCENDANTS, SURFACE_OFF, bolt, skin};
 use swjkja_model::skin::Skin;
 
@@ -38,18 +38,24 @@ fn comp(q: [f32; 4], t: [f32; 3]) -> [u8; 14] {
 /// A skeleton with `parents` (-1 for the root) and one frame, bone `b` posed by
 /// `bones[b]`.
 fn gla(parents: &[i32], bones: &[[u8; 14]]) -> Vec<u8> {
+    gla_frames(parents, &[bones])
+}
+
+/// A skeleton whose frame f gives bone i `frames[f][i]`.
+fn gla_frames(parents: &[i32], frames: &[&[[u8; 14]]]) -> Vec<u8> {
     let n = parents.len();
+    let f = frames.len();
     let skel_bytes = 64 + 4 + 4 + 48 * 2 + 4;
     let ofs_skel = 100 + 4 * n;
     let ofs_frames = ofs_skel + n * skel_bytes;
-    let ofs_pool = (ofs_frames + 3 * n + 3) & !3;
-    let ofs_end = ofs_pool + 14 * n;
+    let ofs_pool = (ofs_frames + 3 * n * f + 3) & !3;
+    let ofs_end = ofs_pool + 14 * n * f;
     let mut b = b"2LGA".to_vec();
     b.extend(ints(&[6]));
     b.extend(name("test", 64));
     b.extend(floats(&[1.0]));
     b.extend(ints(&[
-        1,
+        f as i32,
         ofs_frames as i32,
         n as i32,
         ofs_pool as i32,
@@ -68,12 +74,12 @@ fn gla(parents: &[i32], bones: &[[u8; 14]]) -> Vec<u8> {
         b.extend(floats(&IDENTITY.concat()));
         b.extend(ints(&[0]));
     }
-    // Frame 0 points bone i at pool entry i.
-    for i in 0..n {
+    // Frame f points bone i at pool entry f * n + i.
+    for i in 0..n * f {
         b.extend(&(i as u32).to_le_bytes()[..3]);
     }
     b.resize(ofs_pool, 0);
-    for bone in bones {
+    for bone in frames.iter().flat_map(|bones| bones.iter()) {
         b.extend(bone);
     }
     b
@@ -134,6 +140,27 @@ fn bones_play_their_own_frame_or_their_parents() {
     assert_eq!(gla.frames(&[(0, 5), (0, 2)]), [2; 4]);
     assert_eq!(gla.find_bone("BONE2"), Some(2));
     assert_eq!(gla.find_bone("bone9"), None);
+}
+
+#[test]
+fn a_bone_between_frames_lerps_its_transform() {
+    // Bone 1 sits 10, then 20 along its parent's x; a quarter of the way: 12.5.
+    let t = |x| comp([1.0, 0.0, 0.0, 0.0], [x, 0.0, 0.0]);
+    let gla = Gla::parse(&gla_frames(
+        &[-1, 0],
+        &[&[t(0.0), t(10.0)], &[t(0.0), t(20.0)]],
+    ))
+    .unwrap();
+    let at = Frame {
+        frame: 0,
+        next: 1,
+        lerp: 0.25,
+    };
+    let pose = gla.pose_frames(&IDENTITY, &gla.frames(&[(0, at)]));
+    assert!(close(&pose[1], &translation([12.5, 0.0, 0.0])), "{pose:?}");
+    // Frame 1 alone, given as a plain frame number.
+    let pose = gla.pose_frames(&IDENTITY, &[1, 1]);
+    assert!(close(&pose[1], &translation([20.0, 0.0, 0.0])), "{pose:?}");
 }
 
 #[test]

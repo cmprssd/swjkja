@@ -11,6 +11,25 @@ use crate::{Error, Reader, bail};
 /// A bone's transform: three rows of rotation and translation (`mdxaBone_t`).
 pub type Mat34 = [[f32; 4]; 3];
 
+/// Where a bone is in its animation (`G2_TimingModel`'s current frame, new frame
+/// and lerp): frame `frame`, `lerp` of the way to frame `next`.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Frame {
+    pub frame: usize,
+    pub next: usize,
+    pub lerp: f32,
+}
+
+impl From<usize> for Frame {
+    fn from(frame: usize) -> Self {
+        Self {
+            frame,
+            next: frame,
+            lerp: 0.0,
+        }
+    }
+}
+
 pub const IDENTITY: Mat34 = [
     [1.0, 0.0, 0.0, 0.0],
     [0.0, 1.0, 0.0, 0.0],
@@ -231,10 +250,24 @@ impl Gla {
             .position(|b| b.name.eq_ignore_ascii_case(name))
     }
 
+    /// Bone `bone`'s transform relative to its parent at `frame`: its frame's,
+    /// lerped component by component toward the next one's (`CBoneCache::EvalLow`).
+    pub fn local_at(&self, frame: Frame, bone: usize) -> Mat34 {
+        let current = self.local(frame.frame, bone);
+        if frame.lerp == 0.0 {
+            return current;
+        }
+        let next = self.local(frame.next, bone);
+        let back = 1.0 - frame.lerp;
+        std::array::from_fn(|r| {
+            std::array::from_fn(|c| frame.lerp * next[r][c] + back * current[r][c])
+        })
+    }
+
     /// Each bone's frame when the bones of `anims` play their frames (bone, frame;
     /// the last of a bone wins) and every other bone plays its parent's
     /// (`CBoneCache::EvalLow`), the root bone frame 0 unless set.
-    pub fn frames(&self, anims: &[(usize, usize)]) -> Vec<usize> {
+    pub fn frames<T: Copy + Default>(&self, anims: &[(usize, T)]) -> Vec<T> {
         let mut own = vec![None; self.bones.len()];
         for &(bone, frame) in anims {
             own[bone] = Some(frame);
@@ -245,7 +278,7 @@ impl Gla {
                     match (own[b], self.bones[b].parent) {
                         (Some(frame), _) => break frame,
                         (None, Some(parent)) => b = parent,
-                        (None, None) => break 0,
+                        (None, None) => break T::default(),
                     }
                 }
             })
@@ -255,7 +288,7 @@ impl Gla {
     /// Every bone's transform with each bone in its own frame of `frames` (one per
     /// bone, each below `frame_count`), the root bone's parent `root`
     /// (`G2_TransformGhoulBones`; an attached model's root is its bolt).
-    pub fn pose_frames(&self, root: &Mat34, frames: &[usize]) -> Vec<Mat34> {
+    pub fn pose_frames<F: Copy + Into<Frame>>(&self, root: &Mat34, frames: &[F]) -> Vec<Mat34> {
         let mut pose: Vec<Option<Mat34>> = vec![None; self.bones.len()];
         for b in 0..self.bones.len() {
             // Pose the unposed chain above this bone, from the top down.
@@ -271,7 +304,7 @@ impl Gla {
                     continue;
                 }
                 let parent = self.bones[c].parent.map_or(*root, |p| pose[p].unwrap());
-                pose[c] = Some(multiply(&parent, &self.local(frames[c], c)));
+                pose[c] = Some(multiply(&parent, &self.local_at(frames[c].into(), c)));
             }
         }
         pose.into_iter().map(Option::unwrap).collect()

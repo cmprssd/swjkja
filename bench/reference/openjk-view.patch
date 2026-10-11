@@ -1,3 +1,157 @@
+diff --git a/code/cgame/cg_lights.cpp b/code/cgame/cg_lights.cpp
+index 4891e13..51469e2 100644
+--- a/code/cgame/cg_lights.cpp
++++ b/code/cgame/cg_lights.cpp
+@@ -60,7 +60,8 @@ void CG_RunLightStyles (void)
+ 	int		i;
+ 	clightstyle_t	*ls;
+ 
+-	ofs = cg.time / 50;
++	// swjkja reference capture: a pinned time (ms) for light styles.
++	ofs = ( cg_swjkjaTime.string[0] ? cg_swjkjaTime.integer : cg.time ) / 50;
+ //	if (ofs == lastofs)
+ //		return;
+ 	lastofs = ofs;
+diff --git a/code/cgame/cg_local.h b/code/cgame/cg_local.h
+index 8c0960f..66ee7f6 100644
+--- a/code/cgame/cg_local.h
++++ b/code/cgame/cg_local.h
+@@ -603,6 +603,8 @@ extern	vmCvar_t		cg_autoswitch;
+ extern	vmCvar_t		cg_simpleItems;
+ extern	vmCvar_t		cg_fov;
+ extern	vmCvar_t		cg_fovAspectAdjust;
++extern	vmCvar_t		cg_swjkjaView;
++extern	vmCvar_t		cg_swjkjaTime;
+ extern	vmCvar_t		cg_endcredits;
+ extern	vmCvar_t		cg_updatedDataPadForcePower1;
+ extern	vmCvar_t		cg_updatedDataPadForcePower2;
+diff --git a/code/cgame/cg_main.cpp b/code/cgame/cg_main.cpp
+index db6f7dc..6c6aa0d 100644
+--- a/code/cgame/cg_main.cpp
++++ b/code/cgame/cg_main.cpp
+@@ -278,6 +278,8 @@ vmCvar_t	cg_autoswitch;
+ vmCvar_t	cg_simpleItems;
+ vmCvar_t	cg_fov;
+ vmCvar_t	cg_fovAspectAdjust;
++vmCvar_t	cg_swjkjaView;
++vmCvar_t	cg_swjkjaTime;
+ vmCvar_t	cg_endcredits;
+ vmCvar_t	cg_updatedDataPadForcePower1;
+ vmCvar_t	cg_updatedDataPadForcePower2;
+@@ -353,6 +355,8 @@ static cvarTable_t cvarTable[] = {
+ 	{ &cg_drawGun, "cg_drawGun", "1", CVAR_ARCHIVE },
+ 	{ &cg_fov, "cg_fov", "80", CVAR_ARCHIVE },
+ 	{ &cg_fovAspectAdjust, "cg_fovAspectAdjust", "0", CVAR_ARCHIVE },
++	{ &cg_swjkjaView, "cg_swjkjaView", "", 0 },
++	{ &cg_swjkjaTime, "cg_swjkjaTime", "", 0 },
+ 	{ &cg_stereoSeparation, "cg_stereoSeparation", "0.4", CVAR_ARCHIVE  },
+ 	{ &cg_shadows, "cg_shadows", "1", CVAR_ARCHIVE  },
+ 	{ &cg_renderToTextureFX, "cg_renderToTextureFX", "1", CVAR_ARCHIVE  },
+diff --git a/code/cgame/cg_view.cpp b/code/cgame/cg_view.cpp
+index c5a8fd0..4afe019 100644
+--- a/code/cgame/cg_view.cpp
++++ b/code/cgame/cg_view.cpp
+@@ -1988,10 +1988,48 @@ extern void CG_BuildSolidList( void );
+ extern void CG_ClearHealthBarEnts( void );
+ extern vec3_t	serverViewOrg;
+ static qboolean cg_rangedFogging = qfalse; //so we know if we should go back to normal fog
++// swjkja reference capture: prints each NPC's legs and torso animation as ghoul2
++// holds it (bones model_root and lower_lumbar), once per pinned time, so the new
++// renderer's animation timing can be checked against the original's. Times are
++// relative to the first frame drawn on the map (as the pinned ghoul2 time is).
++static int swjkjaFirst = -1;
++static void CG_SwjkjaLogNPCs( void ) {
++	static int logged = -1;
++	const int first = swjkjaFirst;
++	if ( !cg_swjkjaTime.string[0] || logged == cg_swjkjaTime.integer ) {
++		return;
++	}
++	logged = cg_swjkjaTime.integer;
++	for ( int i = 0; i < ENTITYNUM_WORLD; i++ ) {
++		gentity_t *ent = &g_entities[i];
++		if ( !ent->inuse || !ent->client || !ent->NPC || ent->playerModel < 0 || !ent->ghoul2.size() ) {
++			continue;
++		}
++		CGhoul2Info &g2 = ent->ghoul2[ent->playerModel];
++		const int bones[2] = { ent->rootBone, ent->lowerLumbarBone };
++		for ( int b = 0; b < 2; b++ ) {
++			if ( bones[b] < 0 || bones[b] >= (int)g2.mBlist.size() ) {
++				continue;
++			}
++			const boneInfo_t &bone = g2.mBlist[bones[b]];
++			Com_Printf( "swjkja npc %d %s %.1f %.1f %.1f anim %d %s start %d end %d time %d speed %.4f flags %d pause %d blend %d %d %.2f\n",
++				i, ent->NPC_type, ent->currentOrigin[0], ent->currentOrigin[1], ent->currentOrigin[2],
++				b ? ent->client->ps.torsoAnim : ent->client->ps.legsAnim, b ? "torso" : "legs",
++				bone.startFrame, bone.endFrame, bone.startTime - first, bone.animSpeed, bone.flags, bone.pauseTime,
++				bone.blendStart - first, bone.blendTime, bone.blendFrame );
++		}
++	}
++}
++
+ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
+ 	qboolean	inwater = qfalse;
+ 
+ 	cg.time = serverTime;
++	// swjkja reference capture: the first frame drawn on the map, as the client
++	// keeps it for the pinned ghoul2 time.
++	if ( swjkjaFirst < 0 || cg.time < swjkjaFirst ) {
++		swjkjaFirst = cg.time;
++	}
+ 
+ 	// update cvars
+ 	CG_UpdateCvars();
+@@ -2112,6 +2150,17 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
+ 		// build cg.refdef
+ 		inwater = CG_CalcViewValues();
+ 	}
++	// swjkja reference capture: force an exact view, "x y z pitch yaw roll", at cg_fov
++	// (also over a camera script's view).
++	if ( cg_swjkjaView.string[0] ) {
++		vec3_t o, a;
++		if ( sscanf( cg_swjkjaView.string, "%f %f %f %f %f %f", &o[0], &o[1], &o[2], &a[0], &a[1], &a[2] ) == 6 ) {
++			VectorCopy( o, cg.refdef.vieworg );
++			VectorCopy( a, cg.refdefViewAngles );
++			AnglesToAxis( a, cg.refdef.viewaxis );
++			CG_CalcFOVFromX( cg_fov.value );
++		}
++	}
+ 
+ 	if (cg.zoomMode)
+ 	{ //zooming with binoculars or sniper, set the fog range based on the zoom level -rww
+@@ -2126,6 +2175,11 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
+ 	}
+ 
+ 	cg.refdef.time = cg.time;
++	// swjkja reference capture: a pinned time (ms) for shader animation.
++	if ( cg_swjkjaTime.string[0] ) {
++		cg.refdef.time = cg_swjkjaTime.integer;
++	}
++	CG_SwjkjaLogNPCs();
+ 
+ 	CG_DrawSkyBoxPortal();
+ 
+diff --git a/code/client/cl_cgame.cpp b/code/client/cl_cgame.cpp
+index b9d7b6f..ae59cca 100644
+--- a/code/client/cl_cgame.cpp
++++ b/code/client/cl_cgame.cpp
+@@ -1473,7 +1473,16 @@ void CL_CGameRendering( stereoFrame_t stereo ) {
+ 	{
+ 		timei-=0;
+ 	}
+-	re.G2API_SetTime(cl.serverTime,G2T_CG_TIME);
++	// swjkja reference capture: with cg_swjkjaTime set, ghoul2 models are posed that
++	// long (ms) after the first frame drawn on this map, not at the server's time.
++	// NPCs start their standing animations as the player enters, at a time that
++	// depends on how long the map took to load.
++	static int swjkjaFirst = -1;
++	if ( swjkjaFirst < 0 || cl.serverTime < swjkjaFirst ) {
++		swjkjaFirst = cl.serverTime;
++	}
++	const char *swjkjaTime = Cvar_VariableString( "cg_swjkjaTime" );
++	re.G2API_SetTime(swjkjaTime[0] ? swjkjaFirst + atoi( swjkjaTime ) : cl.serverTime,G2T_CG_TIME);
+ 	VM_Call( CG_DRAW_ACTIVE_FRAME,timei, stereo, qfalse );
+ //	VM_Debug( 0 );
+ }
 diff --git a/codemp/cgame/cg_light.c b/codemp/cgame/cg_light.c
 index 976ae03..fd4daed 100644
 --- a/codemp/cgame/cg_light.c
@@ -138,85 +292,3 @@ index ceb9bd8..d899b2d 100644
  XCVAR_DEF( cg_fovAspectAdjust,					"0",					NULL,					CVAR_ARCHIVE )
  XCVAR_DEF( cg_fovViewmodel,						"0",					NULL,					CVAR_ARCHIVE )
  XCVAR_DEF( cg_fovViewmodelAdjust,				"1",					NULL,					CVAR_ARCHIVE )
-diff --git a/code/cgame/cg_lights.cpp b/code/cgame/cg_lights.cpp
-index 4891e13..51469e2 100644
---- a/code/cgame/cg_lights.cpp
-+++ b/code/cgame/cg_lights.cpp
-@@ -60,7 +60,8 @@ void CG_RunLightStyles (void)
- 	int		i;
- 	clightstyle_t	*ls;
- 
--	ofs = cg.time / 50;
-+	// swjkja reference capture: a pinned time (ms) for light styles.
-+	ofs = ( cg_swjkjaTime.string[0] ? cg_swjkjaTime.integer : cg.time ) / 50;
- //	if (ofs == lastofs)
- //		return;
- 	lastofs = ofs;
-diff --git a/code/cgame/cg_local.h b/code/cgame/cg_local.h
-index 8c0960f..66ee7f6 100644
---- a/code/cgame/cg_local.h
-+++ b/code/cgame/cg_local.h
-@@ -603,6 +603,8 @@ extern	vmCvar_t		cg_autoswitch;
- extern	vmCvar_t		cg_simpleItems;
- extern	vmCvar_t		cg_fov;
- extern	vmCvar_t		cg_fovAspectAdjust;
-+extern	vmCvar_t		cg_swjkjaView;
-+extern	vmCvar_t		cg_swjkjaTime;
- extern	vmCvar_t		cg_endcredits;
- extern	vmCvar_t		cg_updatedDataPadForcePower1;
- extern	vmCvar_t		cg_updatedDataPadForcePower2;
-diff --git a/code/cgame/cg_main.cpp b/code/cgame/cg_main.cpp
-index db6f7dc..6c6aa0d 100644
---- a/code/cgame/cg_main.cpp
-+++ b/code/cgame/cg_main.cpp
-@@ -278,6 +278,8 @@ vmCvar_t	cg_autoswitch;
- vmCvar_t	cg_simpleItems;
- vmCvar_t	cg_fov;
- vmCvar_t	cg_fovAspectAdjust;
-+vmCvar_t	cg_swjkjaView;
-+vmCvar_t	cg_swjkjaTime;
- vmCvar_t	cg_endcredits;
- vmCvar_t	cg_updatedDataPadForcePower1;
- vmCvar_t	cg_updatedDataPadForcePower2;
-@@ -353,6 +355,8 @@ static cvarTable_t cvarTable[] = {
- 	{ &cg_drawGun, "cg_drawGun", "1", CVAR_ARCHIVE },
- 	{ &cg_fov, "cg_fov", "80", CVAR_ARCHIVE },
- 	{ &cg_fovAspectAdjust, "cg_fovAspectAdjust", "0", CVAR_ARCHIVE },
-+	{ &cg_swjkjaView, "cg_swjkjaView", "", 0 },
-+	{ &cg_swjkjaTime, "cg_swjkjaTime", "", 0 },
- 	{ &cg_stereoSeparation, "cg_stereoSeparation", "0.4", CVAR_ARCHIVE  },
- 	{ &cg_shadows, "cg_shadows", "1", CVAR_ARCHIVE  },
- 	{ &cg_renderToTextureFX, "cg_renderToTextureFX", "1", CVAR_ARCHIVE  },
-diff --git a/code/cgame/cg_view.cpp b/code/cgame/cg_view.cpp
-index c5a8fd0..ae85e11 100644
---- a/code/cgame/cg_view.cpp
-+++ b/code/cgame/cg_view.cpp
-@@ -2112,6 +2112,17 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
- 		// build cg.refdef
- 		inwater = CG_CalcViewValues();
- 	}
-+	// swjkja reference capture: force an exact view, "x y z pitch yaw roll", at cg_fov
-+	// (also over a camera script's view).
-+	if ( cg_swjkjaView.string[0] ) {
-+		vec3_t o, a;
-+		if ( sscanf( cg_swjkjaView.string, "%f %f %f %f %f %f", &o[0], &o[1], &o[2], &a[0], &a[1], &a[2] ) == 6 ) {
-+			VectorCopy( o, cg.refdef.vieworg );
-+			VectorCopy( a, cg.refdefViewAngles );
-+			AnglesToAxis( a, cg.refdef.viewaxis );
-+			CG_CalcFOVFromX( cg_fov.value );
-+		}
-+	}
- 
- 	if (cg.zoomMode)
- 	{ //zooming with binoculars or sniper, set the fog range based on the zoom level -rww
-@@ -2126,6 +2137,10 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
- 	}
- 
- 	cg.refdef.time = cg.time;
-+	// swjkja reference capture: a pinned time (ms) for shader animation.
-+	if ( cg_swjkjaTime.string[0] ) {
-+		cg.refdef.time = cg_swjkjaTime.integer;
-+	}
- 
- 	CG_DrawSkyBoxPortal();
- 

@@ -278,37 +278,46 @@ were not rendered: both maps now stop `render_world` on the Windows GPU with
 Three views in `bench/reference/model-views.txt` look at NPCs that spawn with the
 map, captured with NPCs frozen from the first frame (`d_npcfreeze 1` before the map
 runs: their AI does not run, their movement frames do). The NPCs hold their
-weapons, bolted to their hands, stand as their first movement frames leave them
-(legs apart with a gun, the torso in the weapon's idle hold), dropped to the floor
-by a box trace against the map's brushes and solid entities; specular stages
-(`alphaGen lightingSpecular`) light their armour and weapons as the original does.
+weapons, bolted to their hands, dropped to the floor by a box trace against the
+map's brushes and solid entities, and stand as they do at the view's time: after
+five seconds standing still they play their stance's idle animation
+(`BOTH_STAND3IDLE1` for a gun), each bone at the frame ghoul2's timing has reached,
+lerped toward the next. Specular stages (`alphaGen lightingSpecular`) light their
+armour and weapons as the original does.
 
-| View | Mean difference | Before the drop | Around the NPCs | Around them, before the drop |
+The captures pin the original's ghoul2 clock to the view's time (12345 ms), as they
+pin the shader clock: before, each NPC's frame depended on how long the capture
+ran. They were captured again for this; "Before" is the previous step (each part at
+its stance's first frame) against the same captures.
+
+| View | Mean difference | Before | Around the NPCs | Before |
 |------|------|------|------|------|
-| dpred_troopers | 1.16 | 2.62 | 8.46 | 19.28 |
-| vjun2_officer | 0.60 | 0.64 | 4.59 | 5.21 |
-| kor2_troopers | 0.49 | 0.67 | 5.54 | 7.38 |
+| dpred_troopers | 1.13 | 1.17 | 4.55 / 5.81 | 5.87 / 6.29 |
+| vjun2_officer | 0.58 | 0.60 | 5.89 | 8.74 |
+| kor2_troopers | 0.39 | 0.49 | 2.81 | 5.98 |
 
-"Before the drop" is the previous step (NPCs at their spawners' height) against
-the same captures. "Around the NPCs" is the bounding box of the largest group of
-16-pixel blocks with more than a tenth of their pixels off by more than 16 in
-either render (the same box for both renders; a tighter box than the one this
-table used before, so its numbers are not comparable with the earlier ones). On
-t2_dpred the spawners sit 8 units above the floor, the stormtroopers now stand on
-it as in the reference. kor2's two move by under a unit (one down, one lifted out
-of the sloping sand) and vjun2's officer by 0.125, which these close views still
-show.
-Models, weapons, skins, places, facing, pose, height and lighting match. What still
-differs around them: the original draws blob shadows under NPCs and plays each
-animation from where its timing has reached, not its first frame; and the grass
-in the foreground of dpred's reference is not drawn here.
+"Around the NPCs" is the bounding box of the largest group of 16-pixel blocks with
+more than a tenth of their pixels off by more than 16 in either render (the same
+box for both renders). On dpred that group is now the foreground grass the
+reference draws and this renderer does not (14.69 here, 14.72 before), so the table
+gives a box around each of its two stormtroopers in front (x 540-630, y 390-640 and
+x 720-820, y 380-610). These numbers are not comparable with the earlier table's:
+the references changed.
+
+The patched cgame logs each NPC's animation timing in the capture (one
+`<map>-npcs.txt` per map): the idle starts at 4989-5003 ms on the client's clock for
+NPCs still from the start, 6538-6544 for those that land on a slope, as the rule
+here gives (5000, 6550). Poses now match; what still differs around them: the
+original draws blob shadows under NPCs, and an NPC that lands on a slope stops a
+little higher there (up to half a unit) than the box trace straight down puts it.
 
 The NPC views were first captured after about 600 frames of AI: the original had
 turned some NPCs (vjun2's officer by 90 degrees), which nothing at spawn decides.
 
 The other model views are unchanged (dpred_canopy 1.34, dpred_racks 7.14,
-dpred_guns 6.72, stamp_barrels 0.13, stamp_crates 5.00). stamp_barrels draws two
-NPCs (a cultist and the mutant rancor) behind the wall in both images.
+dpred_guns 6.72, stamp_barrels 0.13, stamp_crates 5.00, ffa5_lamps 0.17, ffa5_pipes
+3.87, ffa5_rings 0.22; against the earlier captures, pixel for pixel the same but
+stamp_barrels, whose two NPCs behind the wall now stand in their idle).
 
 ## Single-player ammo rack compared with the reference, 2026-10-10
 

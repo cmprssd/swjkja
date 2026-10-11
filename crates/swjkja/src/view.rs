@@ -285,6 +285,7 @@ fn load(gpu: &Arc<Gpu>, game_data: &Path, map: &str, done: &AtomicUsize) -> Resu
         &bsp,
         &world,
         swjkja_world::static_model::Rules::for_map(&file),
+        0.0,
     )
     .map_err(|e| e.to_string())?;
     step(4);
