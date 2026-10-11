@@ -40,7 +40,8 @@ for map in $maps; do
 		# player stands 128 units behind the eye: holding a saber, single player
 		# draws the player's body in third person, around the eye.
 		if [ "$sp" = 1 ]; then echo "exitview"; echo "wait 300"; echo "noclip"; fi
-		echo "set cg_draw2D 0; set r_drawentities $entities; set cg_drawGun 0"
+		# No console notify lines (the patched cgame logs NPC timing to the console).
+		echo "set cg_draw2D 0; set r_drawentities $entities; set cg_drawGun 0; set con_notifytime 0"
 		echo "wait 300"
 		grep -v '^#' "$views" | awk -v m="$map" -v sp="$sp" '$1 == m {
 			if (sp) printf "setviewpos %.0f %.0f %s %s\nwait 100\n", $3 - 128 * cos($7 * 3.14159265 / 180), $4 - 128 * sin($7 * 3.14159265 / 180), $5, $7
@@ -60,5 +61,9 @@ for map in $maps; do
 		+set cg_fov 80 +set r_textureMode GL_LINEAR_MIPMAP_NEAREST \
 		"${game[@]:1}" +devmap "$map" +exec capture >/dev/null
 	cp -f "$(wslpath "$HOME_WIN")/$BENCH_GAME/screenshots/"*.png "$out/"
+	# The patched cgame logs each NPC's animation timing once per view time.
+	if [ "$sp" = 1 ]; then
+		get qconsole.log | grep -a "swjkja npc" >"$out/$map-npcs.txt" || true
+	fi
 done
 ls -l "$out"

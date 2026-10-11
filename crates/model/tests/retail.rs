@@ -152,7 +152,7 @@ fn every_player_model_skin_loads_and_its_skeleton_stands() {
         let cfg = animation::config_file(&vfs, &model.glm.anim_name)
             .unwrap_or_else(|| panic!("{name}: no animation file"));
         let text = String::from_utf8_lossy(&vfs.read(&cfg).unwrap()).into_owned();
-        if let Some(frame) = animation::start_frame(&text, animation::STAND) {
+        if let Some(frame) = animation::find(&text, animation::STAND).map(|a| a.start()) {
             assert!(frame < model.gla.frame_count, "{name}: {frame}");
             standing += 1;
         }

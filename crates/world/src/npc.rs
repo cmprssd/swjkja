@@ -13,7 +13,7 @@ use swjkja_bsp::Entity;
 use swjkja_shader::text::Cursor;
 
 use crate::Vec3;
-use crate::collision::{Collision, MASK_NPCSOLID};
+use crate::collision::{Collision, MASK_NPCSOLID, MIN_WORLD_COORD};
 use crate::static_model::{
     Attached, Ghoul2, Pose, Rules, StaticModel, angles_to_axis, origin_and_angles, spawns_at,
 };
@@ -840,7 +840,74 @@ pub fn npc_gear(
         "WP_THERMAL" | "WP_TRIP_MINE" | "WP_DET_PACK" => "BOTH_STAND1",
         _ => "TORSO_WEAPONIDLE3",
     };
-    (Pose { legs, torso }, attached)
+    // G_CheckClientIdle: the stances with an idle (BOTH_STAND2 picks one of two at
+    // random: the first).
+    let idle = match legs {
+        "BOTH_STAND1" => Some("BOTH_STAND1IDLE1"),
+        "BOTH_STAND2" => Some("BOTH_STAND2IDLE1"),
+        "BOTH_STAND3" => Some("BOTH_STAND3IDLE1"),
+        "BOTH_STAND5" => Some("BOTH_STAND5IDLE1"),
+        _ => None,
+    };
+    (
+        Pose {
+            legs,
+            torso,
+            idle,
+            still_since: 0,
+        },
+        attached,
+    )
+}
+
+/// The level time (ms) of the server's first frame on a map: four settling frames
+/// from 1000 ms 100 ms apart and one more at 1400 ms leave the clock at 1500, and
+/// each frame then runs 50 ms later (`SV_SpawnServer`, `SV_Frame` at `sv_fps` 20).
+pub const FIRST_FRAME: i32 = 1550;
+/// Milliseconds between server frames.
+pub const FRAME_MS: i32 = 50;
+
+/// The first server frame after level time `t`.
+fn frame_after(t: i32) -> i32 {
+    FIRST_FRAME + ((t - FIRST_FRAME).div_euclid(FRAME_MS) + 1).max(0) * FRAME_MS
+}
+
+/// What an NPC standing in `pose` with nothing to do plays at `time` (ms, on the
+/// clock the client draws by), with `idle` its idle animation's hold and length
+/// (ms) from its animation file, or `None` if it has none: the legs' and torso's
+/// animations and the time they started.
+///
+/// Its stance starts on the first frame, the client's clock still at 0
+/// (`PM_SetAnimFinal` then takes the level's time). On the first frame at which it
+/// has stood still for more than five seconds of level time, both parts play the
+/// idle animation, held until its hold runs out; the next idle comes five seconds
+/// after its full length (plus a random 0 to 2 s: 0 here). The client draws by a
+/// clock one frame behind the level's, so an animation the server starts at level
+/// time t starts at t - 50 for the client.
+pub fn standing_at(
+    pose: &Pose,
+    idle: Option<(i32, i32)>,
+    time: i32,
+) -> (&'static str, &'static str, i32) {
+    let stance = |start| (pose.legs, pose.torso, start);
+    let (Some(name), Some((hold, length))) = (pose.idle, idle) else {
+        return stance(FIRST_FRAME);
+    };
+    let (mut since, mut start) = (pose.still_since, FIRST_FRAME);
+    loop {
+        let trigger = frame_after(since + 5000);
+        if time < trigger - FRAME_MS {
+            return stance(start);
+        }
+        // The hold counts down a frame at a time; the stance returns on the frame
+        // it runs out.
+        let end = frame_after(trigger + hold - 1);
+        if time < end - FRAME_MS {
+            return (name, name, trigger - FRAME_MS);
+        }
+        start = end - FRAME_MS;
+        since = trigger + length;
+    }
 }
 
 /// The models of the NPCs `entities` spawn under `rules`, with `parms` the `.npc`
@@ -872,7 +939,11 @@ pub fn npc_models(
                 format!("{folder}model_{}.skin", look.skin)
             };
             let scaled = look.scale.map(|s| s != 0.0 && s != 1.0);
-            let at = settle(world, n.origin, look.mins, look.maxs);
+            let (at, moving) = settle(world, n.origin, look.mins, look.maxs);
+            let pose = Pose {
+                still_since: if moving { FIRST_FRAME } else { 0 },
+                ..pose
+            };
             let mut origin = at;
             if scaled[2] {
                 origin[2] += 24.0 * (look.scale[2] - 1.0);
@@ -908,17 +979,31 @@ pub fn npc_models(
 /// (`Pmove` falls until `PM_GroundTrace` finds ground; with no sideways speed the
 /// fall ends where a box trace straight down does). An NPC stuck in solid, or with
 /// no floor below, stays where it is.
-pub fn settle(world: &Collision, origin: Vec3, mins: Vec3, maxs: Vec3) -> Vec3 {
+///
+/// Also whether it is still moving on its first frame that checks for idling
+/// (1550 ms): it fell (its floor lay further below than `PM_GroundTrace` looks, a
+/// quarter unit) onto a slope, where landing clips its fall into the slope's plane
+/// and leaves it sliding sideways for a frame. Falling onto flat ground or lifted
+/// out of a slope, it is already still (measured on t2_dpred and kor2).
+pub fn settle(world: &Collision, origin: Vec3, mins: Vec3, maxs: Vec3) -> (Vec3, bool) {
     let mut at = origin;
     let feet = [origin[0], origin[1], origin[2] + mins[2]];
     let tr = world.trace(origin, feet, [mins[0], mins[1], 0.0], maxs, MASK_NPCSOLID);
     if tr.start_solid || tr.all_solid {
-        return origin;
+        return (origin, false);
     }
     if tr.fraction < 1.0 {
         at = [tr.end[0], tr.end[1], tr.end[2] - mins[2]];
     }
-    world
-        .drop_to_floor(at, mins, maxs, MASK_NPCSOLID)
-        .unwrap_or(at)
+    let tr = world.trace(
+        at,
+        [at[0], at[1], MIN_WORLD_COORD],
+        mins,
+        maxs,
+        MASK_NPCSOLID,
+    );
+    if tr.all_solid || tr.start_solid || tr.fraction == 1.0 {
+        return (at, false);
+    }
+    (tr.end, at[2] - tr.end[2] > 0.25 && tr.normal[2] < 1.0)
 }

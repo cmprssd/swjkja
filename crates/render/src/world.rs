@@ -452,7 +452,9 @@ fn gpu_stage(s: &MaterialStage, env: Option<TexEnv>) -> GpuStage {
 
 impl WorldRenderer {
     /// Resolves and uploads everything the world model needs. Textures go into
-    /// `textures`, which must outlive the renderer.
+    /// `textures`, which must outlive the renderer. NPCs stand as they do at game
+    /// time `time` (seconds).
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         gpu: &Arc<Gpu>,
         textures: &mut TextureSet,
@@ -461,6 +463,7 @@ impl WorldRenderer {
         bsp: &Bsp,
         world: &World,
         rules: swjkja_world::static_model::Rules,
+        time: f32,
     ) -> Result<Self> {
         // The global fog (the one without a brush; fog numbers are 1-based) and its
         // parameters, from its shader's fogParms (red at 250 units if it has none, as
@@ -490,7 +493,14 @@ impl WorldRenderer {
             });
         }
 
-        let mut models = StaticModels::load(vfs, bsp, &fog_volumes, rules);
+        // Game time in whole milliseconds, as cg.time.
+        let mut models = StaticModels::load(
+            vfs,
+            bsp,
+            &fog_volumes,
+            rules,
+            (f64::from(time) * 1000.0).round() as i32,
+        );
 
         // Images: decode once, keep the decoded pixels to upload on first use. Every
         // image the map's shaders can ask for is decoded up front, in parallel; a name

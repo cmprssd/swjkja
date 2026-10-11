@@ -29,6 +29,7 @@ fn ffa5_static_models_cull_like_the_original() {
         &bsp,
         &fogs,
         swjkja_world::static_model::Rules::for_map("maps/mp/ffa5.bsp"),
+        0,
     );
     let vis = WorldVis::new(&bsp, vec![SurfaceCull::Never; bsp.surfaces.len()]);
     models.locate(&vis);
@@ -171,7 +172,7 @@ fn single_player_draws_no_models_from_a_view_in_solid() {
     };
     let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
     let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t2_dpred.bsp").unwrap()).unwrap();
-    let mut models = StaticModels::load(&vfs, &bsp, &[], Rules::for_map("maps/t2_dpred.bsp"));
+    let mut models = StaticModels::load(&vfs, &bsp, &[], Rules::for_map("maps/t2_dpred.bsp"), 0);
     let vis = WorldVis::new(&bsp, vec![SurfaceCull::Never; bsp.surfaces.len()]);
     models.locate(&vis);
     let camera = Camera::new([-2072.0, 1288.0, 580.0], [0.0, 225.0, 0.0], 1280, 720);
@@ -211,7 +212,7 @@ fn t3_stamp_entities_cull_like_the_original() {
     };
     let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
     let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t3_stamp.bsp").unwrap()).unwrap();
-    let mut models = StaticModels::load(&vfs, &bsp, &[], Rules::for_map("maps/t3_stamp.bsp"));
+    let mut models = StaticModels::load(&vfs, &bsp, &[], Rules::for_map("maps/t3_stamp.bsp"), 0);
     let vis = WorldVis::new(&bsp, vec![SurfaceCull::Never; bsp.surfaces.len()]);
     models.locate(&vis);
     let entities = models
@@ -290,7 +291,7 @@ fn t2_dpred_rack_weapons_draw_as_ghoul2_items() {
     };
     let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
     let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t2_dpred.bsp").unwrap()).unwrap();
-    let mut models = StaticModels::load(&vfs, &bsp, &[], Rules::for_map("maps/t2_dpred.bsp"));
+    let mut models = StaticModels::load(&vfs, &bsp, &[], Rules::for_map("maps/t2_dpred.bsp"), 0);
     let vis = WorldVis::new(&bsp, vec![SurfaceCull::Never; bsp.surfaces.len()]);
     models.locate(&vis);
     let weapons: Vec<usize> = (0..models.instances.len())
@@ -337,7 +338,7 @@ fn t2_dpred_stormtroopers_draw_skinned_and_armed() {
     };
     let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
     let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t2_dpred.bsp").unwrap()).unwrap();
-    let models = StaticModels::load(&vfs, &bsp, &[], Rules::for_map("maps/t2_dpred.bsp"));
+    let models = StaticModels::load(&vfs, &bsp, &[], Rules::for_map("maps/t2_dpred.bsp"), 0);
     let find = |origin: [f32; 3]| {
         models
             .instances

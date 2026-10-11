@@ -52,6 +52,8 @@ pub struct Trace {
     pub start_solid: bool,
     /// The box never left it.
     pub all_solid: bool,
+    /// The normal of the plane it stopped at (zero if it did not stop).
+    pub normal: Vec3,
 }
 
 impl Collision {
@@ -152,6 +154,7 @@ impl Collision {
             end,
             start_solid: false,
             all_solid: false,
+            normal: [0.0; 3],
         };
         // The sweep's bounds, for skipping brushes it cannot touch.
         let lo: Vec3 = [0, 1, 2].map(|i| start[i].min(end[i]) + mins[i] - 1.0);
@@ -190,6 +193,7 @@ fn dot(a: Vec3, b: Vec3) -> f32 {
 /// `CM_TraceThroughBrush` with `CM_PlaneCollision`, for an axis-aligned box.
 fn through_brush(trace: &mut Trace, b: &Brush, start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3) {
     let (mut enter, mut leave) = (-1.0f32, 1.0f32);
+    let mut clip = [0.0; 3];
     let (mut start_out, mut get_out) = (false, false);
     for &(normal, plane_dist) in &b.planes {
         // The plane pushed out to the box's corner that meets it first.
@@ -211,11 +215,10 @@ fn through_brush(trace: &mut Trace, b: &Brush, start: Vec3, end: Vec3, mins: Vec
             continue;
         }
         if d1 > d2 {
-            let f = d1 - SURFACE_CLIP_EPSILON;
-            if f < 0.0 {
-                enter = enter.max(0.0);
-            } else if f > enter * (d1 - d2) {
-                enter = f / (d1 - d2);
+            let f = (d1 - SURFACE_CLIP_EPSILON).max(0.0) / (d1 - d2);
+            if f > enter {
+                enter = f;
+                clip = normal;
             }
         } else {
             let f = d1 + SURFACE_CLIP_EPSILON;
@@ -236,5 +239,6 @@ fn through_brush(trace: &mut Trace, b: &Brush, start: Vec3, end: Vec3, mins: Vec
     }
     if enter < leave && enter > -1.0 && enter < trace.fraction {
         trace.fraction = enter.max(0.0);
+        trace.normal = clip;
     }
 }

@@ -223,7 +223,9 @@ impl StaticModels {
     /// A single-player model's fog is the one it has seen from outside any fog. One
     /// retail model's fog depends on where the view is (taspir1's Raven's Claw, from
     /// inside fog 1); a retail-data test checks there are no others.
-    pub fn load(vfs: &Vfs, bsp: &Bsp, fogs: &[FogVolume], rules: Rules) -> Self {
+    ///
+    /// NPCs are posed as they stand at game time `time` (ms).
+    pub fn load(vfs: &Vfs, bsp: &Bsp, fogs: &[FogVolume], rules: Rules, time: i32) -> Self {
         let sp = matches!(rules, Rules::SinglePlayer { .. });
         let mut world = Collision::at_spawn(bsp, rules);
         let mut placements =
@@ -286,7 +288,7 @@ impl StaticModels {
                     };
                     let body = Part::new(
                         m,
-                        body_pose(vfs, m, g.pose.as_ref()),
+                        body_pose(vfs, m, g.pose.as_ref(), time),
                         skin(&g.skin),
                         &g.switches,
                     );
@@ -552,13 +554,13 @@ fn register_skin(
     });
 }
 
-/// The pose of a Ghoul2 entity's skeleton: frame 0, or standing in `pose` with
-/// the frames its animations start at in the skeleton's animation file. A part
-/// whose animation the skeleton lacks (or a skeleton with no animation file) stays
-/// as `NPC_Begin` started it, in `BOTH_STAND1`, or at frame 0 without that too
-/// (`PM_SetAnimFinal` sets nothing then); so does a part whose bone the skeleton
-/// lacks.
-fn body_pose(vfs: &Vfs, model: &Ghoul2Model, pose: Option<&Pose>) -> Vec<Mat34> {
+/// The pose of a Ghoul2 entity's skeleton: frame 0, or standing in `pose` at game
+/// time `time` (ms), each part at the frame its animation has reached
+/// ([`npc::standing_at`], `G2_TimingModel`). A part whose animation the skeleton
+/// lacks (or a skeleton with no animation file) plays `BOTH_STAND1` instead, as
+/// `NPC_Begin` started it, or stays at frame 0 without that too (`PM_SetAnimFinal`
+/// sets nothing then); so does a part whose bone the skeleton lacks.
+fn body_pose(vfs: &Vfs, model: &Ghoul2Model, pose: Option<&Pose>, time: i32) -> Vec<Mat34> {
     let gla = &model.gla;
     let Some(pose) = pose else {
         return gla.pose(0);
@@ -567,16 +569,22 @@ fn body_pose(vfs: &Vfs, model: &Ghoul2Model, pose: Option<&Pose>) -> Vec<Mat34> 
         .and_then(|file| vfs.read(&file).ok())
         .map(|text| String::from_utf8_lossy(&text).into_owned())
         .unwrap_or_default();
-    let start = |anim| animation::start_frame(&text, anim).filter(|&frame| frame < gla.frame_count);
-    let stand = start(animation::STAND);
+    let find = |name| animation::find(&text, name).filter(|a| a.first + a.count <= gla.frame_count);
+    let idle = pose.idle.and_then(find).map(|a| {
+        let lerp = a.frame_lerp.abs();
+        ((a.count as i32 - 1) * lerp, a.count as i32 * lerp)
+    });
+    let (legs, torso, start) = npc::standing_at(pose, idle, time);
+    let stand = find(animation::STAND);
     let mut anims = Vec::new();
     for (bone, anim) in [
-        ("model_root", pose.legs),
-        ("lower_lumbar", pose.torso),
-        ("Motion", pose.torso),
+        ("model_root", legs),
+        ("lower_lumbar", torso),
+        ("Motion", torso),
     ] {
-        if let (Some(bone), Some(frame)) = (gla.find_bone(bone), start(anim).or(stand)) {
-            anims.push((bone, frame));
+        if let (Some(bone), Some(anim)) = (gla.find_bone(bone), find(anim).or(stand)) {
+            let (frame, next, lerp) = anim.frame_at(time - start);
+            anims.push((bone, gla::Frame { frame, next, lerp }));
         }
     }
     gla.pose_frames(&gla::ROOT, &gla.frames(&anims))

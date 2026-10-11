@@ -106,25 +106,29 @@ fn a_box_lands_on_a_slope_where_its_corner_meets_it() {
         (end[2] - (24.0 + 15.0 + SURFACE_CLIP_EPSILON / s)).abs() < 1e-3,
         "{end:?}"
     );
+    // An NPC falling onto it lands sliding: still moving on its first frame.
+    let (at, moving) = settle(&world, [0.0, 0.0, 100.0], MINS, MAXS);
+    assert!((at[2] - end[2]).abs() < 1e-3 && moving, "{at:?}");
 }
 
 #[test]
 fn an_npc_falls_to_the_floor_and_rises_out_of_it() {
-    // Spawned 8 units above the floor, or with its feet 8 units into it.
+    // Spawned 8 units above the floor, or with its feet 8 units into it; either
+    // way still on flat ground by its first idle check.
     assert_eq!(
         settle(&floor(), [0.0, 0.0, 32.0], MINS, MAXS),
-        [0.0, 0.0, 24.125]
+        ([0.0, 0.0, 24.125], false)
     );
-    let risen = settle(&floor(), [0.0, 0.0, 16.0], MINS, MAXS);
-    assert!((risen[2] - 24.125).abs() < 1e-3, "{risen:?}");
+    let (risen, moving) = settle(&floor(), [0.0, 0.0, 16.0], MINS, MAXS);
+    assert!((risen[2] - 24.125).abs() < 1e-3 && !moving, "{risen:?}");
     // Stuck in solid, or over nothing: where it spawned.
     assert_eq!(
         settle(&floor(), [0.0, 0.0, -32.0], MINS, MAXS),
-        [0.0, 0.0, -32.0]
+        ([0.0, 0.0, -32.0], false)
     );
     assert_eq!(
         settle(&floor(), [600.0, 0.0, 32.0], MINS, MAXS),
-        [600.0, 0.0, 32.0]
+        ([600.0, 0.0, 32.0], false)
     );
 }
 
@@ -134,6 +138,6 @@ fn an_npc_lands_on_a_solid_box_on_the_floor() {
     world.add_box([-32.0, -32.0, 0.0], [32.0, 32.0, 48.0], CONTENTS_SOLID);
     assert_eq!(
         settle(&world, [0.0, 0.0, 100.0], MINS, MAXS),
-        [0.0, 0.0, 72.125]
+        ([0.0, 0.0, 72.125], false)
     );
 }

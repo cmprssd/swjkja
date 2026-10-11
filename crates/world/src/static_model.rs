@@ -107,6 +107,12 @@ pub struct Ghoul2 {
 pub struct Pose {
     pub legs: &'static str,
     pub torso: &'static str,
+    /// The animation both parts play once it has stood still for five seconds
+    /// (`G_CheckClientIdle`), if its stance has one.
+    pub idle: Option<&'static str>,
+    /// The level time (ms) it last moved at, as its `idleTime` keeps it: 0 when it
+    /// stands still from the start.
+    pub still_since: i32,
 }
 
 /// A Ghoul2 model bolted to another (`G_CreateG2AttachedWeaponModel`), posed at
