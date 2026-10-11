@@ -521,3 +521,16 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   played backwards (`PM_SetAnimFinal` zeroes the blend) nor into one its skeleton
   lacks (nothing changes then).
 
+## 2026-10-11: No single player NPC surface has vertex deforms; NPC culling does not depend on the pose (measured by Claude)
+
+- **Measured, not changed**: the NPCs every retail map spawns draw 19,242
+  posed surfaces over all their levels of detail (body, weapons, sabers' hilts);
+  7,765 have a shader definition and none of those has `deformVertexes`. In the
+  retail shader text, deforms are on world textures, flares, fogs, effects and the
+  powerup shells cgame draws over models (not drawn here), never on a model's own
+  shader. So the CPU deform path, which would keep the pose given at load, draws no
+  NPC surface, and posing them there every frame is left undone until one needs it.
+- **Culling is already right**: NPCs are culled, leveled and fogged by a sphere of
+  their radius around their origin (`R_GCullModel`), as the original does, so their
+  pose changes nothing. Their levels' bounds (the load pose's) are not used to
+  cull them.
