@@ -10,10 +10,15 @@
 //! The brushes' vertices are stored relative to the entity's origin (the compiler
 //! moves an entity with an "origin" key by it), so the entity's place is where they
 //! are drawn from.
+//!
+//! An entity with a "model2" key also draws that model where it stands (`InitMover`,
+//! `InitBBrush`; cgame's `CG_Mover` adds it after the brushes).
 
 use swjkja_bsp::{Entity, Model};
 
-use crate::static_model::{Rules, angles_to_axis, atof, spawns_at, spawns_in, vector_prefix};
+use crate::static_model::{
+    Ghoul2, Rules, StaticModel, angles_to_axis, atof, spawns_at, spawns_in, vector_prefix,
+};
 use crate::style::atoi;
 use crate::{Geometry, Vec3};
 
@@ -34,6 +39,8 @@ pub struct BrushEntity {
     /// `EF_SHADER_ANIM`: animated images hold the entity's frame (0 at spawn)
     /// instead of playing (`R_BindAnimatedImage` with `RF_SETANIMINDEX`).
     pub shader_anim: bool,
+    /// Its secondary model ("model2"), drawn at its origin and sent with its box.
+    pub model2: Option<StaticModel>,
 }
 
 /// `MOVER_LOCKED`: a door locked until used, its shader animation frame-controlled.
@@ -51,11 +58,11 @@ pub fn brush_entities(entities: &[Entity], models: &[Model], rules: Rules) -> Ve
             Rules::SinglePlayer { skill } => spawns_at(e, skill),
             Rules::Multiplayer { gametype } => spawns_in(e, gametype),
         })
-        .filter_map(|e| spawn(models, e))
+        .filter_map(|e| spawn(models, e, rules))
         .collect()
 }
 
-fn spawn(models: &[Model], e: &Entity) -> Option<BrushEntity> {
+fn spawn(models: &[Model], e: &Entity, rules: Rules) -> Option<BrushEntity> {
     let model = atoi(e.get("model")?.strip_prefix('*')?);
     let model = usize::try_from(model).ok().filter(|&m| m >= 1)?;
     let m = models.get(model)?;
@@ -125,6 +132,9 @@ fn spawn(models: &[Model], e: &Entity) -> Option<BrushEntity> {
             origin.map(|o| o + radius + 1.0),
         ]
     };
+    let model2 = e
+        .get("model2")
+        .and_then(|name| secondary(e, &class, rules, name, origin, drawn_angles, entity_box));
     Some(BrushEntity {
         model,
         origin,
@@ -132,6 +142,68 @@ fn spawn(models: &[Model], e: &Entity) -> Option<BrushEntity> {
         entity_box,
         broadcast,
         shader_anim,
+        model2,
+    })
+}
+
+/// The "model2" an entity of `class` draws, from its `origin` at its `angles`.
+///
+/// Single player (`code/game/g_mover.cpp`: `InitMover`; `code/cgame/cg_ents.cpp`:
+/// `CG_Mover`) turns it further by "modelAngles" when they are not zero, and makes a
+/// `.glm` a Ghoul2 model of radius 120 at frame 0 of its skeleton. Multiplayer
+/// (`codemp`) has no "modelAngles", draws no `.glm`, and scales the model of a
+/// `func_static` or `func_rotating` by "model2scale" percent (0, the default, for
+/// none; clamped to 1023: `ScaleModelAxis`).
+fn secondary(
+    e: &Entity,
+    class: &str,
+    rules: Rules,
+    name: &str,
+    origin: Vec3,
+    angles: Vec3,
+    entity_box: [Vec3; 2],
+) -> Option<StaticModel> {
+    let ghoul2 = name.contains(".glm");
+    let (mut axes, mut scale, mut normalized) = (angles_to_axis(angles), [1.0; 3], true);
+    match rules {
+        Rules::SinglePlayer { .. } => {
+            let model_angles = e.get("modelAngles").map_or([0.0; 3], vector_prefix);
+            if model_angles != [0.0; 3] {
+                axes = angles_to_axis([0, 1, 2].map(|i| angles[i] + model_angles[i]));
+            }
+        }
+        Rules::Multiplayer { .. } => {
+            if ghoul2 {
+                return None;
+            }
+            let percent = match class {
+                "func_static" | "func_rotating" => e.get("model2scale").map_or(0, atoi),
+                _ => 0,
+            }
+            .clamp(0, 1023);
+            if percent != 0 {
+                let s = percent as f32 / 100.0;
+                scale = [s; 3];
+                axes = axes.map(|a| a.map(|x| x * s));
+                normalized = false;
+            }
+        }
+    }
+    Some(StaticModel {
+        model: name.to_owned(),
+        origin,
+        axes,
+        scale,
+        normalized,
+        zoffset: 0.0,
+        entity_box: Some(entity_box),
+        ghoul2: ghoul2.then(|| Ghoul2 {
+            skin: None,
+            switches: Vec::new(),
+            radius: 120.0,
+            pose: None,
+            attached: Vec::new(),
+        }),
     })
 }
 

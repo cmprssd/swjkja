@@ -555,3 +555,26 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   ffa3_spawn3 differs where the world-only reference leaves out a platform.
 - **Cost**: bench_world within main's spread (three runs of 600 frames on the
   changed views); load up to 0.2 s more on t3_stamp.
+
+## 2026-10-11: Brush entities draw their secondary models (decided by Claude, pending review)
+
+- **A brush entity with a "model2" key also draws that model** at its origin and
+  angles, after its brushes (`InitMover`, `InitBBrush`; cgame's `CG_Mover`), sent
+  by the PVS of the brush's linked box and culled, lit and fogged as the other
+  entity models (lit at its origin). Single player turns it further by
+  "modelAngles" when they are not zero and makes a `.glm` a Ghoul2 model of radius
+  120 at frame 0 of its skeleton; multiplayer has no "modelAngles", draws no
+  `.glm`, and scales a func_static's or func_rotating's model by "model2scale"
+  percent. No retail map uses a `.glm` or "model2scale".
+- **Retail**: 74 drawn in single player (103 entities, less 29 usables that start
+  off), three in multiplayer (siege_desert's dishes, spawned in free-for-all).
+  t3_stamp's four cranes with no origin key draw at the world's origin, as the
+  original's do. None is broadcast (the forcevisible ones have an origin).
+- **Left out**: a func_usable's AUTOANIMATE and ANIM_ONCE frames (no retail model2
+  usable has them); the brush entities' own movement (game logic).
+- **Reference views** (bench/reference/model-views.txt, new): danger_rock 9.00 ->
+  5.52 mean diff (11.2% -> 3.7% off; the rest is two distant peaks, as on main),
+  rancor_gates 15.87 -> 0.87 (23.0% -> 0.9%), bounty_bomb 1.77 -> 1.17 (3.8% ->
+  0.5%). The 30 views of the earlier list are unchanged.
+- **Cost**: bench_world on these views and t3_stamp's within main's spread
+  (three runs of 600 frames each).

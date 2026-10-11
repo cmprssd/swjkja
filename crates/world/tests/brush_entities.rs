@@ -4,6 +4,7 @@ use swjkja_world::brush_entity::{BrushEntity, brush_entities};
 use swjkja_world::static_model::Rules;
 
 const SP: Rules = Rules::SinglePlayer { skill: 0 };
+const MP: Rules = Rules::Multiplayer { gametype: 0 };
 
 fn entity(pairs: &[(&str, &str)]) -> Entity {
     Entity {
@@ -194,4 +195,94 @@ fn a_placed_face_moves_its_vertices_and_plane() {
     assert!(close(normal, [0.0, 1.0, 0.0]));
     // The plane y = 1, which the moved vertex lies on.
     assert!((dist - 1.0).abs() < 1e-4);
+}
+
+#[test]
+fn a_secondary_model_stands_at_the_entity_turned_by_its_model_angles() {
+    let e = spawn(&[
+        ("classname", "func_static"),
+        ("model", "*1"),
+        ("model2", "models/map_objects/korriban/beam_statue.md3"),
+        ("origin", "10 20 30"),
+        ("angle", "90"),
+        ("modelAngles", "0 90 0"),
+    ]);
+    let m = e[0].model2.as_ref().unwrap();
+    assert_eq!(m.model, "models/map_objects/korriban/beam_statue.md3");
+    assert_eq!(m.origin, [10.0, 20.0, 30.0]);
+    // The entity's yaw of 90 and the model's 90 more.
+    assert!(close(m.axes[0], [-1.0, 0.0, 0.0]));
+    assert!(close(m.axes[1], [0.0, -1.0, 0.0]));
+    assert_eq!(m.entity_box, Some(e[0].entity_box));
+    assert!(m.normalized && m.ghoul2.is_none());
+    // Without model angles, the entity's own (a door's: none).
+    let e = spawn(&[
+        ("classname", "func_door"),
+        ("model", "*1"),
+        ("model2", "models/map_objects/rocky_ruins/portcullis.md3"),
+        ("angle", "90"),
+    ]);
+    let m = e[0].model2.as_ref().unwrap();
+    assert_eq!(m.axes, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+}
+
+#[test]
+fn a_usable_started_off_draws_neither_brushes_nor_model() {
+    let e = spawn(&[
+        ("classname", "func_usable"),
+        ("model", "*1"),
+        ("model2", "models/map_objects/factory/bomb_new.md3"),
+        ("spawnflags", "1"),
+    ]);
+    assert!(e.is_empty());
+}
+
+#[test]
+fn a_ghoul2_secondary_model_is_drawn_in_single_player_only() {
+    let pairs = [
+        ("classname", "func_usable"),
+        ("model", "*1"),
+        ("model2", "models/players/a/model.glm"),
+    ];
+    let e = spawn(&pairs);
+    let g = e[0].model2.as_ref().unwrap().ghoul2.as_ref().unwrap();
+    assert_eq!(g.radius, 120.0);
+    assert!(g.skin.is_none() && g.pose.is_none());
+    let e = brush_entities(&[entity(&pairs)], &models(), MP);
+    assert!(e[0].model2.is_none());
+}
+
+#[test]
+fn multiplayer_scales_a_static_secondary_model_and_has_no_model_angles() {
+    let e = brush_entities(
+        &[entity(&[
+            ("classname", "func_static"),
+            ("model", "*1"),
+            ("model2", "models/map_objects/bespin/twinpodcc.md3"),
+            ("model2scale", "50"),
+            ("modelAngles", "0 90 0"),
+        ])],
+        &models(),
+        MP,
+    );
+    let m = e[0].model2.as_ref().unwrap();
+    assert_eq!(m.scale, [0.5; 3]);
+    assert_eq!(m.axes, [[0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 0.5]]);
+    assert!(!m.normalized);
+    // Only a func_static or func_rotating takes "model2scale"; a negative one is none.
+    for (class, scale) in [("func_usable", "50"), ("func_static", "-5")] {
+        let e = brush_entities(
+            &[entity(&[
+                ("classname", class),
+                ("model", "*1"),
+                ("model2", "models/map_objects/imperial/dish.md3"),
+                ("model2scale", scale),
+            ])],
+            &models(),
+            MP,
+        );
+        let m = e[0].model2.as_ref().unwrap();
+        assert_eq!(m.scale, [1.0; 3]);
+        assert!(m.normalized);
+    }
 }

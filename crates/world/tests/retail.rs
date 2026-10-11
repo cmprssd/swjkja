@@ -191,6 +191,7 @@ fn every_retail_map_places_its_brush_entities() {
     };
     let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
     let (mut sp, mut mp, mut moved, mut turned, mut held) = (0, 0, 0, 0, 0);
+    let (mut sp_model2, mut mp_model2) = (0, 0);
     for name in vfs.files().filter(|f| f.ends_with(".bsp")) {
         let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
         let rules = Rules::for_map(name);
@@ -212,6 +213,13 @@ fn every_retail_map_places_its_brush_entities() {
             Rules::SinglePlayer { .. } => sp += brushes.len(),
             Rules::Multiplayer { .. } => mp += brushes.len(),
         }
+        let model2 = brushes.iter().filter(|b| b.model2.is_some()).count();
+        match rules {
+            Rules::SinglePlayer { .. } => sp_model2 += model2,
+            Rules::Multiplayer { .. } => mp_model2 += model2,
+        }
+        // None is sent to every view (the linked box decides).
+        assert!(brushes.iter().all(|b| b.model2.is_none() || !b.broadcast));
     }
     // Every func_ entity of the single-player maps with a model, less the 46 walls
     // and 101 usables that start off (counted from the entity text alone).
@@ -223,4 +231,8 @@ fn every_retail_map_places_its_brush_entities() {
     assert_eq!(turned, 10);
     // Locked doors and func_statics and usables with frame-controlled shaders.
     assert_eq!(held, 122);
+    // The 103 single-player entities with a "model2" (all MD3s), less the 29 usables
+    // that start off; siege_desert's three dishes (duel1's func_bobbing is not
+    // drawn).
+    assert_eq!((sp_model2, mp_model2), (74, 3));
 }

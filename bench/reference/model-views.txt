@@ -12,6 +12,11 @@
 # capture script: dpred_troopers two stormtroopers from behind, vjun2_officer an
 # alternate officer (its pauldron shown by stofficeralt.npc, the second block of
 # that name), kor2_troopers two stormtroopers by a landed shuttle.
+# The brush-entity views look at the models brush entities also draw ("model2"):
+# danger_rock a func_door's rock, rancor_gates three func_doors' portcullises,
+# bounty_bomb a func_usable's bomb placement. Of the first candidates, kor1's
+# capture stood elsewhere (the player does not reach the view) and t2_rancor's
+# tables showed no model2.
 # Candidates whose capture had undrawn regions were dropped: single player leaves
 # the screen uncleared, and draws only the areas the player's snapshot marks
 # visible (none from an eye in solid).
@@ -29,3 +34,6 @@ t2_dpred  dpred_guns    95 -2030 625      15 270 0  12345
 t2_dpred  dpred_troopers -900 -4300 90    5 180 0  12345
 vjun2     vjun2_officer  1264 1800 3300   5 90 0   12345
 kor2      kor2_troopers  8208 1500 -3740  5 90 0   12345
+t1_danger danger_rock    2232 -2900 880    10 90 0    12345
+t2_rancor rancor_gates   -568 4136 1530    5 180 0    12345
+t3_bounty bounty_bomb    512 1700 400      15 90 0    12345

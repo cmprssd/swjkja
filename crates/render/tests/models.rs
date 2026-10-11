@@ -220,9 +220,9 @@ fn t3_stamp_entities_cull_like_the_original() {
         .iter()
         .take_while(|m| m.entity_box.is_some())
         .count();
-    // 193 breakables, 5 ammo racks and the 12 packs and medpacks on them, then the 8
-    // NPCs, which spawn after the racks' goods.
-    assert_eq!(entities, 193 + 5 + 12 + 8);
+    // 193 breakables, 5 ammo racks and the 12 packs and medpacks on them, the 9
+    // cranes func_statics draw ("model2"), then the 8 NPCs.
+    assert_eq!(entities, 193 + 5 + 12 + 9 + 8);
     let npcs = entities - 8..entities;
     let entities = npcs.start;
     // The eye 350 units south of the barrels, looking north.
@@ -264,8 +264,9 @@ fn t3_stamp_entities_cull_like_the_original() {
         assert!(drawn(find(rack)).is_some(), "{rack:?}");
     }
     let count = |f: &dyn Fn(usize) -> bool| (0..entities).filter(|&n| f(n)).count();
-    // 77 breakables, and two racks with their goods.
-    assert_eq!(count(&sent), 77 + 6);
+    // 77 breakables, two racks with their goods, and five cranes: four with no origin
+    // (drawn at the world's, out of sight) and one in the next hangar, behind.
+    assert_eq!(count(&sent), 77 + 6 + 5);
     assert_eq!(count(&|n| drawn(n).is_some()), 10 + 3);
     let npcs_drawn: Vec<_> = npcs
         .filter(|&n| drawn(n).is_some())
