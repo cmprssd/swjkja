@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use swjkja_bsp::{Bsp, SurfaceKind};
+use swjkja_world::collision::Collision;
 use swjkja_world::static_model::Rules;
 use swjkja_world::{Geometry, Options, World, npc};
 
@@ -90,14 +91,19 @@ fn every_retail_map_has_a_light_grid_and_spawns_its_static_models() {
         }
         total += models.len();
         let rules = swjkja_world::static_model::Rules::for_map(name);
-        entity_models += swjkja_world::static_model::entity_models(&bsp.entities, rules).len();
+        entity_models += swjkja_world::static_model::entity_models(
+            &bsp.entities,
+            rules,
+            &mut Collision::at_spawn(&bsp, rules),
+        )
+        .len();
     }
-    // All on single-player maps: 490 breakables, of which 6 start off and 4 fall to
-    // the floor (left out for now); 106 racks, whose ammo racks place 209 ammo packs
+    // All on single-player maps: 490 breakables, of which 6 start off (4 fall to the
+    // floor); 106 racks, whose ammo racks place 209 ammo packs
     // and medpacks (counted independently with Python); 130 rack weapons, three on
     // each of 38 gun racks and one on each of 16 ammo racks (counted the same way);
     // 10 beacons and planted bombs, all waiting to be used.
-    assert_eq!(entity_models, 480 + 106 + 209 + 130);
+    assert_eq!(entity_models, 484 + 106 + 209 + 130);
     // Counted independently with Python: every misc_model_static with a model spawns
     // in free-for-all.
     assert_eq!(total, 6684);
@@ -152,7 +158,13 @@ fn single_player_npcs_find_their_looks() {
                 }
             }
         }
-        for m in npc::npc_models(&bsp.entities, rules, &parms, &sabers) {
+        for m in npc::npc_models(
+            &bsp.entities,
+            rules,
+            &parms,
+            &sabers,
+            &Collision::at_spawn(&bsp, rules),
+        ) {
             let g = m.ghoul2.unwrap();
             let pose = g.pose.unwrap();
             *poses.entry((pose.legs, pose.torso)).or_insert(0) += 1;

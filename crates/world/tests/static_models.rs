@@ -1,5 +1,12 @@
 use swjkja_bsp::Entity;
-use swjkja_world::static_model::{Rules, angles_to_axis, entity_models, static_models};
+use swjkja_world::collision::{CONTENTS_SOLID, Collision, MASK_NPCSOLID};
+use swjkja_world::static_model::entity_models as entity_models_in;
+use swjkja_world::static_model::{Rules, StaticModel, angles_to_axis, static_models};
+
+/// The entity models, with no world to drop onto.
+fn entity_models(entities: &[Entity], rules: Rules) -> Vec<StaticModel> {
+    swjkja_world::static_model::entity_models(entities, rules, &mut Collision::default())
+}
 
 fn entity(pairs: &[(&str, &str)]) -> Entity {
     Entity {
@@ -212,15 +219,15 @@ fn breakables_spawn_in_single_player_unless_started_off() {
         // Animated: drawn at its first frame.
         breakable(&[("spawnflags", "2")]),
         breakable(&[("notsingle", "1")]),
-        // Dropped to the floor in the original: left out until there is collision.
+        // Dropped to the floor: with none below, it stays where it is.
         breakable(&[("gravity", "1")]),
         breakable(&[("gravity", "0")]),
         entity(&[("classname", "misc_model_breakable"), ("origin", "0 0 0")]),
     ];
-    assert_eq!(entity_models(&entities, SP).len(), 3);
+    assert_eq!(entity_models(&entities, SP).len(), 4);
     assert_eq!(
         entity_models(&entities, Rules::SinglePlayer { skill: 1 }).len(),
-        4
+        5
     );
     // Multiplayer maps place none, and its game would not spawn these.
     assert!(entity_models(&entities, FFA).is_empty());
@@ -533,4 +540,49 @@ fn beacons_and_bombs_wait_for_a_targetname_to_be_used() {
         bomb.entity_box,
         Some([[-17.0, -17.0, -1.0], [17.0, 17.0, 71.0]])
     );
+}
+
+#[test]
+fn a_solid_breakable_is_in_the_way_of_what_spawns_after_it() {
+    let crate_at = |flags| {
+        entity(&[
+            ("classname", "misc_model_breakable"),
+            ("model", "m.md3"),
+            ("origin", "0 0 16"),
+            ("spawnflags", flags),
+        ])
+    };
+    let mut world = Collision::default();
+    entity_models_in(&[crate_at("1")], SP, &mut world);
+    // Its default box, -16..16 around its origin: its top is at 32.
+    assert_eq!(
+        world.drop_to_floor([0.0, 0.0, 100.0], [-1.0; 3], [1.0; 3], MASK_NPCSOLID),
+        Some([0.0, 0.0, 33.125])
+    );
+    // Not solid: only shots stop at it.
+    let mut world = Collision::default();
+    entity_models_in(&[crate_at("0")], SP, &mut world);
+    assert_eq!(
+        world.drop_to_floor([0.0, 0.0, 100.0], [-1.0; 3], [1.0; 3], MASK_NPCSOLID),
+        None
+    );
+}
+
+#[test]
+fn a_gravity_breakable_drops_onto_what_is_below() {
+    let mut world = Collision::default();
+    world.add_box([-64.0, -64.0, -16.0], [64.0, 64.0, 0.0], CONTENTS_SOLID);
+    let models = entity_models_in(
+        &[entity(&[
+            ("classname", "misc_model_breakable"),
+            ("model", "m.md3"),
+            ("origin", "8 8 100"),
+            ("mins", "-8 -8 0"),
+            ("maxs", "8 8 16"),
+            ("gravity", "1"),
+        ])],
+        SP,
+        &mut world,
+    );
+    assert_eq!(models[0].origin, [8.0, 8.0, 0.125]);
 }
