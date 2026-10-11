@@ -270,8 +270,12 @@ fn t3_stamp_entities_cull_like_the_original() {
         .filter(|&n| drawn(n).is_some())
         .map(|n| models.instances[n].origin)
         .collect();
-    // Ahead to the right: a cultist, and the mutant rancor (scale 2, lifted 24 units).
-    assert_eq!(npcs_drawn, [[852.0, 984.0, 88.0], [858.0, 1509.0, 120.0]]);
+    // Ahead to the right: a cultist, and the mutant rancor (scale 2, lifted 24 units),
+    // each standing 0.125 units off the floor (SURFACE_CLIP_EPSILON).
+    assert_eq!(
+        npcs_drawn,
+        [[852.0, 984.0, 88.125], [858.0, 1509.0, 120.125]]
+    );
 }
 
 /// t2_dpred's rack weapons are Ghoul2 items: 18 on its six gun racks and 7 on its
@@ -323,7 +327,8 @@ fn t2_dpred_rack_weapons_draw_as_ghoul2_items() {
 }
 
 /// t2_dpred's stormtroopers near the start (-1100 -4300) spawn with the map: drawn
-/// as Ghoul2 characters with their skin, standing with their guns in hand.
+/// as Ghoul2 characters with their skin, standing with their guns in hand on the
+/// floor, 0.125 units off it.
 #[test]
 fn t2_dpred_stormtroopers_draw_skinned_and_armed() {
     let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
@@ -340,9 +345,10 @@ fn t2_dpred_stormtroopers_draw_skinned_and_armed() {
             .find(|m| (0..3).all(|i| (m.origin[i] - origin[i]).abs() < 1e-3))
             .unwrap_or_else(|| panic!("{origin:?}"))
     };
-    let trooper = find([-2080.0, -4264.0, 32.0]);
+    // Its spawner is 8 units above the floor.
+    let trooper = find([-2080.0, -4264.0, 24.125]);
     // A commander: scale 105, lifted 24 * 0.05 units.
-    let commander = find([-738.0, -3813.0, 24.0 + 24.0 * 0.05]);
+    let commander = find([-738.0, -3813.0, 24.125 + 24.0 * 0.05]);
     let shaders = |m: &swjkja_render::models::Instance| -> Vec<String> {
         models.pieces[m.lods[0].pieces.clone()]
             .iter()
