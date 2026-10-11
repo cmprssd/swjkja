@@ -23,7 +23,14 @@ entities=${ENTITIES:-0}
 maps=$(grep -v '^#' "$views" | awk 'NF {print $1}' | sort -u)
 for map in $maps; do
 	cfg=$(mktemp)
+	sp=0
+	case $map in mp/*) ;; *) sp=1 ;; esac
 	{
+		# NPCs frozen from the first frame stay as they spawned, facing their
+		# spawner's way: their AI does not run (it turns them and moves them),
+		# their movement frames do (their weapon-ready stance, the drop to the
+		# floor). One capture without it found t3_stamp's crates already broken.
+		if [ "$sp" = 1 ]; then echo "set d_npcfreeze 1"; fi
 		# Cheat cvars need the devmap; r_drawentities 0 leaves only the world.
 		echo "wait 300"
 		# A single-player map may open with a cutscene: skip it as Esc would. The
@@ -32,11 +39,7 @@ for map in $maps; do
 		# view (noclip, setviewpos) or other views' stale pixels stay on screen. The
 		# player stands 128 units behind the eye: holding a saber, single player
 		# draws the player's body in third person, around the eye.
-		sp=0
-		case $map in mp/*) ;; *) sp=1; echo "exitview"; echo "wait 300"; echo "noclip" ;; esac
-		# Frozen NPCs leave the map as it spawned (one capture without it found
-		# t3_stamp's crates already broken).
-		if [ "$sp" = 1 ]; then echo "set d_npcfreeze 1"; fi
+		if [ "$sp" = 1 ]; then echo "exitview"; echo "wait 300"; echo "noclip"; fi
 		echo "set cg_draw2D 0; set r_drawentities $entities; set cg_drawGun 0"
 		echo "wait 300"
 		grep -v '^#' "$views" | awk -v m="$map" -v sp="$sp" '$1 == m {

@@ -37,12 +37,13 @@ use std::ops::Range;
 use swjkja_bsp::{Bsp, DrawVert};
 use swjkja_fs::Vfs;
 use swjkja_model::animation;
+use swjkja_model::gla::{self, Mat34};
 use swjkja_model::glm::{self, Ghoul2Model};
 use swjkja_model::md3::{Md3, Md3Model};
 use swjkja_model::skin::Skin;
 use swjkja_world::Geometry;
 use swjkja_world::npc;
-use swjkja_world::static_model::{Ghoul2, Rules, StaticModel};
+use swjkja_world::static_model::{Pose, Rules, StaticModel};
 
 use crate::camera::Camera;
 use crate::fog::FogVolume;
@@ -225,13 +226,19 @@ impl StaticModels {
         let sp = matches!(rules, Rules::SinglePlayer { .. });
         let mut placements = swjkja_world::static_model::entity_models(&bsp.entities, rules);
         if sp {
-            let files: Vec<Vec<u8>> = vfs
-                .list("ext_data/npcs", ".npc")
-                .iter()
-                .filter_map(|f| vfs.read(&format!("ext_data/npcs/{f}")).ok())
-                .collect();
-            let parms = npc::join_parms(files.iter().map(Vec::as_slice));
-            placements.extend(npc::npc_models(&bsp.entities, rules, &parms));
+            let text = |folder: &str, ext: &str| {
+                let files: Vec<Vec<u8>> = vfs
+                    .list(folder, ext)
+                    .iter()
+                    .filter_map(|f| vfs.read(&format!("{folder}/{f}")).ok())
+                    .collect();
+                npc::join_parms(files.iter().map(Vec::as_slice))
+            };
+            let (parms, sabers) = (
+                text("ext_data/npcs", ".npc"),
+                text("ext_data/sabers", ".sab"),
+            );
+            placements.extend(npc::npc_models(&bsp.entities, rules, &parms, &sabers));
         }
         placements.extend(swjkja_world::static_model::static_models(
             &bsp.entities,
@@ -243,41 +250,64 @@ impl StaticModels {
         let mut instances = Vec::new();
         let mut pieces = Vec::new();
         for p in &placements {
-            let model = models
-                .entry(p.model.to_ascii_lowercase())
-                .or_insert_with(|| match Model::load(vfs, &p.model) {
-                    Ok(m) => {
-                        shaders.extend(m.shaders());
-                        Some(m)
+            register_model(vfs, &mut models, &mut shaders, &p.model);
+            if let Some(g) = &p.ghoul2 {
+                // RE_RegisterSkin registers the skin's shaders after the mesh's; the
+                // models attached later come after.
+                if let Some(name) = &g.skin {
+                    register_skin(vfs, &mut skins, &mut shaders, name);
+                }
+                for a in &g.attached {
+                    register_model(vfs, &mut models, &mut shaders, &a.model);
+                    if let Some(name) = &a.skin {
+                        register_skin(vfs, &mut skins, &mut shaders, name);
                     }
-                    Err(e) => {
-                        eprintln!("warning: model {}: {e}", p.model);
-                        None
-                    }
-                });
-            let model = match model {
+                }
+            }
+            let skin = |name: &Option<String>| {
+                name.as_ref()
+                    .and_then(|n| skins[&n.to_ascii_lowercase()].as_ref())
+            };
+            let model = match &models[&p.model.to_ascii_lowercase()] {
                 Some(Model::Md3(m)) => m,
                 Some(Model::Ghoul2(m)) => {
                     let Some(g) = &p.ghoul2 else {
                         eprintln!("warning: model {}: a Ghoul2 mesh placed as an MD3", p.model);
                         continue;
                     };
-                    // RE_RegisterSkin registers the skin's shaders after the mesh's.
-                    let skin = g.skin.as_ref().and_then(|name| {
-                        skins
-                            .entry(name.to_ascii_lowercase())
-                            .or_insert_with(|| {
-                                let skin = Skin::load(vfs, name);
-                                let surfaces = skin.iter().flat_map(|s| &s.surfaces);
-                                shaders.extend(surfaces.map(|(_, shader)| shader.clone()));
-                                skin
-                            })
-                            .as_ref()
-                    });
-                    let frame = if g.stand { stand_frame(vfs, m) } else { 0 };
+                    let body = Part::new(
+                        m,
+                        body_pose(vfs, m, g.pose.as_ref()),
+                        skin(&g.skin),
+                        &g.switches,
+                    );
+                    let mut parts = Vec::new();
+                    for a in &g.attached {
+                        // G_CreateG2AttachedWeaponModel: nothing without the model or
+                        // the bolt.
+                        let Some(Model::Ghoul2(w)) = &models[&a.model.to_ascii_lowercase()] else {
+                            continue;
+                        };
+                        let Some(root) = m
+                            .glm
+                            .find_surface(a.bolt)
+                            .and_then(|s| glm::bolt(&m.glm, s, &body.pose))
+                        else {
+                            continue;
+                        };
+                        let pose = w.gla.pose_frames(&root, &vec![0; w.gla.bones.len()]);
+                        parts.push(Part::new(w, pose, skin(&a.skin), &[]));
+                    }
+                    parts.insert(0, body);
                     let entity = instances.len() + 1;
-                    let look = (g, skin, frame);
-                    instances.push(ghoul2_instance(m, p, look, entity, fogs, &mut pieces));
+                    instances.push(ghoul2_instance(
+                        &parts,
+                        p,
+                        g.radius,
+                        entity,
+                        fogs,
+                        &mut pieces,
+                    ));
                     continue;
                 }
                 None => continue,
@@ -475,67 +505,162 @@ impl Model {
     }
 }
 
-/// The frame a Ghoul2 mesh stands in as an NPC starts: its skeleton's
-/// `BOTH_STAND1`, or frame 0 where the skeleton has none (unanimated).
-fn stand_frame(vfs: &Vfs, model: &Ghoul2Model) -> usize {
-    animation::config_file(vfs, &model.glm.anim_name)
-        .and_then(|file| vfs.read(&file).ok())
-        .and_then(|text| animation::start_frame(&String::from_utf8_lossy(&text), animation::STAND))
-        .filter(|&frame| frame < model.gla.frame_count)
-        .unwrap_or(0)
+/// Loads model `name` once (by its lowercase name), adding its shaders to
+/// `shaders` as it registers them; a model that does not load is `None`, with a
+/// warning.
+fn register_model(
+    vfs: &Vfs,
+    models: &mut HashMap<String, Option<Model>>,
+    shaders: &mut Vec<String>,
+    name: &str,
+) {
+    models
+        .entry(name.to_ascii_lowercase())
+        .or_insert_with(|| match Model::load(vfs, name) {
+            Ok(m) => {
+                shaders.extend(m.shaders());
+                Some(m)
+            }
+            Err(e) => {
+                eprintln!("warning: model {name}: {e}");
+                None
+            }
+        });
 }
 
-/// A Ghoul2 entity placed by `p`, posed at `frame`, with `skin` on and then `g`'s
-/// switches (`G2API_SetSkin`, `G2_SetSurfaceOnOff`): each level's drawn surfaces
-/// with the skin's shader for their name, or their own (`RenderSurfaces`). Culled
-/// by a sphere of its radius times its largest scale, leveled by three quarters of
-/// that, and fogged by its unscaled radius as seen from outside any fog.
+/// Loads skin `name` once (by its lowercase name), adding its shaders to `shaders`.
+fn register_skin(
+    vfs: &Vfs,
+    skins: &mut HashMap<String, Option<Skin>>,
+    shaders: &mut Vec<String>,
+    name: &str,
+) {
+    skins.entry(name.to_ascii_lowercase()).or_insert_with(|| {
+        let skin = Skin::load(vfs, name);
+        let surfaces = skin.iter().flat_map(|s| &s.surfaces);
+        shaders.extend(surfaces.map(|(_, shader)| shader.clone()));
+        skin
+    });
+}
+
+/// The pose of a Ghoul2 entity's skeleton: frame 0, or standing in `pose` with
+/// the frames its animations start at in the skeleton's animation file. A part
+/// whose animation the skeleton lacks (or a skeleton with no animation file) stays
+/// as `NPC_Begin` started it, in `BOTH_STAND1`, or at frame 0 without that too
+/// (`PM_SetAnimFinal` sets nothing then); so does a part whose bone the skeleton
+/// lacks.
+fn body_pose(vfs: &Vfs, model: &Ghoul2Model, pose: Option<&Pose>) -> Vec<Mat34> {
+    let gla = &model.gla;
+    let Some(pose) = pose else {
+        return gla.pose(0);
+    };
+    let text = animation::config_file(vfs, &model.glm.anim_name)
+        .and_then(|file| vfs.read(&file).ok())
+        .map(|text| String::from_utf8_lossy(&text).into_owned())
+        .unwrap_or_default();
+    let start = |anim| animation::start_frame(&text, anim).filter(|&frame| frame < gla.frame_count);
+    let stand = start(animation::STAND);
+    let mut anims = Vec::new();
+    for (bone, anim) in [
+        ("model_root", pose.legs),
+        ("lower_lumbar", pose.torso),
+        ("Motion", pose.torso),
+    ] {
+        if let (Some(bone), Some(frame)) = (gla.find_bone(bone), start(anim).or(stand)) {
+            anims.push((bone, frame));
+        }
+    }
+    gla.pose_frames(&gla::ROOT, &gla.frames(&anims))
+}
+
+/// One Ghoul2 model of an entity: its pose and the surfaces it draws.
+struct Part<'a> {
+    model: &'a Ghoul2Model,
+    pose: Vec<Mat34>,
+    skin: Option<&'a Skin>,
+    drawn: Vec<usize>,
+}
+
+impl<'a> Part<'a> {
+    /// `model` posed by `pose`, with `skin` on and then `switches`
+    /// (`G2API_SetSkin`, `G2_SetSurfaceOnOff`).
+    fn new(
+        model: &'a Ghoul2Model,
+        pose: Vec<Mat34>,
+        skin: Option<&'a Skin>,
+        switches: &[(String, bool)],
+    ) -> Self {
+        let glm = &model.glm;
+        let mut flags = skin.map_or_else(|| glm.surface_flags(), |skin| glm.skinned_flags(skin));
+        for (name, off) in switches {
+            glm.set_surface_off(&mut flags, name, *off);
+        }
+        Self {
+            model,
+            pose,
+            skin,
+            drawn: glm.drawn_with(&flags),
+        }
+    }
+}
+
+/// `R_AddGhoulSurfaces` for an entity placed by `p` made of `parts` (its own model
+/// first, then the models attached to it): each part's drawn surfaces at its level
+/// of detail, with the skin's shader for their name or their own
+/// (`RenderSurfaces`). Culled by a sphere of `radius` times its largest scale,
+/// leveled by three quarters of that, and fogged by `radius` as seen from outside
+/// any fog.
+///
+/// Each part picks its level from its own number of levels (`G2_ComputeLOD`): with
+/// as many entity levels as the least common multiple of the parts' counts, entity
+/// level `c` of `n` is level `c * count / n` of a part, the same level as picking
+/// from the part's count, as the original does.
 fn ghoul2_instance(
-    model: &Ghoul2Model,
+    parts: &[Part],
     p: &StaticModel,
-    (g, skin, frame): (&Ghoul2, Option<&Skin>, usize),
+    radius: f32,
     entity: usize,
     fogs: &[FogVolume],
     pieces: &mut Vec<Piece>,
 ) -> Instance {
     let largest = p.scale.into_iter().fold(f32::MIN, f32::max);
-    let radius = g.radius * if largest == 0.0 { 1.0 } else { largest };
-    let fog = sp_fog_num(fogs, p.origin, g.radius, 0);
-    let pose = model.gla.pose(frame);
-    let glm = &model.glm;
-    let mut flags = skin.map_or_else(|| glm.surface_flags(), |skin| glm.skinned_flags(skin));
-    for (name, off) in &g.switches {
-        glm.set_surface_off(&mut flags, name, *off);
-    }
-    let drawn = glm.drawn_with(&flags);
-    let lods = glm
-        .lods
+    let scaled_radius = radius * if largest == 0.0 { 1.0 } else { largest };
+    let fog = sp_fog_num(fogs, p.origin, radius, 0);
+    let count = parts
         .iter()
-        .map(|surfaces| {
+        .map(|part| part.model.glm.lods.len())
+        .fold(1, lcm);
+    let lods = (0..count)
+        .map(|level| {
             let first = pieces.len();
             let mut bounds: [Vec3; 2] = [[f32::MAX; 3], [f32::MIN; 3]];
-            for &s in &drawn {
-                let surface = &surfaces[s];
-                let (xyz, normals) = glm::skin(surface, &pose);
-                for v in &xyz {
-                    bounds[0] = [0, 1, 2].map(|k| bounds[0][k].min(v[k]));
-                    bounds[1] = [0, 1, 2].map(|k| bounds[1][k].max(v[k]));
+            for part in parts {
+                let glm = &part.model.glm;
+                let surfaces = &glm.lods[level * glm.lods.len() / count];
+                for &s in &part.drawn {
+                    let surface = &surfaces[s];
+                    let (xyz, normals) = glm::skin(surface, &part.pose);
+                    for v in &xyz {
+                        bounds[0] = [0, 1, 2].map(|k| bounds[0][k].min(v[k]));
+                        bounds[1] = [0, 1, 2].map(|k| bounds[1][k].max(v[k]));
+                    }
+                    let mesh = (
+                        &xyz[..],
+                        &normals[..],
+                        &surface.st[..],
+                        &surface.indexes[..],
+                    );
+                    let info = &glm.surfaces[s];
+                    let shader = part
+                        .skin
+                        .and_then(|skin| skin.shader(&info.name))
+                        .unwrap_or(&info.shader);
+                    pieces.push(bake(mesh, shader, p, entity, fog));
                 }
-                let mesh = (
-                    &xyz[..],
-                    &normals[..],
-                    &surface.st[..],
-                    &surface.indexes[..],
-                );
-                let info = &glm.surfaces[s];
-                let shader = skin
-                    .and_then(|skin| skin.shader(&info.name))
-                    .unwrap_or(&info.shader);
-                pieces.push(bake(mesh, shader, p, entity, fog));
             }
             ModelLod {
                 bounds,
-                sphere: ([0.0; 3], radius),
+                sphere: ([0.0; 3], scaled_radius),
                 pieces: first..pieces.len(),
             }
         })
@@ -549,11 +674,21 @@ fn ghoul2_instance(
         cull_cluster: -1,
         entity_box: p.entity_box,
         link: None,
-        radius,
-        lod_radius: 0.75 * radius,
-        ghoul2_radius: Some(radius),
+        radius: scaled_radius,
+        lod_radius: 0.75 * scaled_radius,
+        ghoul2_radius: Some(scaled_radius),
         lods,
     }
+}
+
+fn lcm(a: usize, b: usize) -> usize {
+    let gcd = |mut a: usize, mut b: usize| {
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        a
+    };
+    a / gcd(a, b) * b
 }
 
 /// A surface's positions, normals, texture coordinates and triangles.

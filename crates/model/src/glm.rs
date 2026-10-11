@@ -351,6 +351,46 @@ pub fn skin(surface: &Surface, pose: &[Mat34]) -> (Vec<Vec3>, Vec<Vec3>) {
         .unzip()
 }
 
+/// `G2_ProcessSurfaceBolt2` for a model's tag: the matrix of a model attached to
+/// surface `surface` of `glm` posed by `pose`, from the surface's first three
+/// vertices at the most detailed level. The third is the origin; the first side
+/// (a tag triangle's longest) and the third (its shortest), made square, give
+/// the axes, turned so the attached model's +x runs along the shortest side, its +y
+/// along the longest, and its +z against their cross product. `None` for a surface
+/// with fewer than three vertices.
+pub fn bolt(glm: &Glm, surface: usize, pose: &[Mat34]) -> Option<Mat34> {
+    let (xyz, _) = skin(&glm.lods[0][surface], pose);
+    let p: [Vec3; 3] = xyz.get(..3)?.try_into().unwrap();
+    let sub = |a: Vec3, b: Vec3| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let dot = |a: Vec3, b: Vec3| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    // VectorNormalize2: a zero vector stays zero.
+    let normalize = |v: Vec3| {
+        let length = dot(v, v).sqrt();
+        if length == 0.0 {
+            v
+        } else {
+            v.map(|x| x / length)
+        }
+    };
+    let cross = |a: Vec3, b: Vec3| {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    };
+    let sides: [Vec3; 3] = std::array::from_fn(|j| sub(p[(j + 1) % 3], p[j]));
+    let (longest, shortest) = (sides[0], sides[2]);
+    let short = normalize(shortest);
+    let long = normalize(longest);
+    let d = dot(long, short);
+    let long = normalize([0, 1, 2].map(|i| long[i] - d * short[i]));
+    let normal = normalize(cross(longest, shortest));
+    Some(std::array::from_fn(|r| {
+        [short[r], long[r], -normal[r], p[2][r]]
+    }))
+}
+
 /// A mesh and its skeleton, as `R_LoadMDXM` registers them.
 #[derive(Debug, Clone)]
 pub struct Ghoul2Model {

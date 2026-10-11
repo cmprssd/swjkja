@@ -273,30 +273,37 @@ stamp_barrels 0.13, stamp_crates 5.00, vjun1_hall 1.48). hoth2_fog and rancor_pl
 were not rendered: both maps now stop `render_world` on the Windows GPU with
 `ERROR_DEVICE_LOST`, on `main` too.
 
-## Single-player NPCs compared with the reference, 2026-10-10
+## Single-player NPCs compared with the reference, 2026-10-11
 
 Three views in `bench/reference/model-views.txt` look at NPCs that spawn with the
-map, captured with NPCs frozen (`d_npcfreeze 1`, a few seconds after the map
-starts). The NPCs are drawn standing (the first frame of `BOTH_STAND1`) with their
-skins.
+map, captured with NPCs frozen from the first frame (`d_npcfreeze 1` before the map
+runs: their AI does not run, their movement frames do). The NPCs hold their
+weapons, bolted to their hands, and stand as their first movement frames leave
+them (legs apart with a gun, the torso in the weapon's idle hold); specular stages
+(`alphaGen lightingSpecular`) light their armour and weapons as the original does.
 
-| View | Mean difference | Pixels off by > 16 | Around the NPCs | Elsewhere |
+| View | Mean difference | Pixels off by > 16 | Around the NPCs | Around them, before |
 |------|------|------|------|------|
-| dpred_troopers | 2.79 | 4.3% | 7.27 | 0.23 |
-| vjun2_officer | 1.29 | 2.2% | 5.56 | 0.42 |
-| kor2_troopers | 2.19 | 2.9% | 15.11 | 0.23 |
+| dpred_troopers | 2.62 | 4.1% | 5.46 | 5.36 |
+| vjun2_officer | 0.64 | 0.6% | 1.62 | 3.90 |
+| kor2_troopers | 0.67 | 0.8% | 3.52 | 8.73 |
 
-Models, skins (the stormtrooper's helmet and armour, the alternate officer's
-pauldron), places, facing and lighting match. What differs is the pose: the
-original's NPCs hold their weapons (not drawn here) in a weapon-ready stance from
-their first movement frames, and stand on the floor where this renderer leaves
-them at their spawner's height (8 units up on t2_dpred); the original also draws
-blob shadows under them. "Around the NPCs" is the box of dense differences around
-them, "elsewhere" the rest of the view.
+"Before" is the NPCs standing empty-handed (`BOTH_STAND1`), with the specular fix,
+against the same captures. "Around the NPCs" is the box of dense differences around
+them (in either render), the rest of the view differing by 0.22 to 0.42.
+Models, weapons, skins, places, facing, pose and lighting match. What still differs
+is the floor: the original drops an NPC to the floor in its first movement frame,
+where this renderer leaves it at its spawner's height, 8 units up on t2_dpred,
+where the wider stance then misses the reference by more than the old one did. The
+original also draws blob shadows under them, and plays each animation from where
+its timing has reached, not its first frame.
+
+The NPC views were first captured after about 600 frames of AI: the original had
+turned some NPCs (vjun2's officer by 90 degrees), which nothing at spawn decides.
 
 The other model views are unchanged (dpred_canopy 1.34, dpred_racks 7.14,
-dpred_guns 6.72, stamp_barrels 0.13, stamp_crates 5.00). stamp_barrels now draws
-two NPCs (a cultist and the mutant rancor), behind the wall in both images.
+dpred_guns 6.72, stamp_barrels 0.13, stamp_crates 5.00). stamp_barrels draws two
+NPCs (a cultist and the mutant rancor) behind the wall in both images.
 
 ## Single-player ammo rack compared with the reference, 2026-10-10
 

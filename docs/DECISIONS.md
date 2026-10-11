@@ -370,3 +370,38 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   retail uses are random colours); no blob shadows; MD3 NPCs (mice) and vehicles
   not drawn.
 
+
+## 2026-10-11: Single player's NPCs hold their weapons (decided by Claude, pending review)
+
+- **What an NPC holds is what it holds as it spawns**: its `.npc` block's "weapon",
+  or, for none or a name the game does not know (`WP_BLASTER_RIFLE`), the weapon its
+  team and type give (`NPC_WeaponsForTeam`). Weapons are bolted to the hand as
+  `NPC_SetMiscDefaultData` bolts them, by team: none for good Jedi, saber-wielding
+  enemies, flying droids or neutrals; a reborn officer's blaster pistol in both
+  hands. A saber wielder holds its saber's hilt from the `.sab` files (a second in
+  the left hand unless either is two-handed). Weapon models are the `weapons.dat`
+  models renamed as the game renames them (`blaster.md3` to `blaster_w.glm`).
+- **Bolted models hang from the carrier's tag**: the tag surface's first three
+  vertices, posed, give the bolt's axes and origin (`G2_ProcessSurfaceBolt2`); the
+  bolted model is posed at frame 0 of its skeleton from there. It is part of the
+  carrier's entity: culled, fogged and lit with it, its level of detail picked from
+  its own number of levels.
+- **NPCs stand as their first movement frames leave them with no enemy**, their
+  weapon idle (`NPC_Begin` leaves it `WEAPON_IDLE`, and the AI keeps it so without
+  an enemy): legs apart (`BOTH_STAND3`) with a gun between the saber and the
+  detonation pack, `BOTH_STAND4` for an imperial with none, `BOTH_STAND1` otherwise;
+  the torso in its weapon's idle animation (`TORSO_WEAPONIDLE3` for blasters and
+  rifles, `TORSO_WEAPONIDLE2` for pistols, ...). A saber's blade is off, so the
+  torso follows the legs. The legs' animation plays on bone `model_root`, the
+  torso's on `lower_lumbar` and `Motion`, every other bone playing its parent's. Each
+  plays the first frame of its animation; the original's frame depends on how long
+  the animation has played.
+- **The NPC reference views are captured with NPCs frozen from the first frame**
+  (`bench/capture-reference.sh` sets `d_npcfreeze 1` first). Captured as before,
+  after about 600 frames of AI, NPCs had turned (vjun2's officer by 90 degrees),
+  which nothing at spawn decides. Frozen, the original still runs their movement
+  frames (the stance, the drop to the floor) and turns them to their spawn yaw only.
+- **Left out**: an NPC that matches the player's weapon (type "Player"; it holds
+  nothing here), the scepter's second model, bone bolts (every bolt used is a tag),
+  the look angles cgame turns the torso and head by (zero for a standing NPC facing
+  ahead), and a saber's blade.
