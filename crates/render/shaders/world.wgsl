@@ -276,8 +276,12 @@ fn diffuse(e: Entity, normal: vec3<f32>) -> vec3<f32> {
     return min(floor(e.ambient.rgb + incoming * e.directed.rgb), vec3<f32>(255.0));
 }
 
-// ComputeColors, in 0-255 like the original's byte colours.
-fn colors(s: Stage, xyz: vec3<f32>, vertex: vec4<f32>, normal: vec3<f32>, e: Entity) -> vec4<f32> {
+// RB_CalcSpecularAlpha's light for surfaces of no model (lightOrigin, fixed).
+const SPECULAR_LIGHT_ORIGIN: vec3<f32> = vec3<f32>(-960.0, 1980.0, 96.0);
+
+// ComputeColors, in 0-255 like the original's byte colours, for a vertex at `xyz`
+// in the world, of a model (an entity other than the world) or not.
+fn colors(s: Stage, xyz: vec3<f32>, vertex: vec4<f32>, normal: vec3<f32>, e: Entity, model: bool) -> vec4<f32> {
     let identity_light = frame.params.y;
     let identity_byte = floor(255.0 * identity_light);
     var c = vec4<f32>(identity_byte);
@@ -320,6 +324,19 @@ fn colors(s: Stage, xyz: vec3<f32>, vertex: vec4<f32>, normal: vec3<f32>, e: Ent
         case 3u: { c.a = 255.0 - e.color.a; }
         case 4u: { if rgb_gen != RGB_VERTEX { c.a = vertex.a; } }
         case 5u: { c.a = 255.0 - vertex.a; }
+        case 6u: {
+            // RB_CalcSpecularAlpha: the light reflected about the normal, towards the
+            // viewer, to the fourth power. A model's light comes from its light
+            // direction, anything else's from a fixed point.
+            var light = e.light_dir.xyz;
+            if !model {
+                light = normalize(SPECULAR_LIGHT_ORIGIN - xyz);
+            }
+            let reflected = normal * (2.0 * dot(normal, light)) - light;
+            let viewer = frame.view_origin.xyz - xyz;
+            let l = dot(reflected, viewer) * inverseSqrt(dot(viewer, viewer));
+            c.a = select(min(floor(l * l * l * l * 255.0), 255.0), 0.0, l < 0.0);
+        }
         case 7u: { c.a = floor(255.0 * clamp(wave(s.funcs.y, s.alpha_wave), 0.0, 1.0)); }
         case 8u: {
             // AGEN_PORTAL needs the shader's portal range; not used by world surfaces yet.
@@ -388,7 +405,7 @@ fn vs_main(
     if s.style.y == 1.0 {
         entity = u32(lm23.w);
     }
-    var c = colors(s, xyz, round(color * 255.0), normal, entities[entity]);
+    var c = colors(s, world_xyz, round(color * 255.0), normal, entities[entity], entity != 0u);
     // adjustColorsForFog on a fogged surface: fade by the fog's opacity
     // (RB_CalcModulate*ByFog), in bytes as the original.
     let fog_num = s.fog.w & 0xffffu;
