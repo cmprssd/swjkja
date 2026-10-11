@@ -117,6 +117,20 @@ impl Animation {
         };
         (frame, next, g - g.trunc())
     }
+
+    /// Where a bone playing it from its start for `elapsed` milliseconds blends
+    /// from when another animation replaces it, as [`frame_at`](Self::frame_at)
+    /// gives it: the frame it reached (`G2_Set_Bone_Anim_Index`'s `blendFrame`)
+    /// lerped toward the next (`blendLerpFrame`) by one less the fraction it had
+    /// gone: `G2_TransformBone` weighs the reached frame by that fraction, the
+    /// next by the rest. One played backwards blends from its frame alone.
+    pub fn blend_from(&self, elapsed: i32) -> (usize, usize, f32) {
+        let (frame, next, lerp) = self.frame_at(elapsed);
+        if self.frame_lerp < 0 {
+            return (frame, frame, 0.0);
+        }
+        (frame, next, 1.0 - lerp)
+    }
 }
 
 /// C's `atof`: the longest leading number, 0 for none.
@@ -180,5 +194,20 @@ mod tests {
         assert_eq!(anim.frame_at(250), (102, 103, 0.5));
         assert_eq!(anim.frame_at(301), (103, 103, 0.0));
         assert_eq!(anim.frame_at(5000), (103, 103, 0.0));
+    }
+
+    #[test]
+    fn a_replaced_animation_blends_from_its_frame_weighed_the_other_way() {
+        // A quarter past frame 101: a quarter on 101, three quarters on 102.
+        // 10 per second: 100 ms a frame.
+        let anim = find("A 100 4 0 10", "A").unwrap();
+        assert_eq!(anim.blend_from(125), (101, 102, 0.75));
+        // On a frame exactly: the next one alone.
+        assert_eq!(anim.blend_from(100), (101, 102, 1.0));
+        // Looping past its last frame: toward the first.
+        assert_eq!(anim.blend_from(350), (103, 100, 0.5));
+        // Held on its last frame.
+        let held = find("A 100 4 -1 20", "A").unwrap();
+        assert_eq!(held.blend_from(1000), (103, 103, 1.0));
     }
 }

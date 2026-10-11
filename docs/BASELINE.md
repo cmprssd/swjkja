@@ -326,6 +326,30 @@ vjun1's not checked: they lose the device on this GPU, on main too). Frame times
 `bench_world` on the three NPC views stay at main's (Intel HD 630: dpred 6.7-6.8
 ms, vjun2 5.2-5.3, kor2 8.4-8.9).
 
+Blending between animations (100 ms when a part's animation changes) leaves the
+three views pixel for pixel the same: at 12345 ms no NPC in them is blending. Their
+blends would not show anyway: `BOTH_STAND1` and `BOTH_STAND3` (with
+`TORSO_WEAPONIDLE3`, the same frames) lie within 0.06 units of their idles' first
+and last frames, bone for bone. vjun2's imperial (entity 34) holds a pistol in
+`TORSO_WEAPONIDLE2`, 24 units from its idle at the hands; a view in front of it
+(`vjun2 vjun2_imp_a 626 1654 3095 20 135 0`) was captured once at 5039 ms, 47 ms
+into its blend (the log: the idle started at 4992 on the client's clock), and
+rendered at 5047 (47 ms into ours, which starts at 5000):
+
+| | Mean difference | NPC's box (x380-880 y150-720) | Box pixels off by > 32 |
+|------|------|------|------|
+| main (no blend: the idle's pose) | 1.53 | 3.84 | 3.6% |
+| blended | 1.07 | 2.33 | 1.6% |
+
+The game's log gives each part's `blendFrame`; every legs value in the three maps'
+logs is the frame `Animation::blend_from` gives (dpred 15297.06 at 5003, kor2
+14651.90 at 4995, 15296.04 at 6552), and the imperial's torso 15456.00. The
+torso's `TORSO_WEAPONIDLE3` values are not (15296.24 against our 15297.12 at 5003):
+the original's torso stance starts about 15 ms later than 1550, or 19 ms earlier;
+its two frames are within 0.05 units, so it does not show. `bench_world` on the
+three NPC views: within the HD 630's run-to-run spread of main's (two runs each,
+both ways).
+
 ## Single-player ammo rack compared with the reference, 2026-10-10
 
 stamp_barrels (above) has an ammo rack on the wall with a blaster pack and a medpack.

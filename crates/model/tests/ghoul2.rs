@@ -1,4 +1,4 @@
-use swjkja_model::gla::{Frame, Gla, IDENTITY, Mat34, ROOT, multiply, uncompress};
+use swjkja_model::gla::{Blend, Frame, Gla, IDENTITY, Mat34, ROOT, multiply, uncompress};
 use swjkja_model::glm::{Glm, SURFACE_IS_BOLT, SURFACE_NO_DESCENDANTS, SURFACE_OFF, bolt, skin};
 use swjkja_model::skin::Skin;
 
@@ -160,6 +160,32 @@ fn a_bone_between_frames_lerps_its_transform() {
     assert!(close(&pose[1], &translation([12.5, 0.0, 0.0])), "{pose:?}");
     // Frame 1 alone, given as a plain frame number.
     let pose = gla.pose_frames(&IDENTITY, &[1, 1]);
+    assert!(close(&pose[1], &translation([20.0, 0.0, 0.0])), "{pose:?}");
+}
+
+#[test]
+fn a_blending_bone_lerps_from_the_frame_it_blends_from() {
+    // Bone 1 sits 10, then 20 along its parent's x; a quarter of the way from
+    // frame 0 to frame 1: 12.5.
+    let t = |x| comp([1.0, 0.0, 0.0, 0.0], [x, 0.0, 0.0]);
+    let gla = Gla::parse(&gla_frames(
+        &[-1, 0],
+        &[&[t(0.0), t(10.0)], &[t(0.0), t(20.0)]],
+    ))
+    .unwrap();
+    let blend = Blend {
+        frame: 1.into(),
+        from: 0.into(),
+        weight: 0.25,
+    };
+    let pose = gla.pose_frames(&IDENTITY, &gla.frames(&[(0, blend)]));
+    assert!(close(&pose[1], &translation([12.5, 0.0, 0.0])), "{pose:?}");
+    // Over: the frame alone.
+    let over = Blend {
+        weight: 1.0,
+        ..blend
+    };
+    let pose = gla.pose_frames(&IDENTITY, &gla.frames(&[(0, over)]));
     assert!(close(&pose[1], &translation([20.0, 0.0, 0.0])), "{pose:?}");
 }
 
