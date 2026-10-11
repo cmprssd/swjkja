@@ -140,6 +140,14 @@ enum Slots {
 }
 
 impl Slots {
+    /// Held at the first frame (`RF_SETANIMINDEX` with frame 0).
+    fn first(self) -> Self {
+        match self {
+            Slots::Animated { first, .. } => Slots::One(first),
+            one => one,
+        }
+    }
+
     /// `R_BindAnimatedImage`: the frame at `time` seconds.
     fn at(&self, time: f32) -> u32 {
         match *self {
@@ -217,6 +225,26 @@ enum DynamicSource {
     },
 }
 
+/// A material's identity: its shader, lightmap pages and styles, and whether its
+/// animated images hold their first frame (see [`BrushDraw::shader_anim`]).
+type MaterialKey = (String, [i32; 4], [u8; 4], bool);
+
+/// A brush entity the renderer draws, as the map starts (see
+/// `swjkja_world::brush_entity`).
+struct BrushDraw {
+    /// Its model's bounds' corners in the world (`R_CullLocalBox`).
+    corners: [[f32; 3]; 8],
+    entity_box: [[f32; 3]; 2],
+    /// Where the server links its box (set once the map's visibility is loaded).
+    link: Option<vis::EntityLink>,
+    broadcast: bool,
+    /// `EF_SHADER_ANIM`: its surfaces use materials whose animated images hold
+    /// frame 0.
+    shader_anim: bool,
+    /// Its model's surfaces (map surface numbers), placed where it stands.
+    surfaces: Vec<usize>,
+}
+
 pub struct WorldRenderer {
     gpu: Arc<Gpu>,
     vertices: Buffer,
@@ -240,6 +268,8 @@ pub struct WorldRenderer {
     vis: vis::WorldVis,
     /// Per surface: its culled draw material and index range in `static_indexes`.
     surface_draw: Vec<Option<(usize, u32, u32)>>,
+    /// The brush entities drawn, in spawn order.
+    brushes: Vec<BrushDraw>,
     /// Per surface: the sky it opens (drawn only when one of its surfaces is visible).
     surface_gate: Vec<Option<usize>>,
     gate_count: usize,
@@ -553,19 +583,49 @@ impl WorldRenderer {
             }
         }
 
+        // The brush entities the map spawns, each surface of their models placed
+        // where the entity stands (a model two entities share is drawn by the first).
+        let surfaces_in = |model: usize| {
+            let m = &bsp.models[model];
+            m.first_surface.max(0) as usize
+                ..(m.first_surface.max(0) + m.num_surfaces.max(0)) as usize
+        };
+        let mut placed: HashMap<usize, Geometry> = HashMap::new();
+        let mut brushes: Vec<BrushDraw> = Vec::new();
+        for e in swjkja_world::brush_entity::brush_entities(&bsp.entities, &bsp.models, rules) {
+            let surfaces: Vec<usize> = surfaces_in(e.model)
+                .filter(|i| *i < world.surfaces.len() && !placed.contains_key(i))
+                .collect();
+            for &i in &surfaces {
+                placed.insert(i, e.placed(&world.surfaces[i].geometry));
+            }
+            let m = &bsp.models[e.model];
+            brushes.push(BrushDraw {
+                corners: e.corners([m.mins, m.maxs]),
+                link: None,
+                entity_box: e.entity_box,
+                broadcast: e.broadcast,
+                shader_anim: e.shader_anim,
+                surfaces,
+            });
+        }
+
         // Materials, in creation order (the order surfaces first use them).
-        let model = &bsp.models[0];
-        let world_surfaces =
-            model.first_surface as usize..(model.first_surface + model.num_surfaces) as usize;
-        let mut material_index: HashMap<(String, [i32; 4], [u8; 4]), usize> = HashMap::new();
+        let mut material_index: HashMap<MaterialKey, usize> = HashMap::new();
         let mut materials: Vec<Material> = Vec::new();
+        // Per material: whether its animated images hold their first frame.
+        let mut held: Vec<bool> = Vec::new();
         // Per material, its surfaces by fog number (the original's sort key orders draws
         // by material, then fog).
         let mut surfaces_of: Vec<std::collections::BTreeMap<usize, Vec<usize>>> = Vec::new();
         let mut surface_cull = vec![vis::SurfaceCull::Never; bsp.surfaces.len()];
-        for i in world_surfaces {
+        let entity_surfaces = brushes
+            .iter()
+            .flat_map(|b| b.surfaces.iter().map(|&i| (i, b.shader_anim)));
+        for (i, hold) in surfaces_in(0).map(|i| (i, false)).chain(entity_surfaces) {
             let s = &world.surfaces[i];
-            if matches!(s.geometry, Geometry::Skip) {
+            let geometry = placed.get(&i).unwrap_or(&s.geometry);
+            if matches!(geometry, Geometry::Skip) {
                 continue;
             }
             let shader_name = bsp.shaders[s.shader].name().to_owned();
@@ -574,7 +634,7 @@ impl WorldRenderer {
             } else {
                 s.lightmap_styles
             };
-            let key = (shader_name.clone(), s.lightmaps, styles);
+            let key = (shader_name.clone(), s.lightmaps, styles, hold);
             let m = match material_index.get(&key) {
                 Some(&m) => m,
                 None => {
@@ -596,6 +656,7 @@ impl WorldRenderer {
                         )
                     };
                     materials.push(material);
+                    held.push(hold);
                     surfaces_of.push(Default::default());
                     material_index.insert(key, materials.len() - 1);
                     materials.len() - 1
@@ -603,7 +664,7 @@ impl WorldRenderer {
             };
             surfaces_of[m].entry(s.fog).or_default().push(i);
             // R_CullSurface's per-surface test, with the surface's material.
-            surface_cull[i] = match &s.geometry {
+            surface_cull[i] = match geometry {
                 Geometry::Face { normal, dist, .. } if materials[m].cull != Cull::TwoSided => {
                     vis::SurfaceCull::Plane {
                         normal: *normal,
@@ -632,6 +693,7 @@ impl WorldRenderer {
                 name.to_owned(),
                 [swjkja_shader::resolve::LIGHTMAP_NONE; 4],
                 [0, 255, 255, 255],
+                false,
             )
         };
         let names = models.shaders.iter().map(String::as_str);
@@ -653,6 +715,7 @@ impl WorldRenderer {
                 &mut loader,
                 &mut |_| false,
             ));
+            held.push(false);
             surfaces_of.push(Default::default());
             material_index.insert(key, materials.len() - 1);
         }
@@ -665,7 +728,7 @@ impl WorldRenderer {
         }
         let geometry = |i: usize| match i.checked_sub(first_model_surface) {
             Some(k) => &models.pieces[k].geometry,
-            None => &world.surfaces[i].geometry,
+            None => placed.get(&i).unwrap_or(&world.surfaces[i].geometry),
         };
         let surface_count = first_model_surface + models.pieces.len();
 
@@ -1112,10 +1175,14 @@ impl WorldRenderer {
                         Some(b) => slots_for(&b.image, textures)?,
                         None => Slots::One(white),
                     };
+                    let mut slots = [slots_for(&s.bundle.image, textures)?, slot1];
+                    if held[m] {
+                        slots = slots.map(Slots::first);
+                    }
                     stages.push(DrawStage {
                         gpu_stage: gpu_stages.len() as u32 - 1,
                         pipeline,
-                        slots: [slots_for(&s.bundle.image, textures)?, slot1],
+                        slots,
                     });
                 }
                 if fog_pass {
@@ -1322,6 +1389,9 @@ impl WorldRenderer {
         uploads.borrow_mut().flush(gpu)?;
         let vis = vis::WorldVis::new(bsp, surface_cull);
         models.locate(&vis);
+        for b in &mut brushes {
+            b.link = Some(vis.link(b.entity_box));
+        }
         Ok(Self {
             gpu: gpu.clone(),
             per_frame,
@@ -1355,6 +1425,7 @@ impl WorldRenderer {
             materials: draw_materials,
             vis,
             surface_draw,
+            brushes,
             models,
             first_model_surface,
             first_bone,
@@ -1463,6 +1534,32 @@ impl WorldRenderer {
         self.vis.visible(camera, &mut visible);
         let mut gate_open = vec![false; self.gate_count];
         let mut ranges: Vec<(usize, u32, u32)> = Vec::with_capacity(visible.len());
+        let frustum = vis::Frustum::new(camera);
+        let view_cluster = self.vis.cluster(camera.origin);
+        // The brush entities the server sends this view, culled by their model's box
+        // (R_AddBrushModelSurfaces), then each surface as the world's. They come
+        // first: the entity number orders draws within a material, and the world's
+        // (ENTITYNUM_WORLD) is the last.
+        for b in &self.brushes {
+            let sent = b.broadcast
+                || b.link
+                    .as_ref()
+                    .is_some_and(|l| self.vis.sends(view_cluster, l));
+            if !sent || frustum.culls_points(&b.corners) {
+                continue;
+            }
+            for &s in &b.surfaces {
+                if self.vis.culls_surface(s, camera.origin, &frustum) {
+                    continue;
+                }
+                if let Some(g) = self.surface_gate[s] {
+                    gate_open[g] = true;
+                }
+                if let Some(r) = self.surface_draw[s] {
+                    ranges.push(r);
+                }
+            }
+        }
         for &s in &visible {
             if let Some(g) = self.surface_gate[s] {
                 gate_open[g] = true;
@@ -1475,8 +1572,6 @@ impl WorldRenderer {
         // the light grid, NPCs posed as they stand now; entity n + 1 is model n.
         let bone_table = bones.mapped_mut()?;
         let ms = (f64::from(time) * 1000.0).round() as i32;
-        let frustum = vis::Frustum::new(camera);
-        let view_cluster = self.vis.cluster(camera.origin);
         let table = entities.mapped_mut()?;
         table[..size_of::<GpuEntity>()].copy_from_slice(bytemuck::bytes_of(&GpuEntity::WORLD));
         for n in 0..self.models.instances.len() {

@@ -126,7 +126,7 @@ pub struct Attached {
 }
 
 /// `atof`: the longest leading number, 0 for none.
-fn atof(s: &str) -> f32 {
+pub(crate) fn atof(s: &str) -> f32 {
     let s = s.trim_start();
     (1..=s.len())
         .rev()
@@ -174,7 +174,7 @@ pub fn angles_to_axis(angles: Vec3) -> [Vec3; 3] {
 
 /// `CG_ParseEntityFromSpawnVars`'s filters: whether `e` spawns in `gametype` (an
 /// index into the game type names, 0 for free-for-all).
-fn spawns_in(e: &Entity, gametype: usize) -> bool {
+pub(crate) fn spawns_in(e: &Entity, gametype: usize) -> bool {
     let flag = |key| e.get(key).map_or(0, atoi) != 0;
     if gametype == GT_SINGLE_PLAYER && flag("notsingle") {
         return false;

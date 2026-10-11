@@ -182,3 +182,45 @@ fn single_player_npcs_find_their_looks() {
     assert_eq!((spawns, drawn), (245, 243));
     assert_eq!(not_drawn.iter().collect::<Vec<_>>(), ["mouse"]);
 }
+
+#[test]
+fn every_retail_map_places_its_brush_entities() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let (mut sp, mut mp, mut moved, mut turned, mut held) = (0, 0, 0, 0, 0);
+    for name in vfs.files().filter(|f| f.ends_with(".bsp")) {
+        let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
+        let rules = Rules::for_map(name);
+        let brushes = swjkja_world::brush_entity::brush_entities(&bsp.entities, &bsp.models, rules);
+        for b in &brushes {
+            let spawned = bsp.entities.iter().find(|e| {
+                e.get("model")
+                    .is_some_and(|m| m.strip_prefix('*') == Some(&b.model.to_string()))
+            });
+            let origin = spawned.and_then(|e| e.get("origin")).map_or([0.0; 3], |o| {
+                let v: Vec<f32> = o.split_whitespace().map(|x| x.parse().unwrap()).collect();
+                [v[0], v[1], v[2]]
+            });
+            moved += usize::from(b.origin != origin);
+            turned += usize::from(b.axes[0] != [1.0, 0.0, 0.0]);
+            held += usize::from(b.shader_anim);
+        }
+        match rules {
+            Rules::SinglePlayer { .. } => sp += brushes.len(),
+            Rules::Multiplayer { .. } => mp += brushes.len(),
+        }
+    }
+    // Every func_ entity of the single-player maps with a model, less the 46 walls
+    // and 101 usables that start off (counted from the entity text alone).
+    assert_eq!(sp, 1509);
+    assert_eq!(mp, 356);
+    // Doors that start open (spawnflag 1) and plats (which start at the bottom).
+    assert_eq!(moved, 54 + 20);
+    // The func_statics with an angle.
+    assert_eq!(turned, 10);
+    // Locked doors and func_statics and usables with frame-controlled shaders.
+    assert_eq!(held, 122);
+}
