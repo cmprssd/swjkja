@@ -1,8 +1,8 @@
 //! Renders views of maps with the stage renderer (materials drawn as the original
 //! does) to PNGs.
 //! Usage: render_world <GameData> <views.txt> <out folder>
-//! Each view renders at its game time (the views file's last column, in ms); a map's
-//! NPCs stand as they do at its first view's time.
+//! Each view renders at its game time (the views file's last column, in ms), NPCs
+//! standing as they do then.
 use std::time::Instant;
 
 use swjkja_render::{Camera, Gpu, Target, TextureSet, WorldRenderer};

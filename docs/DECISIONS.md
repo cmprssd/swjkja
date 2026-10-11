@@ -477,3 +477,28 @@ equals the same frame rendered alone (it fails if the frames share one slot).
 - **Models are posed once, when the map loads, at a given time**: `render_world` at
   the map's first view's time (every NPC view is at 12345 ms), the viewer at 0.
   Animating them as time passes is the next step.
+
+## 2026-10-11: Single player's NPCs posed every frame, skinned on the GPU (decided by Claude, pending review)
+
+- **The renderer poses each NPC it draws at the frame's time**: per frame, each
+  visible NPC's bones (its skeleton at the frames its animations reach, then each
+  bolted model's from its bolt) go into a per-frame table, placed by the NPC's
+  origin and axes; the vertex shader skins its surfaces by them as
+  `RB_SurfaceGhoul` does (weighted bones for the position, the first bone for the
+  normal). A posed surface's vertices stay in the model's space in the static
+  vertex buffer, their bones and first three weights in the lightmap coordinates
+  model surfaces do not use, and draw apart from the other surfaces of their
+  material, just after them. `render_world` now poses each view's NPCs at that
+  view's time, not the map's first view's.
+- **Why the GPU, not the original's CPU skinning**: skinning on the CPU (rebuilt
+  per frame, copied to a per-frame vertex buffer) cost about 0.25 ms of CPU per
+  NPC and, on the Intel HD 630 this is measured on, as much again on the GPU:
+  1 ms of busy-waiting per frame alone slowed the GPU by 1-2 ms (the two share
+  power). kor2's view of four NPCs went from 8.5 to 11 ms a frame. With the
+  GPU's skinning it stays at main's (8.4-8.9 ms); the CPU computes about 70 bones
+  per NPC.
+- **Left as they were loaded**: an NPC's surfaces whose shader has vertex
+  deforms (drawn through the CPU deform path) keep the pose of the time given at
+  load. Bounds and culling still use the load's pose; the sphere NPCs cull by
+  does not depend on it.
+

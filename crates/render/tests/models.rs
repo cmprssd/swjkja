@@ -377,3 +377,64 @@ fn t2_dpred_stormtroopers_draw_skinned_and_armed() {
     );
     assert!((maxs[0] - 20.7).abs() < 0.5, "{mins:?} {maxs:?}");
 }
+
+/// An NPC is posed again as time passes: its bones skin its surfaces where they
+/// were baked at the time it was loaded at, and elsewhere in its idle animation
+/// (from 5000 ms), its gun following its hand.
+#[test]
+fn t2_dpred_stormtroopers_move_as_time_passes() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t2_dpred.bsp").unwrap()).unwrap();
+    let models = StaticModels::load(&vfs, &bsp, &[], Rules::for_map("maps/t2_dpred.bsp"), 3000);
+    let n = models
+        .instances
+        .iter()
+        .position(|m| (0..3).all(|i| (m.origin[i] - [-2080.0, -4264.0, 24.125][i]).abs() < 1e-3))
+        .unwrap();
+    // Each piece's positions skinned by the bones at `time`.
+    let posed = |time| -> Vec<Vec<[f32; 3]>> {
+        let bones = models.bones(n, time);
+        let pieces = models.instances[n].lods[0].pieces.clone();
+        pieces
+            .map(|k| {
+                let (surface, first) = models.posed_surface(k).unwrap();
+                swjkja_model::glm::skin(surface, &bones[first..]).0
+            })
+            .collect()
+    };
+    let baked: Vec<Vec<[f32; 3]>> = models.pieces[models.instances[n].lods[0].pieces.clone()]
+        .iter()
+        .map(|p| match &p.geometry {
+            swjkja_world::Geometry::Triangles { verts, .. } => {
+                verts.iter().map(|v| v.xyz).collect()
+            }
+            _ => unreachable!(),
+        })
+        .collect();
+    let near = |a: &[[f32; 3]], b: &[[f32; 3]]| {
+        a.len() == b.len()
+            && a.iter()
+                .zip(b)
+                .all(|(a, b)| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-3))
+    };
+    // Body and gun (the last two pieces).
+    let (at_load, later) = (posed(3000), posed(7000));
+    assert_eq!(at_load.len(), 21 + 2);
+    for (k, (posed, baked)) in at_load.iter().zip(&baked).enumerate() {
+        assert!(near(posed, baked), "piece {k}");
+    }
+    for (k, (before, after)) in at_load.iter().zip(&later).enumerate() {
+        assert!(!near(before, after), "piece {k} did not move");
+    }
+    // A model without a rig (a rack weapon) has no bones.
+    let item = models
+        .instances
+        .iter()
+        .position(|m| m.rig.is_none())
+        .unwrap();
+    assert!(models.bones(item, 7000).is_empty());
+}

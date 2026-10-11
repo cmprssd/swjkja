@@ -319,6 +319,13 @@ dpred_guns 6.72, stamp_barrels 0.13, stamp_crates 5.00, ffa5_lamps 0.17, ffa5_pi
 3.87, ffa5_rings 0.22; against the earlier captures, pixel for pixel the same but
 stamp_barrels, whose two NPCs behind the wall now stand in their idle).
 
+Posing NPCs every frame, skinned on the GPU, leaves these numbers as they are: the
+GPU's rounding moves 180-260 edge pixels per NPC view (dpred's first box 4.55 ->
+4.54), and the other views are pixel for pixel the same (hoth2's, t2_rancor's and
+vjun1's not checked: they lose the device on this GPU, on main too). Frame times with
+`bench_world` on the three NPC views stay at main's (Intel HD 630: dpred 6.7-6.8
+ms, vjun2 5.2-5.3, kor2 8.4-8.9).
+
 ## Single-player ammo rack compared with the reference, 2026-10-10
 
 stamp_barrels (above) has an ammo rack on the wall with a blaster pack and a medpack.

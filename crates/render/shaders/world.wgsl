@@ -73,11 +73,17 @@ struct Entity {
     color: vec4<f32>,
 }
 
+// A posed model's bone in world space: three rows of rotation and translation.
+struct Bone {
+    rows: array<vec4<f32>, 3>,
+}
+
 struct Push {
     stage: u32,
     texture0: u32,
     texture1: u32,
-    pad: u32,
+    // 1 for a posed model's surface: skinned by `bones` (vs_main).
+    skinned: u32,
 }
 
 var<immediate> push: Push;
@@ -89,6 +95,11 @@ var<immediate> push: Push;
 @group(1) @binding(1) var<storage, read> stages: array<Stage>;
 @group(1) @binding(2) var<storage, read> fogs: array<Fog>;
 @group(1) @binding(3) var<storage, read> entities: array<Entity>;
+@group(1) @binding(4) var<storage, read> bones: array<Bone>;
+
+fn bone_apply(b: Bone, v: vec4<f32>) -> vec3<f32> {
+    return vec3<f32>(dot(b.rows[0], v), dot(b.rows[1], v), dot(b.rows[2], v));
+}
 
 // RB_CalcFogTexCoords (fog.rs fog_tex_coords) for fog number `n`.
 fn fog_tex_coords(n: u32, v: vec3<f32>) -> vec2<f32> {
@@ -379,15 +390,33 @@ struct VertexOut {
 @vertex
 fn vs_main(
     @location(0) xyz: vec3<f32>,
-    @location(1) normal: vec3<f32>,
+    @location(1) vertex_normal: vec3<f32>,
     @location(2) st: vec2<f32>,
-    @location(3) lm01: vec4<f32>,
-    @location(4) lm23: vec4<f32>,
+    @location(3) vertex_lm01: vec4<f32>,
+    @location(4) vertex_lm23: vec4<f32>,
     @location(5) color: vec4<f32>,
 ) -> VertexOut {
     let s = stages[push.stage];
     var out: VertexOut;
     var world_xyz = xyz;
+    var normal = vertex_normal;
+    var lm01 = vertex_lm01;
+    var lm23 = vertex_lm23;
+    if push.skinned == 1u {
+        // RB_SurfaceGhoul: the weighted sum of the vertex's bones' transforms of it
+        // (bones in lm01, the first three weights in lm23.xyz, the fourth what they
+        // leave of 1), its normal turned by its first bone alone. The vertex has no
+        // lightmap coordinates.
+        let weight = vec4<f32>(lm23.xyz, 1.0 - lm23.x - lm23.y - lm23.z);
+        let v = vec4<f32>(xyz, 1.0);
+        world_xyz = vec3<f32>(0.0);
+        for (var i = 0u; i < 4u; i++) {
+            world_xyz += weight[i] * bone_apply(bones[u32(lm01[i])], v);
+        }
+        normal = bone_apply(bones[u32(lm01.x)], vec4<f32>(normal, 0.0));
+        lm01 = vec4<f32>(0.0);
+        lm23 = vec4<f32>(0.0, 0.0, 0.0, lm23.w);
+    }
     if s.fog.y == 1u {
         world_xyz = frame.view_origin.xyz + xyz;
     }

@@ -18,6 +18,7 @@ use bytemuck::{Pod, Zeroable};
 use gpu_allocator::MemoryLocation;
 use swjkja_bsp::Bsp;
 use swjkja_fs::Vfs;
+use swjkja_model::gla::Mat34;
 use swjkja_shader::resolve::{
     FogAdjust, FogColor, FogPass, Image, Images, Material, MaterialStage, TexEnv,
     resolve_map_shader,
@@ -122,7 +123,8 @@ struct Push {
     stage: u32,
     texture0: u32,
     texture1: u32,
-    pad: u32,
+    /// 1 for posed models' surfaces (see `vs_main` in world.wgsl).
+    skinned: u32,
 }
 
 /// What a bundle samples: one slot, or animation frames in consecutive slots.
@@ -160,6 +162,7 @@ impl Slots {
     }
 }
 
+#[derive(Clone)]
 struct DrawStage {
     gpu_stage: u32,
     pipeline: usize,
@@ -177,6 +180,8 @@ struct DrawMaterial {
     culled: bool,
     /// Sky draws: drawn only if a surface of this sky gate is visible.
     gate: Option<usize>,
+    /// Posed models' surfaces, skinned by the frame's bones (see draw()).
+    skinned: bool,
 }
 
 /// Which vertex and index buffers a draw uses.
@@ -244,6 +249,8 @@ pub struct WorldRenderer {
     models: StaticModels,
     /// Where the models' surfaces start in `surface_draw`.
     first_model_surface: usize,
+    /// Per model: where its bones start in the frame's bones, if it is posed.
+    first_bone: Vec<Option<usize>>,
     light_grid: swjkja_world::light_grid::LightGrid,
 }
 
@@ -255,6 +262,8 @@ struct PerFrame {
     dynamic_vertices: Buffer,
     dynamic_indexes: Buffer,
     culled_indexes: Buffer,
+    /// The posed models' bones (see `Bone` in world.wgsl).
+    bones: Buffer,
     /// The entity table: [`GpuEntity`] per entity.
     entities: Buffer,
 }
@@ -452,8 +461,9 @@ fn gpu_stage(s: &MaterialStage, env: Option<TexEnv>) -> GpuStage {
 
 impl WorldRenderer {
     /// Resolves and uploads everything the world model needs. Textures go into
-    /// `textures`, which must outlive the renderer. NPCs stand as they do at game
-    /// time `time` (seconds).
+    /// `textures`, which must outlive the renderer. NPCs are posed at each draw's
+    /// time; their surfaces with vertex deforms stand as they do at game time
+    /// `time` (seconds).
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         gpu: &Arc<Gpu>,
@@ -783,6 +793,11 @@ impl WorldRenderer {
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::VERTEX),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(4)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::VERTEX),
         ];
         let frame_layout = unsafe {
             d.create_descriptor_set_layout(
@@ -810,6 +825,17 @@ impl WorldRenderer {
         let mut surface_gate: Vec<Option<usize>> = vec![None; surface_count];
         let mut gates = 0usize;
         let (mut dynamic_vertices, mut dynamic_indexes) = (0u32, 0u32);
+        // Each posed model's bones, one after another.
+        let mut bone_count = 0;
+        let first_bone: Vec<Option<usize>> = models
+            .instances
+            .iter()
+            .map(|m| {
+                let first = bone_count;
+                bone_count += m.rig.as_ref()?.bone_count();
+                Some(first)
+            })
+            .collect();
         for &m in &order {
             let material = &materials[m];
             if let Some(sky) = &material.sky {
@@ -894,6 +920,7 @@ impl WorldRenderer {
                                 dynamic: None,
                                 culled: false,
                                 gate: Some(gate),
+                                skinned: false,
                             });
                         }
                     }
@@ -931,6 +958,7 @@ impl WorldRenderer {
                         dynamic: None,
                         culled: false,
                         gate: Some(gate),
+                        skinned: false,
                     });
                 }
                 continue;
@@ -954,6 +982,9 @@ impl WorldRenderer {
                 )
             });
             for (&fog, group) in &surfaces_of[m] {
+                // The posed models' surfaces, drawn just after the others (first
+                // index, index count).
+                let mut skinned_draw = None;
                 let flares: Vec<([f32; 3], [f32; 3])> = group
                     .iter()
                     .filter_map(|&i| match *geometry(i) {
@@ -1004,16 +1035,39 @@ impl WorldRenderer {
                     dynamic_indexes += ni;
                     (0, 0, Some(dynamic))
                 } else {
+                    let posed = |i: usize| {
+                        let k = i.checked_sub(first_model_surface)?;
+                        let (surface, first) = models.posed_surface(k)?;
+                        let instance = models.pieces[k].source?.instance;
+                        Some((surface, first_bone[instance]? + first, instance + 1))
+                    };
+                    let (moving, fixed): (Vec<usize>, Vec<usize>) =
+                        group.iter().partition(|&&i| posed(i).is_some());
                     let first_index = indexes.len() as u32;
-                    for &i in group {
+                    for &i in &fixed {
                         let start = indexes.len() as u32;
                         append(geometry(i), &mut vertices, &mut indexes);
                         surface_draw[i] =
                             Some((draw_materials.len(), start, indexes.len() as u32 - start));
                     }
                     let count = indexes.len() as u32 - first_index;
-                    if count == 0 {
+                    let skinned_first = indexes.len() as u32;
+                    for &i in &moving {
+                        let (surface, first, entity) = posed(i).unwrap();
+                        let start = indexes.len() as u32;
+                        append_skinned(surface, first, entity, &mut vertices, &mut indexes);
+                        surface_draw[i] = Some((
+                            draw_materials.len() + 1,
+                            start,
+                            indexes.len() as u32 - start,
+                        ));
+                    }
+                    let skinned_count = indexes.len() as u32 - skinned_first;
+                    if count == 0 && skinned_count == 0 {
                         continue;
+                    }
+                    if skinned_count != 0 {
+                        skinned_draw = Some((skinned_first, skinned_count));
                     }
                     (first_index, count, None)
                 };
@@ -1100,6 +1154,7 @@ impl WorldRenderer {
                         slots: [Slots::One(fog_image), Slots::One(white)],
                     });
                 }
+                let skinned_stages = skinned_draw.map(|_| stages.clone());
                 draw_materials.push(DrawMaterial {
                     first_index,
                     index_count,
@@ -1107,7 +1162,21 @@ impl WorldRenderer {
                     culled: dynamic.is_none(),
                     dynamic,
                     gate: None,
+                    skinned: false,
                 });
+                if let (Some((first_index, index_count)), Some(stages)) =
+                    (skinned_draw, skinned_stages)
+                {
+                    draw_materials.push(DrawMaterial {
+                        first_index,
+                        index_count,
+                        stages,
+                        dynamic: None,
+                        culled: true,
+                        gate: None,
+                        skinned: true,
+                    });
+                }
             }
         }
         let layouts = [textures.layout, frame_layout];
@@ -1144,7 +1213,7 @@ impl WorldRenderer {
             },
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: 3 * FRAMES_IN_FLIGHT as u32,
+                descriptor_count: 4 * FRAMES_IN_FLIGHT as u32,
             },
         ];
         let frame_pool = unsafe {
@@ -1183,11 +1252,18 @@ impl WorldRenderer {
                 ((models.instances.len() + 1) * size_of::<GpuEntity>()) as u64,
                 MemoryLocation::CpuToGpu,
             )?;
-            let (ubo, ssbo, fog_info, entity_info) = (
+            let bones = Buffer::new(
+                gpu,
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+                (bone_count.max(1) * size_of::<Mat34>()) as u64,
+                MemoryLocation::CpuToGpu,
+            )?;
+            let (ubo, ssbo, fog_info, entity_info, bone_info) = (
                 info(&frame_buffer),
                 info(&stage_buffer),
                 info(&fog_buffer),
                 info(&entities),
+                info(&bones),
             );
             let writes = [
                 vk::WriteDescriptorSet::default()
@@ -1210,12 +1286,18 @@ impl WorldRenderer {
                     .dst_binding(3)
                     .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                     .buffer_info(&entity_info),
+                vk::WriteDescriptorSet::default()
+                    .dst_set(frame_set)
+                    .dst_binding(4)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .buffer_info(&bone_info),
             ];
             unsafe { d.update_descriptor_sets(&writes, &[]) };
             per_frame.push(PerFrame {
                 frame_buffer,
                 frame_set,
                 entities,
+                bones,
                 dynamic_vertices: Buffer::new(
                     gpu,
                     vk::BufferUsageFlags::VERTEX_BUFFER,
@@ -1275,6 +1357,7 @@ impl WorldRenderer {
             surface_draw,
             models,
             first_model_surface,
+            first_bone,
             light_grid: swjkja_world::light_grid::LightGrid::load(bsp, 0),
             surface_gate,
             gate_count: gates,
@@ -1334,6 +1417,7 @@ impl WorldRenderer {
             culled_indexes,
             frame_set,
             entities,
+            bones,
             ..
         } = &mut self.per_frame[slot];
         let vb = dynamic_vertices.mapped_mut()?;
@@ -1388,7 +1472,9 @@ impl WorldRenderer {
             }
         }
         // The static models this view draws (each at its level of detail), lit from
-        // the light grid; entity n + 1 is model n.
+        // the light grid, NPCs posed as they stand now; entity n + 1 is model n.
+        let bone_table = bones.mapped_mut()?;
+        let ms = (f64::from(time) * 1000.0).round() as i32;
         let frustum = vis::Frustum::new(camera);
         let view_cluster = self.vis.cluster(camera.origin);
         let table = entities.mapped_mut()?;
@@ -1414,6 +1500,12 @@ impl WorldRenderer {
             };
             let at = (n + 1) * size_of::<GpuEntity>();
             table[at..at + size_of::<GpuEntity>()].copy_from_slice(bytemuck::bytes_of(&entity));
+            if let Some(first) = self.first_bone[n] {
+                let pose = self.models.bones(n, ms);
+                let at = first * size_of::<Mat34>();
+                bone_table[at..at + size_of_val(&pose[..])]
+                    .copy_from_slice(bytemuck::cast_slice(&pose));
+            }
             for piece in m.lods[level].pieces.clone() {
                 if let Some(r) = self.surface_draw[self.first_model_surface + piece] {
                     ranges.push(r);
@@ -1506,7 +1598,7 @@ impl WorldRenderer {
                         stage: s.gpu_stage,
                         texture0: s.slots[0].at(time),
                         texture1: s.slots[1].at(time),
-                        pad: 0,
+                        skinned: u32::from(m.skinned),
                     };
                     d.cmd_push_constants(
                         cmd,
@@ -1643,4 +1735,39 @@ fn append(geometry: &Geometry, vertices: &mut Vec<Vertex>, indexes: &mut Vec<u32
         }
         Geometry::Flare { .. } | Geometry::Skip => {}
     }
+}
+
+/// Appends a posed model's surface in its model's space, to be skinned by the bones
+/// from `first_bone` on (`RB_SurfaceGhoul`, see `vs_main` in world.wgsl): each
+/// vertex's bones (up to four, the first repeated with no weight where it has fewer)
+/// in lightmap sets 0 and 1, the first three weights in sets 2 and 3 (the fourth is
+/// what they leave of 1), and the entity number in set 3's second coordinate.
+fn append_skinned(
+    surface: &swjkja_model::glm::Surface,
+    first_bone: usize,
+    entity: usize,
+    vertices: &mut Vec<Vertex>,
+    indexes: &mut Vec<u32>,
+) {
+    let base = vertices.len() as u32;
+    vertices.extend(surface.verts.iter().zip(&surface.st).map(|(v, &st)| {
+        let (mut bone, mut weight) = ([v.bones[0].0; 4], [0.0; 4]);
+        for (k, &(b, w)) in v.bones.iter().enumerate() {
+            (bone[k], weight[k]) = (b, w);
+        }
+        let bone = bone.map(|b| (first_bone + b) as f32);
+        Vertex {
+            xyz: v.xyz,
+            normal: v.normal,
+            st,
+            lightmap: [
+                [bone[0], bone[1]],
+                [bone[2], bone[3]],
+                [weight[0], weight[1]],
+                [weight[2], entity as f32],
+            ],
+            color: [255; 4],
+        }
+    }));
+    indexes.extend(surface.indexes.iter().map(|&i| base + i));
 }
