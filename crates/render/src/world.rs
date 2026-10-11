@@ -462,8 +462,8 @@ fn gpu_stage(s: &MaterialStage, env: Option<TexEnv>) -> GpuStage {
 impl WorldRenderer {
     /// Resolves and uploads everything the world model needs. Textures go into
     /// `textures`, which must outlive the renderer. NPCs are posed at each draw's
-    /// time; their surfaces with vertex deforms stand as they do at game time
-    /// `time` (seconds).
+    /// time; a surface of theirs with vertex deforms would stand as it does at game
+    /// time `time` (seconds), but no retail one has any.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         gpu: &Arc<Gpu>,
