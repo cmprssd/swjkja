@@ -671,17 +671,34 @@ impl Rig {
     /// `BOTH_STAND1` instead, as `NPC_Begin` started it, or stays at frame 0 without
     /// that too (`PM_SetAnimFinal` sets nothing then); so does a part whose bone the
     /// skeleton lacks.
+    ///
+    /// For [`npc::BLEND_MS`] after a part's animation changes, it blends from where
+    /// the one before had reached ([`npc::blending_at`],
+    /// [`animation::Animation::blend_from`]); not into an animation played
+    /// backwards (`PM_SetAnimFinal`), nor into one the skeleton lacks (nothing
+    /// changes then).
     fn body_pose(&self, time: i32) -> Vec<Mat34> {
         let gla = &self.body.gla;
         let (legs, torso, start) = npc::standing_at(&self.pose, self.idle, time);
+        let before = npc::blending_at(&self.pose, self.idle, time);
         let find = |name| self.anims.iter().find(|(n, _)| *n == name).map(|(_, a)| *a);
         let stand = find(animation::STAND);
+        let frame = |(frame, next, lerp)| gla::Frame { frame, next, lerp };
         let mut anims = Vec::new();
-        for (bone, anim) in self.bones.into_iter().zip([legs, torso, torso]) {
-            if let (Some(bone), Some(anim)) = (bone, find(anim).or(stand)) {
-                let (frame, next, lerp) = anim.frame_at(time - start);
-                anims.push((bone, gla::Frame { frame, next, lerp }));
+        for (part, (bone, name)) in self.bones.into_iter().zip([legs, torso, torso]).enumerate() {
+            let (Some(bone), Some(anim)) = (bone, find(name).or(stand)) else {
+                continue;
+            };
+            let mut blend = gla::Blend::from(frame(anim.frame_at(time - start)));
+            if let Some((old_legs, old_torso, old_start, weight)) = before {
+                let old = if part == 0 { old_legs } else { old_torso };
+                let blends = old != name && find(name).is_some_and(|a| a.frame_lerp >= 0);
+                if let (true, Some(from)) = (blends, find(old).or(stand)) {
+                    blend.from = frame(from.blend_from(start - old_start));
+                    blend.weight = weight;
+                }
             }
+            anims.push((bone, blend));
         }
         gla.pose_frames(&gla::ROOT, &gla.frames(&anims))
     }

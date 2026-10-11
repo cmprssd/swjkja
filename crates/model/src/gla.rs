@@ -30,6 +30,37 @@ impl From<usize> for Frame {
     }
 }
 
+/// A bone at `frame` blending from `from` (`G2_TransformBone`'s blend): `weight`
+/// of the way from `from` to `frame`, 1 once the blend is over.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Blend {
+    pub frame: Frame,
+    pub from: Frame,
+    pub weight: f32,
+}
+
+impl Default for Blend {
+    fn default() -> Self {
+        Frame::default().into()
+    }
+}
+
+impl From<Frame> for Blend {
+    fn from(frame: Frame) -> Self {
+        Self {
+            frame,
+            from: frame,
+            weight: 1.0,
+        }
+    }
+}
+
+impl From<usize> for Blend {
+    fn from(frame: usize) -> Self {
+        Frame::from(frame).into()
+    }
+}
+
 pub const IDENTITY: Mat34 = [
     [1.0, 0.0, 0.0, 0.0],
     [0.0, 1.0, 0.0, 0.0],
@@ -264,6 +295,21 @@ impl Gla {
         })
     }
 
+    /// Bone `bone`'s transform relative to its parent at `blend`: its frame's,
+    /// lerped component by component from the frame it blends from by the blend's
+    /// weight (`G2_TransformBone`).
+    pub fn local_blended(&self, blend: Blend, bone: usize) -> Mat34 {
+        let current = self.local_at(blend.frame, bone);
+        if blend.weight >= 1.0 {
+            return current;
+        }
+        let from = self.local_at(blend.from, bone);
+        let back = 1.0 - blend.weight;
+        std::array::from_fn(|r| {
+            std::array::from_fn(|c| blend.weight * current[r][c] + back * from[r][c])
+        })
+    }
+
     /// Each bone's frame when the bones of `anims` play their frames (bone, frame;
     /// the last of a bone wins) and every other bone plays its parent's
     /// (`CBoneCache::EvalLow`), the root bone frame 0 unless set.
@@ -286,9 +332,9 @@ impl Gla {
     }
 
     /// Every bone's transform with each bone in its own frame of `frames` (one per
-    /// bone, each below `frame_count`), the root bone's parent `root`
+    /// bone, each below `frame_count`, a [`Frame`] or a [`Blend`]), the root bone's parent `root`
     /// (`G2_TransformGhoulBones`; an attached model's root is its bolt).
-    pub fn pose_frames<F: Copy + Into<Frame>>(&self, root: &Mat34, frames: &[F]) -> Vec<Mat34> {
+    pub fn pose_frames<F: Copy + Into<Blend>>(&self, root: &Mat34, frames: &[F]) -> Vec<Mat34> {
         let mut pose: Vec<Option<Mat34>> = vec![None; self.bones.len()];
         for b in 0..self.bones.len() {
             // Pose the unposed chain above this bone, from the top down.
@@ -304,7 +350,7 @@ impl Gla {
                     continue;
                 }
                 let parent = self.bones[c].parent.map_or(*root, |p| pose[p].unwrap());
-                pose[c] = Some(multiply(&parent, &self.local_at(frames[c].into(), c)));
+                pose[c] = Some(multiply(&parent, &self.local_blended(frames[c].into(), c)));
             }
         }
         pose.into_iter().map(Option::unwrap).collect()

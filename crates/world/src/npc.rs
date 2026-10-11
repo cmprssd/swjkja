@@ -910,6 +910,31 @@ pub fn standing_at(
     }
 }
 
+/// Milliseconds a part blends from its previous animation into a new one
+/// (`SETANIM_BLEND_DEFAULT`, which the idle's `NPC_SetAnim` and the stance's
+/// `PM_SetAnim` pass).
+pub const BLEND_MS: i32 = 100;
+
+/// What an NPC standing as [`standing_at`] has it at `time` blends from: the legs'
+/// and torso's animations before the ones playing, the time those started, and how
+/// far the blend has gone (0 to 1), or `None` outside a blend
+/// (`G2_Set_Bone_Anim_Index` starts one at the new animation's start,
+/// `G2_TransformBone` plays it). The stance on the first frame blends from the
+/// `BOTH_STAND1` `NPC_Begin` started (left out: over by 1650).
+pub fn blending_at(
+    pose: &Pose,
+    idle: Option<(i32, i32)>,
+    time: i32,
+) -> Option<(&'static str, &'static str, i32, f32)> {
+    let start = standing_at(pose, idle, time).2;
+    let elapsed = time - start;
+    if start == FIRST_FRAME || !(0..BLEND_MS).contains(&elapsed) {
+        return None;
+    }
+    let (legs, torso, old_start) = standing_at(pose, idle, start - 1);
+    Some((legs, torso, old_start, elapsed as f32 / BLEND_MS as f32))
+}
+
 /// The models of the NPCs `entities` spawn under `rules`, with `parms` the `.npc`
 /// files' text and `sabers` the `.sab` files', in spawn order: each at its
 /// spawner's origin, turned to its yaw (`CG_G2PlayerAngles` keeps a standing NPC

@@ -1,7 +1,8 @@
 use swjkja_bsp::Entity;
 use swjkja_world::collision::Collision;
 use swjkja_world::npc::{
-    attached_model, npc_gear, npc_look, npc_models, npc_spawns, saber_look, standing_at,
+    attached_model, blending_at, npc_gear, npc_look, npc_models, npc_spawns, saber_look,
+    standing_at,
 };
 use swjkja_world::static_model::{Attached, Pose, Rules, angles_to_axis};
 
@@ -437,4 +438,32 @@ fn npcs_standing_still_play_their_idle_after_five_seconds() {
     let imperial = pose("BOTH_STAND4", "BOTH_STAND4");
     assert_eq!(at(&imperial, 12345), ("BOTH_STAND4", "BOTH_STAND4", 1550));
     assert_eq!(standing_at(&still, None, 12345).2, 1550);
+}
+
+#[test]
+fn npcs_blend_into_their_idle_and_back_over_100_ms() {
+    let idle = Some((7500, 7550));
+    let still = pose("BOTH_STAND3", "TORSO_WEAPONIDLE3");
+    let at = |time| blending_at(&still, idle, time);
+    // The idle starts at 5000, blending from the stance that started at 1550.
+    assert_eq!(at(4999), None);
+    assert_eq!(
+        at(5000),
+        Some(("BOTH_STAND3", "TORSO_WEAPONIDLE3", 1550, 0.0))
+    );
+    assert_eq!(
+        at(5050),
+        Some(("BOTH_STAND3", "TORSO_WEAPONIDLE3", 1550, 0.5))
+    );
+    assert_eq!(at(5100), None);
+    // The stance comes back at 12500, blending from the idle.
+    assert_eq!(
+        at(12525),
+        Some(("BOTH_STAND3IDLE1", "BOTH_STAND3IDLE1", 5000, 0.25))
+    );
+    assert_eq!(at(12345), None);
+    // The stance on the first frame does not (its BOTH_STAND1 is left out).
+    assert_eq!(at(1600), None);
+    // Nor does an NPC with no idle.
+    assert_eq!(blending_at(&still, None, 5050), None);
 }

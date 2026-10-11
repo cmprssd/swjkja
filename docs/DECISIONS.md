@@ -502,3 +502,22 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   load. Bounds and culling still use the load's pose; the sphere NPCs cull by
   does not depend on it.
 
+## 2026-10-11: Single player's NPCs blend between animations (decided by Claude, pending review)
+
+- **A part whose animation changes blends from where the one before had reached,
+  over 100 ms** (`SETANIM_BLEND_DEFAULT`, which the idle's `NPC_SetAnim` and the
+  stance's `PM_SetAnim` pass): `G2_Set_Bone_Anim_Index` keeps the old animation's
+  frame at the new one's start (`blendFrame`, and `blendLerpFrame` the frame after,
+  wrapped or held as the old animation would), and `G2_TransformBone` lerps each bone
+  from that toward the new animation's frame by the time since over 100 ms. Bones
+  with no animation of their own blend as their parent does (`CBoneCache::EvalLow`).
+- **The original's weights are kept, though reversed**: it weighs `blendFrame` by
+  its own fraction and `blendLerpFrame` by the rest, so a part replaced a quarter
+  past frame 101 blends from a quarter of 101's pose and three quarters of 102's,
+  not the other way round. Copying it matches the reference; the difference is
+  under a frame.
+- **Left out**: the blend into the first frame's stance from the `BOTH_STAND1`
+  `NPC_Begin` starts (over by 1650 ms); a part blends neither into an animation
+  played backwards (`PM_SetAnimFinal` zeroes the blend) nor into one its skeleton
+  lacks (nothing changes then).
+
