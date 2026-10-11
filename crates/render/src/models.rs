@@ -42,6 +42,7 @@ use swjkja_model::glm::{self, Ghoul2Model};
 use swjkja_model::md3::{Md3, Md3Model};
 use swjkja_model::skin::Skin;
 use swjkja_world::Geometry;
+use swjkja_world::collision::Collision;
 use swjkja_world::npc;
 use swjkja_world::static_model::{Pose, Rules, StaticModel};
 
@@ -224,7 +225,9 @@ impl StaticModels {
     /// inside fog 1); a retail-data test checks there are no others.
     pub fn load(vfs: &Vfs, bsp: &Bsp, fogs: &[FogVolume], rules: Rules) -> Self {
         let sp = matches!(rules, Rules::SinglePlayer { .. });
-        let mut placements = swjkja_world::static_model::entity_models(&bsp.entities, rules);
+        let mut world = Collision::at_spawn(bsp, rules);
+        let mut placements =
+            swjkja_world::static_model::entity_models(&bsp.entities, rules, &mut world);
         if sp {
             let text = |folder: &str, ext: &str| {
                 let files: Vec<Vec<u8>> = vfs
@@ -238,7 +241,13 @@ impl StaticModels {
                 text("ext_data/npcs", ".npc"),
                 text("ext_data/sabers", ".sab"),
             );
-            placements.extend(npc::npc_models(&bsp.entities, rules, &parms, &sabers));
+            placements.extend(npc::npc_models(
+                &bsp.entities,
+                rules,
+                &parms,
+                &sabers,
+                &world,
+            ));
         }
         placements.extend(swjkja_world::static_model::static_models(
             &bsp.entities,

@@ -15,6 +15,10 @@
 use swjkja_bsp::Entity;
 
 use crate::Vec3;
+use crate::collision::{
+    CONTENTS_BODY, CONTENTS_BOTCLIP, CONTENTS_MONSTERCLIP, CONTENTS_OPAQUE, CONTENTS_SOLID,
+    Collision, MASK_NPCSOLID,
+};
 use crate::style::atoi;
 
 /// Multiplayer game types, as cgame names them in a spawn's "gametype" key.
@@ -137,7 +141,7 @@ fn vector(s: &str) -> Option<Vec3> {
 
 /// `sscanf("%f %f %f")` into zeros: the numbers it reads before the first that is
 /// not one.
-fn vector_prefix(s: &str) -> Vec3 {
+pub(crate) fn vector_prefix(s: &str) -> Vec3 {
     let mut v = [0.0; 3];
     for (x, word) in v.iter_mut().zip(s.split_ascii_whitespace()) {
         match word.parse() {
@@ -294,10 +298,11 @@ const START_OFF: i64 = 4096;
 ///
 /// A breakable without a model stops the original's map load; here it is skipped.
 /// Each model draws its first frame: an animated breakable (AUTOANIMATE) or a beacon
-/// cycles its frames in the original. A breakable with "gravity" is left out: the
-/// original drops it to the floor with a box trace, which needs collision this crate
-/// does not have yet. The weapons on racks are Ghoul2 models (`.glm`).
-pub fn entity_models(entities: &[Entity], rules: Rules) -> Vec<StaticModel> {
+/// cycles its frames in the original. A breakable with "gravity" drops onto the
+/// floor of `world` as it spawns, and each solid breakable joins `world` where it
+/// stands, for those spawned after it. The weapons on racks are Ghoul2 models
+/// (`.glm`).
+pub fn entity_models(entities: &[Entity], rules: Rules, world: &mut Collision) -> Vec<StaticModel> {
     let Rules::SinglePlayer { skill } = rules else {
         return Vec::new();
     };
@@ -305,7 +310,7 @@ pub fn entity_models(entities: &[Entity], rules: Rules) -> Vec<StaticModel> {
     for e in entities.iter().filter(|e| spawns_at(e, skill)) {
         let class = e.get("classname").unwrap_or("").to_ascii_lowercase();
         match class.as_str() {
-            "misc_model_breakable" => models.extend(breakable(e)),
+            "misc_model_breakable" => models.extend(breakable(e, world)),
             "misc_model_gun_rack" => {
                 models.push(rack(e, GUN_RACK));
                 models.extend(gun_rack_goods(e));
@@ -538,7 +543,7 @@ fn rack_item(item: Item, origin: Vec3, angles: Vec3, right: f32, up: f32) -> Sta
 }
 
 /// `SP_misc_model_breakable`, for an entity that spawns.
-fn breakable(e: &Entity) -> Option<StaticModel> {
+fn breakable(e: &Entity, world: &mut Collision) -> Option<StaticModel> {
     let (mut origin, mut angles, mut model) = ([0.0; 3], [0.0; 3], None);
     let (mut mins, mut maxs) = ([0.0; 3], [0.0; 3]);
     for (key, value) in &e.pairs {
@@ -553,9 +558,6 @@ fn breakable(e: &Entity) -> Option<StaticModel> {
         }
     }
     if e.get("spawnflags").map_or(0, atoi) & START_OFF != 0 {
-        return None;
-    }
-    if e.get("gravity").map_or(0.0, atof) != 0.0 {
         return None;
     }
     let model = model.filter(|m| {
@@ -591,11 +593,32 @@ fn breakable(e: &Entity) -> Option<StaticModel> {
         maxs = [0, 1, 2].map(|i| maxs[i] * scale[i]);
         origin[2] += old_bottom - mins[2];
     }
+    // misc_model_breakable_gravity_init: traced down from a unit above its origin
+    // with what blocks NPCs; it then stays where it lands.
+    if e.get("gravity").map_or(0.0, atof) != 0.0 {
+        let top = [origin[0], origin[1], origin[2] + 1.0];
+        if let Some(floor) = world.drop_to_floor(top, mins, maxs, MASK_NPCSOLID) {
+            origin = floor;
+        }
+    }
     // SV_LinkEntity: the box around the origin, an epsilon larger.
     let entity_box = [
         [0, 1, 2].map(|i| origin[i] + mins[i] - 1.0),
         [0, 1, 2].map(|i| origin[i] + maxs[i] + 1.0),
     ];
+    // misc_model_breakable_init: SOLID (spawnflag 1) blocks NPCs and shots, else
+    // shots alone.
+    if e.get("spawnflags").map_or(0, atoi) & 1 != 0 {
+        world.add_box(
+            [0, 1, 2].map(|i| origin[i] + mins[i]),
+            [0, 1, 2].map(|i| origin[i] + maxs[i]),
+            CONTENTS_SOLID
+                | CONTENTS_OPAQUE
+                | CONTENTS_BODY
+                | CONTENTS_MONSTERCLIP
+                | CONTENTS_BOTCLIP,
+        );
+    }
     // CG_General's ScaleModelAxis, as for single player's static models.
     let axis = angles_to_axis(angles);
     let scaled = scale.map(|s| s != 0.0 && s != 1.0);

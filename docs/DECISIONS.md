@@ -405,3 +405,32 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   nothing here), the scepter's second model, bone bolts (every bolt used is a tag),
   the look angles cgame turns the torso and head by (zero for a standing NPC facing
   ahead), and a saber's blade.
+
+## 2026-10-11: Single player's NPCs and "gravity" breakables dropped to the floor (decided by Claude, pending review)
+
+- **Box traces against the map's brushes and the solid entities**
+  (`crates/world/src/collision.rs`), as `CM_TraceThroughBrush` runs them: a box
+  stops where it would first enter a brush whose contents meet the mask, held 0.125
+  units (`SURFACE_CLIP_EPSILON`) off the face it hits. Every brush is tested against
+  the sweep's bounds instead of walking the leaves the sweep crosses, which tests the
+  same brushes.
+- **What is in the way**: the world model; the `func_` brush entities that spawn,
+  at their origin, each brush with its own contents (`SV_SetBrushModel`), except a
+  `func_usable` or `func_wall` started off; and the SOLID breakables (spawnflag 1),
+  each from where it spawns for what spawns after it, NPCs spawning after all of
+  them. Left out: patches, NPCs in each other's way, brush entities' rotation and
+  doors that start open. With the world alone, NPCs on kor2's and t3_stamp's crates
+  and `func_breakable` floors fell through them.
+- **An NPC stands where its first movement frames leave it**: lifted out of a
+  floor its box's lower half sinks into (`G_CheckInSolid`, at spawn), then fallen
+  straight down onto the floor below with what blocks NPCs (`MASK_NPCSOLID`). With
+  no sideways speed, the original's fall (`Pmove` with gravity until
+  `PM_GroundTrace` finds ground) ends where that trace does. A stuck NPC, or one
+  over nothing, stays at its spawner. The spawner's DROPTOFLOOR trace is not run
+  apart: it uses the spawner's box, and the fall that follows ends on the same
+  floor.
+- **A breakable with "gravity" is traced down from a unit above its origin**
+  (`misc_model_breakable_gravity_init`) and stays where it lands. The four on
+  taspir2 (scripted crates, thrown later) land 24 and 40 units below where they are
+  placed: the note in the breakables entry above, that three hang 2000 units above
+  any floor, was wrong (a `bespin/n_floor01` brush lies under all three).

@@ -1,4 +1,5 @@
 use swjkja_bsp::Entity;
+use swjkja_world::collision::Collision;
 use swjkja_world::npc::{attached_model, npc_gear, npc_look, npc_models, npc_spawns, saber_look};
 use swjkja_world::static_model::{Attached, Pose, Rules, angles_to_axis};
 
@@ -209,7 +210,7 @@ fn npcs_stand_upright_at_their_spawner_scaled_from_their_feet() {
         ),
         npc("NPC_Player", &[]),
     ];
-    let models = npc_models(&entities, SP, PARMS, b"");
+    let models = npc_models(&entities, SP, PARMS, b"", &Collision::default());
     let [officer, player] = &models[..] else {
         panic!("{models:?}")
     };

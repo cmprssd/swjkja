@@ -278,25 +278,30 @@ were not rendered: both maps now stop `render_world` on the Windows GPU with
 Three views in `bench/reference/model-views.txt` look at NPCs that spawn with the
 map, captured with NPCs frozen from the first frame (`d_npcfreeze 1` before the map
 runs: their AI does not run, their movement frames do). The NPCs hold their
-weapons, bolted to their hands, and stand as their first movement frames leave
-them (legs apart with a gun, the torso in the weapon's idle hold); specular stages
+weapons, bolted to their hands, stand as their first movement frames leave them
+(legs apart with a gun, the torso in the weapon's idle hold), dropped to the floor
+by a box trace against the map's brushes and solid entities; specular stages
 (`alphaGen lightingSpecular`) light their armour and weapons as the original does.
 
-| View | Mean difference | Pixels off by > 16 | Around the NPCs | Around them, before |
+| View | Mean difference | Before the drop | Around the NPCs | Around them, before the drop |
 |------|------|------|------|------|
-| dpred_troopers | 2.62 | 4.1% | 5.46 | 5.36 |
-| vjun2_officer | 0.64 | 0.6% | 1.62 | 3.90 |
-| kor2_troopers | 0.67 | 0.8% | 3.52 | 8.73 |
+| dpred_troopers | 1.16 | 2.62 | 8.46 | 19.28 |
+| vjun2_officer | 0.60 | 0.64 | 4.59 | 5.21 |
+| kor2_troopers | 0.49 | 0.67 | 5.54 | 7.38 |
 
-"Before" is the NPCs standing empty-handed (`BOTH_STAND1`), with the specular fix,
-against the same captures. "Around the NPCs" is the box of dense differences around
-them (in either render), the rest of the view differing by 0.22 to 0.42.
-Models, weapons, skins, places, facing, pose and lighting match. What still differs
-is the floor: the original drops an NPC to the floor in its first movement frame,
-where this renderer leaves it at its spawner's height, 8 units up on t2_dpred,
-where the wider stance then misses the reference by more than the old one did. The
-original also draws blob shadows under them, and plays each animation from where
-its timing has reached, not its first frame.
+"Before the drop" is the previous step (NPCs at their spawners' height) against
+the same captures. "Around the NPCs" is the bounding box of the largest group of
+16-pixel blocks with more than a tenth of their pixels off by more than 16 in
+either render (the same box for both renders; a tighter box than the one this
+table used before, so its numbers are not comparable with the earlier ones). On
+t2_dpred the spawners sit 8 units above the floor, the stormtroopers now stand on
+it as in the reference. kor2's two move by under a unit (one down, one lifted out
+of the sloping sand) and vjun2's officer by 0.125, which these close views still
+show.
+Models, weapons, skins, places, facing, pose, height and lighting match. What still
+differs around them: the original draws blob shadows under NPCs and plays each
+animation from where its timing has reached, not its first frame; and the grass
+in the foreground of dpred's reference is not drawn here.
 
 The NPC views were first captured after about 600 frames of AI: the original had
 turned some NPCs (vjun2's officer by 90 degrees), which nothing at spawn decides.

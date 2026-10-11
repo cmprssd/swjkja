@@ -7,6 +7,7 @@
 // line comparable with the original.
 #![allow(clippy::needless_range_loop)]
 
+pub mod collision;
 pub mod light_grid;
 pub mod npc;
 pub mod patch;

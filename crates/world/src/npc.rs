@@ -6,12 +6,14 @@
 //!
 //! Only the NPCs a map spawns by itself are here: a spawner with a "targetname"
 //! waits to be used, and the ones it spawns depend on scripts. Each stands where
-//! its spawner is, as it spawned: the game then runs its AI and scripts.
+//! its spawner is, as it spawned, dropped to the floor: the game then runs its AI
+//! and scripts.
 
 use swjkja_bsp::Entity;
 use swjkja_shader::text::Cursor;
 
 use crate::Vec3;
+use crate::collision::{Collision, MASK_NPCSOLID};
 use crate::static_model::{
     Attached, Ghoul2, Pose, Rules, StaticModel, angles_to_axis, origin_and_angles, spawns_at,
 };
@@ -849,11 +851,14 @@ pub fn npc_gear(
 /// per unit of height scale above 1 (`CG_Player`), its axes scaled
 /// (`ScaleModelAxis`). An NPC whose block is missing or gives no Ghoul2 model is
 /// left out (the original logs an error for a missing one).
+///
+/// Each stands where its first movement frames put it ([`settle`]) in `world`.
 pub fn npc_models(
     entities: &[Entity],
     rules: Rules,
     parms: &[u8],
     sabers: &[u8],
+    world: &Collision,
 ) -> Vec<StaticModel> {
     npc_spawns(entities, rules)
         .into_iter()
@@ -867,7 +872,8 @@ pub fn npc_models(
                 format!("{folder}model_{}.skin", look.skin)
             };
             let scaled = look.scale.map(|s| s != 0.0 && s != 1.0);
-            let mut origin = n.origin;
+            let at = settle(world, n.origin, look.mins, look.maxs);
+            let mut origin = at;
             if scaled[2] {
                 origin[2] += 24.0 * (look.scale[2] - 1.0);
             }
@@ -881,8 +887,8 @@ pub fn npc_models(
                 normalized: !scaled.contains(&true),
                 zoffset: 0.0,
                 entity_box: Some([
-                    [0, 1, 2].map(|i| n.origin[i] + look.mins[i] - 1.0),
-                    [0, 1, 2].map(|i| n.origin[i] + look.maxs[i] + 1.0),
+                    [0, 1, 2].map(|i| at[i] + look.mins[i] - 1.0),
+                    [0, 1, 2].map(|i| at[i] + look.maxs[i] + 1.0),
                 ]),
                 ghoul2: Some(Ghoul2 {
                     skin: Some(skin),
@@ -894,4 +900,25 @@ pub fn npc_models(
             })
         })
         .collect()
+}
+
+/// Where an NPC spawned at `origin` with the box `mins`..`maxs` comes to rest: lifted
+/// out of a floor its box's lower half sinks into (`G_CheckInSolid` with fix, at
+/// spawn), then fallen onto the floor below, as the first movement frames drop it
+/// (`Pmove` falls until `PM_GroundTrace` finds ground; with no sideways speed the
+/// fall ends where a box trace straight down does). An NPC stuck in solid, or with
+/// no floor below, stays where it is.
+pub fn settle(world: &Collision, origin: Vec3, mins: Vec3, maxs: Vec3) -> Vec3 {
+    let mut at = origin;
+    let feet = [origin[0], origin[1], origin[2] + mins[2]];
+    let tr = world.trace(origin, feet, [mins[0], mins[1], 0.0], maxs, MASK_NPCSOLID);
+    if tr.start_solid || tr.all_solid {
+        return origin;
+    }
+    if tr.fraction < 1.0 {
+        at = [tr.end[0], tr.end[1], tr.end[2] - mins[2]];
+    }
+    world
+        .drop_to_floor(at, mins, maxs, MASK_NPCSOLID)
+        .unwrap_or(at)
 }
