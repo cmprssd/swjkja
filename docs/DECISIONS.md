@@ -578,3 +578,32 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   0.5%). The 30 views of the earlier list are unchanged.
 - **Cost**: bench_world on these views and t3_stamp's within main's spread
   (three runs of 600 frames each).
+
+## 2026-10-14: Rotating brush entities turn at the view's time (decided by Claude, pending review)
+
+- **A func_rotating that turns is drawn at its angles at the view's time**:
+  "speed" degrees a second (100 when 0) about yaw, roll (spawnflag 4) or pitch
+  (spawnflag 8), from zero at time 0 (`SP_func_rotating`: `TR_LINEAR` with
+  `trTime` 0; `BG_EvaluateTrajectory` in floats). Single player turns only those
+  that start on (spawnflag 1); multiplayer turns them all, by "spinangles" when
+  given. Turning, it links a cube of its radius (the server relinks it at its
+  angles every frame).
+- **Placed by the GPU**: its surfaces stay in its model's space, drawn by their own
+  draws after their material's, turned by one bone of the frame's bones
+  (`R_RotateForEntity`); each frame it is culled by its model's box at its angles
+  and its surfaces in its model's space (the view's origin and frustum moved
+  there, as `R_CullSurface` with `or.viewOrigin` and `R_CullLocalBox`).
+- **Retail**: nine, all single player and started on: t3_hevil's four big fans
+  (yaw, 300) and four small ones (pitch, 850), t2_rancor's drum (pitch, 350). None
+  has a "model2", so a turning entity's model2 still stands at zero (left out).
+- **Reference capture**: `openjk-view.patch` also evaluates a turning mover's angles
+  at `cg_swjkjaTime` (movers turned at the server's time before, so captures could
+  not be compared). Five new views in `bench/reference/model-views.txt`: mean diff
+  hevil_fan_low 2.31 -> 0.39 (5.9% -> 0.3% off), hevil_fan_west 4.30 -> 0.99
+  (10.9% -> 0.8%; the rest is rain the original draws as effects), hevil_wall_fan
+  1.39 -> 0.27 and at 5000 ms 1.33 -> 0.28 (4.0% -> 0.0%), rancor_drum 0.65 ->
+  0.44 (0.4% -> 0.0%). The 34 earlier views (all but hoth2's and vjun1's, which
+  lose the device) render pixel for pixel as on main.
+- **Cost**: bench_world on the five views within main's spread (three runs of 600
+  frames each); t3_hevil draws 465 materials instead of 383 (each fan's surfaces
+  are drawn per entity).

@@ -17,6 +17,11 @@
 # bounty_bomb a func_usable's bomb placement. Of the first candidates, kor1's
 # capture stood elsewhere (the player does not reach the view) and t2_rancor's
 # tables showed no model2.
+# The rotating views look at func_rotatings turning (their angles at the view's time;
+# the capture patch pins a turning mover's angles to cg_swjkjaTime too):
+# hevil_fan_low and hevil_fan_west down t3_hevil's shafts at big fans turning in
+# yaw, hevil_wall_fan at a small one turning in pitch (also at 5000 ms), and
+# rancor_drum at t2_rancor's drum behind a grate.
 # Candidates whose capture had undrawn regions were dropped: single player leaves
 # the screen uncleared, and draws only the areas the player's snapshot marks
 # visible (none from an eye in solid).
@@ -37,3 +42,8 @@ kor2      kor2_troopers  8208 1500 -3740  5 90 0   12345
 t1_danger danger_rock    2232 -2900 880    10 90 0    12345
 t2_rancor rancor_gates   -568 4136 1530    5 180 0    12345
 t3_bounty bounty_bomb    512 1700 400      15 90 0    12345
+t3_hevil  hevil_fan_low   2688 512 700     80 90 0    12345
+t3_hevil  hevil_wall_fan  2688 400 16      0 270 0    12345
+t3_hevil  hevil_wall_fan5 2688 400 16      0 270 0    5000
+t3_hevil  hevil_fan_west  -1664 512 1100   80 90 0    12345
+t2_rancor rancor_drum     -896 2300 1792   0 90 0     12345

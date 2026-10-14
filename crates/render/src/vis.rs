@@ -118,6 +118,17 @@ impl Frustum {
         }
     }
 
+    /// The frustum in the space of an entity whose `axes` (forward, left, up) and
+    /// `origin` place it in the world.
+    pub fn local(&self, axes: [Vec3; 3], origin: Vec3) -> Self {
+        Self {
+            planes: self.planes.map(|p| Plane {
+                normal: axes.map(|a| dot(a, p.normal)),
+                dist: p.dist - dot(p.normal, origin),
+            }),
+        }
+    }
+
     /// `CG_CullPointAndRadius`: the sphere is entirely behind a plane.
     pub fn culls_sphere(&self, center: Vec3, radius: f32) -> bool {
         self.planes
@@ -423,6 +434,43 @@ mod tests {
         assert_eq!(box_on_plane_side([11.0; 3], [20.0; 3], &p), 1);
         assert_eq!(box_on_plane_side([0.0; 3], [9.0; 3], &p), 2);
         assert_eq!(box_on_plane_side([0.0; 3], [20.0; 3], &p), 3);
+    }
+
+    #[test]
+    fn a_local_frustum_culls_an_entity_box_as_the_world_one_culls_its_corners() {
+        // Looking down +x from the origin; an entity at (500, 0, 0) turned 90 degrees
+        // in yaw (its forward is the world's +y).
+        let frustum = Frustum::new(&Camera::new([0.0; 3], [0.0; 3], 1280, 720));
+        let (axes, origin) = (
+            [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            [500.0, 0.0, 0.0],
+        );
+        let local = frustum.local(axes, origin);
+        let place =
+            |v: Vec3| [0, 1, 2].map(|k| origin[k] + (0..3).map(|i| v[i] * axes[i][k]).sum::<f32>());
+        let culled = |f: &Frustum, mins: Vec3, maxs: Vec3| {
+            f.planes
+                .iter()
+                .any(|p| box_on_plane_side(mins, maxs, p) == 2)
+        };
+        // At the entity, in view; 2000 units along the model's -y (the world's +x,
+        // farther ahead), in view; 2000 along the model's +x (the world's +y, far to
+        // the left), out of it.
+        for (mins, maxs, out) in [
+            ([-8.0; 3], [8.0; 3], false),
+            ([-8.0, -2008.0, -8.0], [8.0, -1992.0, 8.0], false),
+            ([1992.0, -8.0, -8.0], [2008.0, 8.0, 8.0], true),
+        ] {
+            let corners: [Vec3; 8] = std::array::from_fn(|i| {
+                place([
+                    if i & 1 == 0 { mins[0] } else { maxs[0] },
+                    if i & 2 == 0 { mins[1] } else { maxs[1] },
+                    if i & 4 == 0 { mins[2] } else { maxs[2] },
+                ])
+            });
+            assert_eq!(culled(&local, mins, maxs), out);
+            assert_eq!(frustum.culls_points(&corners), out);
+        }
     }
 
     /// A map split at x = 0 (an axial plane), its front half split again at x + y =
