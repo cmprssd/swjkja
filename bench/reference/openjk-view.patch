@@ -1,3 +1,20 @@
+diff --git a/code/cgame/cg_ents.cpp b/code/cgame/cg_ents.cpp
+index 4c8ea97..3c128af 100644
+--- a/code/cgame/cg_ents.cpp
++++ b/code/cgame/cg_ents.cpp
+@@ -1779,7 +1779,11 @@ Ghoul2 Insert End
+ 	}
+ 
+ 	// FIXME: this will stomp an apos trType of TR_INTERPOLATE!!
+-	EvaluateTrajectory( &cent->currentState.apos, cg.time, cent->lerpAngles );
++	// swjkja reference capture: a turning mover (a func_rotating's TR_LINEAR angles
++	// from time 0) at the pinned time (ms).
++	EvaluateTrajectory( &cent->currentState.apos,
++		cg_swjkjaTime.string[0] && cent->currentState.eType == ET_MOVER && cent->currentState.apos.trType == TR_LINEAR
++			? cg_swjkjaTime.integer : cg.time, cent->lerpAngles );
+ 
+ 	// adjust for riding a mover
+ 	CG_AdjustPositionForMover( cent->lerpOrigin, cent->currentState.groundEntityNum, cg.time, cent->lerpOrigin );
 diff --git a/code/cgame/cg_lights.cpp b/code/cgame/cg_lights.cpp
 index 4891e13..51469e2 100644
 --- a/code/cgame/cg_lights.cpp

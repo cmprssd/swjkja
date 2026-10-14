@@ -82,8 +82,9 @@ struct Push {
     stage: u32,
     texture0: u32,
     texture1: u32,
-    // 1 for a posed model's surface: skinned by `bones` (vs_main).
-    skinned: u32,
+    // How `bones` move the vertices (vs_main): 0 not, 1 skinned (a posed model's
+    // surface), 2 + n turned by bone n (a turning brush entity's).
+    bones: u32,
 }
 
 var<immediate> push: Push;
@@ -402,7 +403,13 @@ fn vs_main(
     var normal = vertex_normal;
     var lm01 = vertex_lm01;
     var lm23 = vertex_lm23;
-    if push.skinned == 1u {
+    if push.bones >= 2u {
+        // R_RotateForEntity: the model's space placed where the entity stands.
+        let b = bones[push.bones - 2u];
+        world_xyz = bone_apply(b, vec4<f32>(xyz, 1.0));
+        normal = bone_apply(b, vec4<f32>(normal, 0.0));
+    }
+    if push.bones == 1u {
         // RB_SurfaceGhoul: the weighted sum of the vertex's bones' transforms of it
         // (bones in lm01, the first three weights in lm23.xyz, the fourth what they
         // leave of 1), its normal turned by its first bone alone. The vertex has no

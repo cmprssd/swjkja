@@ -123,8 +123,9 @@ struct Push {
     stage: u32,
     texture0: u32,
     texture1: u32,
-    /// 1 for posed models' surfaces (see `vs_main` in world.wgsl).
-    skinned: u32,
+    /// How the vertices are moved (see `vs_main` in world.wgsl): 0 not, 1 skinned by
+    /// their bones (posed models), 2 + n turned by bone n (turning brush entities).
+    bones: u32,
 }
 
 /// What a bundle samples: one slot, or animation frames in consecutive slots.
@@ -188,8 +189,8 @@ struct DrawMaterial {
     culled: bool,
     /// Sky draws: drawn only if a surface of this sky gate is visible.
     gate: Option<usize>,
-    /// Posed models' surfaces, skinned by the frame's bones (see draw()).
-    skinned: bool,
+    /// How the frame's bones move its vertices ([`Push::bones`], see draw()).
+    bones: u32,
 }
 
 /// Which vertex and index buffers a draw uses.
@@ -241,8 +242,23 @@ struct BrushDraw {
     /// `EF_SHADER_ANIM`: its surfaces use materials whose animated images hold
     /// frame 0.
     shader_anim: bool,
-    /// Its model's surfaces (map surface numbers), placed where it stands.
+    /// Its model's surfaces (map surface numbers), placed where it stands, or in its
+    /// model's space if it turns.
     surfaces: Vec<usize>,
+    /// A turning one: placed each frame.
+    turning: Option<Turning>,
+}
+
+/// A brush entity that turns as time passes, drawn by a bone of the frame's bones
+/// placing its model's space where it stands (`R_RotateForEntity`).
+struct Turning {
+    /// The entity, without its "model2" (drawn by the static models, unturned), so
+    /// that a copy placed each frame allocates nothing.
+    entity: swjkja_world::brush_entity::BrushEntity,
+    /// Its model's bounds.
+    bounds: [[f32; 3]; 2],
+    /// Its bone in the frame's bones.
+    bone: usize,
 }
 
 pub struct WorldRenderer {
@@ -590,16 +606,35 @@ impl WorldRenderer {
             m.first_surface.max(0) as usize
                 ..(m.first_surface.max(0) + m.num_surfaces.max(0)) as usize
         };
+        // A turning one's surfaces stay in its model's space; its bones follow the
+        // posed models' (`first_bone`).
         let mut placed: HashMap<usize, Geometry> = HashMap::new();
         let mut brushes: Vec<BrushDraw> = Vec::new();
+        // Per turning entity's surface: its bone among the turning entities'.
+        let mut turned_by: HashMap<usize, usize> = HashMap::new();
+        let mut turning_count = 0;
         for e in swjkja_world::brush_entity::brush_entities(&bsp.entities, &bsp.models, rules) {
             let surfaces: Vec<usize> = surfaces_in(e.model)
                 .filter(|i| *i < world.surfaces.len() && !placed.contains_key(i))
                 .collect();
-            for &i in &surfaces {
-                placed.insert(i, e.placed(&world.surfaces[i].geometry));
-            }
             let m = &bsp.models[e.model];
+            let turning = e.spin.is_some().then(|| {
+                turning_count += 1;
+                turning_count - 1
+            });
+            for &i in &surfaces {
+                let geometry = &world.surfaces[i].geometry;
+                placed.insert(
+                    i,
+                    match turning {
+                        Some(_) => geometry.clone(),
+                        None => e.placed(geometry),
+                    },
+                );
+                if let Some(bone) = turning {
+                    turned_by.insert(i, bone);
+                }
+            }
             brushes.push(BrushDraw {
                 corners: e.corners([m.mins, m.maxs]),
                 link: None,
@@ -607,6 +642,11 @@ impl WorldRenderer {
                 broadcast: e.broadcast,
                 shader_anim: e.shader_anim,
                 surfaces,
+                turning: turning.map(|bone| Turning {
+                    bounds: [m.mins, m.maxs],
+                    bone,
+                    entity: swjkja_world::brush_entity::BrushEntity { model2: None, ..e },
+                }),
             });
         }
 
@@ -899,6 +939,13 @@ impl WorldRenderer {
                 Some(first)
             })
             .collect();
+        let first_turning_bone = bone_count;
+        bone_count += turning_count;
+        for b in &mut brushes {
+            if let Some(t) = &mut b.turning {
+                t.bone += first_turning_bone;
+            }
+        }
         for &m in &order {
             let material = &materials[m];
             if let Some(sky) = &material.sky {
@@ -983,7 +1030,7 @@ impl WorldRenderer {
                                 dynamic: None,
                                 culled: false,
                                 gate: Some(gate),
-                                skinned: false,
+                                bones: 0,
                             });
                         }
                     }
@@ -1021,7 +1068,7 @@ impl WorldRenderer {
                         dynamic: None,
                         culled: false,
                         gate: Some(gate),
-                        skinned: false,
+                        bones: 0,
                     });
                 }
                 continue;
@@ -1045,9 +1092,9 @@ impl WorldRenderer {
                 )
             });
             for (&fog, group) in &surfaces_of[m] {
-                // The posed models' surfaces, drawn just after the others (first
-                // index, index count).
-                let mut skinned_draw = None;
+                // The posed models' surfaces, then each turning brush entity's,
+                // drawn just after the others (first index, index count, bones).
+                let mut moved_draws: Vec<(u32, u32, u32)> = Vec::new();
                 let flares: Vec<([f32; 3], [f32; 3])> = group
                     .iter()
                     .filter_map(|&i| match *geometry(i) {
@@ -1106,6 +1153,8 @@ impl WorldRenderer {
                     };
                     let (moving, fixed): (Vec<usize>, Vec<usize>) =
                         group.iter().partition(|&&i| posed(i).is_some());
+                    let (turned, fixed): (Vec<usize>, Vec<usize>) =
+                        fixed.iter().partition(|i| turned_by.contains_key(i));
                     let first_index = indexes.len() as u32;
                     for &i in &fixed {
                         let start = indexes.len() as u32;
@@ -1126,11 +1175,27 @@ impl WorldRenderer {
                         ));
                     }
                     let skinned_count = indexes.len() as u32 - skinned_first;
-                    if count == 0 && skinned_count == 0 {
-                        continue;
-                    }
                     if skinned_count != 0 {
-                        skinned_draw = Some((skinned_first, skinned_count));
+                        moved_draws.push((skinned_first, skinned_count, 1));
+                    }
+                    let mut by_bone: std::collections::BTreeMap<usize, Vec<usize>> =
+                        Default::default();
+                    for &i in &turned {
+                        by_bone.entry(turned_by[&i]).or_default().push(i);
+                    }
+                    for (bone, surfaces) in by_bone {
+                        let first = indexes.len() as u32;
+                        let at = draw_materials.len() + 1 + moved_draws.len();
+                        for i in surfaces {
+                            let start = indexes.len() as u32;
+                            append(geometry(i), &mut vertices, &mut indexes);
+                            surface_draw[i] = Some((at, start, indexes.len() as u32 - start));
+                        }
+                        let bone = first_turning_bone + bone;
+                        moved_draws.push((first, indexes.len() as u32 - first, 2 + bone as u32));
+                    }
+                    if count == 0 && moved_draws.is_empty() {
+                        continue;
                     }
                     (first_index, count, None)
                 };
@@ -1221,7 +1286,7 @@ impl WorldRenderer {
                         slots: [Slots::One(fog_image), Slots::One(white)],
                     });
                 }
-                let skinned_stages = skinned_draw.map(|_| stages.clone());
+                let moved_stages = stages.clone();
                 draw_materials.push(DrawMaterial {
                     first_index,
                     index_count,
@@ -1229,19 +1294,17 @@ impl WorldRenderer {
                     culled: dynamic.is_none(),
                     dynamic,
                     gate: None,
-                    skinned: false,
+                    bones: 0,
                 });
-                if let (Some((first_index, index_count)), Some(stages)) =
-                    (skinned_draw, skinned_stages)
-                {
+                for (first_index, index_count, bones) in moved_draws {
                     draw_materials.push(DrawMaterial {
                         first_index,
                         index_count,
-                        stages,
+                        stages: moved_stages.clone(),
                         dynamic: None,
                         culled: true,
                         gate: None,
-                        skinned: true,
+                        bones,
                     });
                 }
             }
@@ -1539,17 +1602,47 @@ impl WorldRenderer {
         // The brush entities the server sends this view, culled by their model's box
         // (R_AddBrushModelSurfaces), then each surface as the world's. They come
         // first: the entity number orders draws within a material, and the world's
-        // (ENTITYNUM_WORLD) is the last.
+        // (ENTITYNUM_WORLD) is the last. A turning one is placed at its angles now,
+        // its surfaces culled in its model's space (R_CullSurface with
+        // `or.viewOrigin`, R_CullLocalBox).
+        let bone_table = bones.mapped_mut()?;
+        let ms = (f64::from(time) * 1000.0).round() as i32;
         for b in &self.brushes {
             let sent = b.broadcast
                 || b.link
                     .as_ref()
                     .is_some_and(|l| self.vis.sends(view_cluster, l));
-            if !sent || frustum.culls_points(&b.corners) {
+            if !sent {
+                continue;
+            }
+            let (corners, local) = match &b.turning {
+                None => (b.corners, None),
+                Some(t) => {
+                    let mut e = t.entity.clone();
+                    e.axes = swjkja_world::static_model::angles_to_axis(
+                        e.angles_at(ms).unwrap_or([0.0; 3]),
+                    );
+                    let place: Mat34 = std::array::from_fn(|i| {
+                        [e.axes[0][i], e.axes[1][i], e.axes[2][i], e.origin[i]]
+                    });
+                    let at = t.bone * size_of::<Mat34>();
+                    bone_table[at..at + size_of::<Mat34>()]
+                        .copy_from_slice(bytemuck::bytes_of(&place));
+                    let d = [0, 1, 2].map(|k| camera.origin[k] - e.origin[k]);
+                    let origin = e.axes.map(|a| (0..3).map(|k| a[k] * d[k]).sum::<f32>());
+                    let corners = e.corners(t.bounds);
+                    (corners, Some((origin, frustum.local(e.axes, e.origin))))
+                }
+            };
+            if frustum.culls_points(&corners) {
                 continue;
             }
             for &s in &b.surfaces {
-                if self.vis.culls_surface(s, camera.origin, &frustum) {
+                let culled = match &local {
+                    None => self.vis.culls_surface(s, camera.origin, &frustum),
+                    Some((origin, frustum)) => self.vis.culls_surface(s, *origin, frustum),
+                };
+                if culled {
                     continue;
                 }
                 if let Some(g) = self.surface_gate[s] {
@@ -1570,8 +1663,6 @@ impl WorldRenderer {
         }
         // The static models this view draws (each at its level of detail), lit from
         // the light grid, NPCs posed as they stand now; entity n + 1 is model n.
-        let bone_table = bones.mapped_mut()?;
-        let ms = (f64::from(time) * 1000.0).round() as i32;
         let table = entities.mapped_mut()?;
         table[..size_of::<GpuEntity>()].copy_from_slice(bytemuck::bytes_of(&GpuEntity::WORLD));
         for n in 0..self.models.instances.len() {
@@ -1693,7 +1784,7 @@ impl WorldRenderer {
                         stage: s.gpu_stage,
                         texture0: s.slots[0].at(time),
                         texture1: s.slots[1].at(time),
-                        skinned: u32::from(m.skinned),
+                        bones: m.bones,
                     };
                     d.cmd_push_constants(
                         cmd,

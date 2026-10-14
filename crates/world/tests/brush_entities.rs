@@ -286,3 +286,46 @@ fn multiplayer_scales_a_static_secondary_model_and_has_no_model_angles() {
         assert!(m.normalized);
     }
 }
+
+#[test]
+fn a_rotating_one_that_starts_on_turns_by_its_speed_from_zero() {
+    let rotating = |flags: &str, speed: &str| {
+        spawn(&[
+            ("classname", "func_rotating"),
+            ("model", "*1"),
+            ("origin", "10 20 30"),
+            ("spawnflags", flags),
+            ("speed", speed),
+        ])
+    };
+    // t3_hevil's fans: start on (1), yaw at "speed" degrees a second.
+    let e = rotating("1", "300");
+    assert_eq!(e[0].spin, Some([0.0, 300.0, 0.0]));
+    assert_eq!(e[0].angles_at(0), Some([0.0; 3]));
+    assert!(close(e[0].angles_at(1500).unwrap(), [0.0, 450.0, 0.0]));
+    assert_eq!(e[0].origin, [10.0, 20.0, 30.0]);
+    // Turning, it links a cube of its radius.
+    let r = (32.0f32 * 32.0 + 16.0 * 16.0 + 128.0 * 128.0).sqrt() + 1.0;
+    assert!(close(e[0].entity_box[1], [10.0 + r, 20.0 + r, 30.0 + r]));
+    // Roll (4) and pitch (8); speed 0 is 100.
+    assert_eq!(rotating("5", "0")[0].spin, Some([0.0, 0.0, 100.0]));
+    assert_eq!(rotating("9", "350")[0].spin, Some([350.0, 0.0, 0.0]));
+    // Single player: not started on, it stands still at zero.
+    let e = rotating("0", "300");
+    assert_eq!((e[0].spin, e[0].angles_at(1500)), (None, None));
+    assert_eq!(e[0].entity_box[1], [43.0, 37.0, 159.0]);
+}
+
+#[test]
+fn multiplayer_turns_every_rotating_one_by_its_spin_angles() {
+    let mp = |pairs: &[(&str, &str)]| brush_entities(&[entity(pairs)], &models(), MP);
+    let e = mp(&[("classname", "func_rotating"), ("model", "*1")]);
+    assert_eq!(e[0].spin, Some([0.0, 100.0, 0.0]));
+    let e = mp(&[
+        ("classname", "func_rotating"),
+        ("model", "*1"),
+        ("spinangles", "10 0 -20"),
+        ("speed", "300"),
+    ]);
+    assert_eq!(e[0].spin, Some([10.0, 0.0, -20.0]));
+}

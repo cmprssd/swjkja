@@ -41,6 +41,10 @@ pub struct BrushEntity {
     pub shader_anim: bool,
     /// Its secondary model ("model2"), drawn at its origin and sent with its box.
     pub model2: Option<StaticModel>,
+    /// A func_rotating that turns: its angles' change, in degrees a second (pitch,
+    /// yaw, roll), from zero at time 0 (`TR_LINEAR` with `trTime` 0). It is drawn at
+    /// [`BrushEntity::angles_at`], not at `axes`.
+    pub spin: Option<Vec3>,
 }
 
 /// `MOVER_LOCKED`: a door locked until used, its shader animation frame-controlled.
@@ -81,6 +85,7 @@ fn spawn(models: &[Model], e: &Entity, rules: Rules) -> Option<BrushEntity> {
     // through walls).
     let force_visible = e.get("forcevisible").map_or(0, atoi) != 0 && origin == [0.0; 3];
     let (mut drawn_angles, mut broadcast, mut shader_anim) = ([0.0; 3], false, false);
+    let mut spin = None;
     match class.as_str() {
         "func_door" => {
             // pos2 = pos1 moved along movedir by the model's size there, less the
@@ -107,8 +112,8 @@ fn spawn(models: &[Model], e: &Entity, rules: Rules) -> Option<BrushEntity> {
             broadcast = spawnflags & 2048 != 0;
             shader_anim = spawnflags & 4 != 0;
         }
-        // Rotating ones turn from zero as time passes (left out: drawn at zero).
-        "func_rotating" | "func_glass" => {}
+        "func_rotating" => spin = rotating_spin(e, spawnflags, rules),
+        "func_glass" => {}
         "func_breakable" => broadcast = force_visible,
         "func_wall" if spawnflags & 1 == 0 => {}
         "func_usable" if spawnflags & 1 == 0 => {
@@ -118,8 +123,9 @@ fn spawn(models: &[Model], e: &Entity, rules: Rules) -> Option<BrushEntity> {
         _ => return None,
     }
     // SV_LinkEntity: the model's box at the origin, or a cube of the model's radius
-    // when it is turned; an epsilon larger.
-    let entity_box = if drawn_angles == [0.0; 3] {
+    // when it is turned (a turning one is relinked at its angles every frame);
+    // an epsilon larger.
+    let entity_box = if drawn_angles == [0.0; 3] && spin.is_none() {
         [
             [0, 1, 2].map(|i| origin[i] + mins[i] - 1.0),
             [0, 1, 2].map(|i| origin[i] + maxs[i] + 1.0),
@@ -143,6 +149,32 @@ fn spawn(models: &[Model], e: &Entity, rules: Rules) -> Option<BrushEntity> {
         broadcast,
         shader_anim,
         model2,
+        spin,
+    })
+}
+
+/// `SP_func_rotating`: "speed" degrees a second (100 when 0) about yaw, or roll
+/// (spawnflag 4), or pitch (spawnflag 8). Single player turns only those that start
+/// on (spawnflag 1); multiplayer turns them all, by "spinangles" when given.
+fn rotating_spin(e: &Entity, spawnflags: i64, rules: Rules) -> Option<Vec3> {
+    if let Rules::SinglePlayer { .. } = rules
+        && spawnflags & 1 == 0
+    {
+        return None;
+    }
+    if let (Rules::Multiplayer { .. }, Some(spin)) = (rules, e.get("spinangles")) {
+        return Some(vector_prefix(spin));
+    }
+    let speed = match e.get("speed").map_or(0.0, atof) {
+        0.0 => 100.0,
+        s => s,
+    };
+    Some(if spawnflags & 4 != 0 {
+        [0.0, 0.0, speed]
+    } else if spawnflags & 8 != 0 {
+        [speed, 0.0, 0.0]
+    } else {
+        [0.0, speed, 0.0]
     })
 }
 
@@ -217,6 +249,13 @@ fn movedir(angles: Vec3) -> Vec3 {
 }
 
 impl BrushEntity {
+    /// Its angles at game time `ms` (`BG_EvaluateTrajectory`'s `TR_LINEAR`, in
+    /// floats as the original), or `None` if it does not turn.
+    pub fn angles_at(&self, ms: i32) -> Option<Vec3> {
+        let seconds = ms as f32 * 0.001;
+        self.spin.map(|d| d.map(|x| seconds * x))
+    }
+
     /// A point of the model's space in the world.
     pub fn place(&self, v: Vec3) -> Vec3 {
         [0, 1, 2].map(|k| self.origin[k] + (0..3).map(|i| v[i] * self.axes[i][k]).sum::<f32>())

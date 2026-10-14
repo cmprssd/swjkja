@@ -192,6 +192,7 @@ fn every_retail_map_places_its_brush_entities() {
     let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
     let (mut sp, mut mp, mut moved, mut turned, mut held) = (0, 0, 0, 0, 0);
     let (mut sp_model2, mut mp_model2) = (0, 0);
+    let mut spinning = Vec::new();
     for name in vfs.files().filter(|f| f.ends_with(".bsp")) {
         let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
         let rules = Rules::for_map(name);
@@ -208,6 +209,9 @@ fn every_retail_map_places_its_brush_entities() {
             moved += usize::from(b.origin != origin);
             turned += usize::from(b.axes[0] != [1.0, 0.0, 0.0]);
             held += usize::from(b.shader_anim);
+            if let Some(spin) = b.spin {
+                spinning.push((name.to_owned(), spin));
+            }
         }
         match rules {
             Rules::SinglePlayer { .. } => sp += brushes.len(),
@@ -235,4 +239,17 @@ fn every_retail_map_places_its_brush_entities() {
     // that start off; siege_desert's three dishes (duel1's func_bobbing is not
     // drawn).
     assert_eq!((sp_model2, mp_model2), (74, 3));
+    // The func_rotatings that turn, all started on in single player (no multiplayer
+    // map has one): t2_rancor's drum, about its pitch, and t3_hevil's four big fans
+    // about their yaw and four small ones about their pitch.
+    let count = |map: &str, spin: [f32; 3]| {
+        spinning
+            .iter()
+            .filter(|(m, s)| m == map && *s == spin)
+            .count()
+    };
+    assert_eq!(spinning.len(), 9);
+    assert_eq!(count("maps/t2_rancor.bsp", [350.0, 0.0, 0.0]), 1);
+    assert_eq!(count("maps/t3_hevil.bsp", [0.0, 300.0, 0.0]), 4);
+    assert_eq!(count("maps/t3_hevil.bsp", [850.0, 0.0, 0.0]), 4);
 }
