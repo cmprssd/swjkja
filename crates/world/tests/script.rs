@@ -58,6 +58,7 @@ fn stance(legs: &'static str, torso: &'static str) -> Pose {
         torso,
         still_since: 0,
         script: None,
+        name: None,
     }
 }
 
@@ -238,6 +239,37 @@ fn a_looping_script_waits_on_times_and_on_its_animations() {
     assert_eq!(t.blending_at(0, 6075), Some(("BOTH_STAND1", 6050, 0.25)));
     // An hour on, it still runs.
     assert!(t.legs.last().unwrap().start > 3_590_000);
+}
+
+#[test]
+fn a_script_sets_and_clears_what_its_npc_looks_at() {
+    // The look target is set in the first pass, set again (no change), then
+    // cleared after a 1000 ms wait and set anew after another.
+    let script = vec![
+        set("SET_LOOK_TARGET", "npc_luke1"),
+        set("SET_LOOK_TARGET", "npc_luke1"),
+        command(id::WAIT, vec![float(1000.0)]),
+        set("SET_LOOK_TARGET", "NULL"),
+        command(id::WAIT, vec![float(1000.0)]),
+        set("SET_LOOK_TARGET", "kyle"),
+    ];
+    let t = timeline(&stance("BOTH_STAND1", "BOTH_STAND1"), Some(&script), &holds);
+    // The waits end on the first frames past 2550 and 3600, drawn a frame earlier.
+    assert_eq!(
+        t.look,
+        [
+            (1550, Some("npc_luke1".to_owned())),
+            (2550, None),
+            (3600, Some("kyle".to_owned())),
+        ]
+    );
+    assert_eq!(t.look_at(1549), None);
+    assert_eq!(t.look_at(1550), Some("npc_luke1"));
+    assert_eq!(t.look_at(3000), None);
+    assert_eq!(t.look_at(100_000), Some("kyle"));
+    // Without a script, nothing.
+    let t = timeline(&stance("BOTH_STAND1", "BOTH_STAND1"), None, &holds);
+    assert!(t.look.is_empty());
 }
 
 #[test]

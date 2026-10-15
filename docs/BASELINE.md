@@ -381,6 +381,36 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Single-player NPCs looking at their look targets, 2026-10-16
+
+The academies' students look at Luke (their spawnscripts' `SET_LOOK_TARGET`): their
+head, neck and upper spine turn toward his eyes, at the look the original settles
+at. The capture patch now also logs each NPC's look (`renderInfo.lastHeadAngles`)
+100 frames after the view's time is pinned, so the looks can be compared angle by
+angle, not only by pixels (`SCRIPTS=1`, both academy views captured again).
+
+| View | Mean difference | Before | Pixels off by > 16 | Before |
+|------|------|------|------|------|
+| academy1_class | 0.99 | 1.05 | 1.7% | 1.8% |
+| academy2_class | 4.06 | 4.10 | 7.6% | 7.6% |
+
+- academy1: all 11 students' looks (pitch, yaw) within 0.075 degrees of the logged
+  ones (a retail test checks them within 0.1).
+- academy2: given the original's eye point for Luke, the 7 students whose pose
+  matches the original's are within 0.02 degrees. The rest differ for reasons
+  other than the look: six play the map's cinematic animations (`BOTH_CIN_*`,
+  from `models/players/_humanoid_academy2/`, a per-map skeleton not loaded yet)
+  and stand here; two look at other students, and Luke plays an animation, set by
+  other scripts (`affect`, not run here). Luke's eyes are 22 units higher here, so
+  the students look further up.
+
+The 39 earlier reference views (all but hoth2's and vjun1's) render pixel for pixel
+as on main. Posing the NPCs takes 0.05 ms more a frame on academy1 and 0.11 ms on
+academy2 (the look's steps pose only the bones that place the eyes); `bench_world`
+(three runs of 600 frames) on the academy, t2_dpred, vjun2 and kor2 NPC views is
+within main's spread (academy1 5.99-7.33 ms, main 5.94-7.34; academy2 6.71-7.82,
+main 6.96-8.00), and loading academy2 and kor2 (`load_profile`, three runs) too.
+
 ## Single-player NPCs running their spawnscripts, 2026-10-15
 
 Two views in `bench/reference/script-views.txt` look at academy classes, captured

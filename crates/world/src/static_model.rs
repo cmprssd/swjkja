@@ -113,6 +113,8 @@ pub struct Pose {
     pub still_since: i32,
     /// The spawnscript it runs, if any.
     pub script: Option<std::sync::Arc<Vec<swjkja_icarus::Node>>>,
+    /// The name scripts find it by (its `targetname`), if any.
+    pub name: Option<String>,
 }
 
 /// A Ghoul2 model bolted to another (`G_CreateG2AttachedWeaponModel`), posed at

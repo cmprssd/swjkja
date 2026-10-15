@@ -72,9 +72,10 @@ for map in $maps; do
 		+set cg_fov 80 +set r_textureMode GL_LINEAR_MIPMAP_NEAREST \
 		"${game[@]:1}" +devmap "$map" +exec capture >/dev/null
 	cp -f "$(wslpath "$HOME_WIN")/$BENCH_GAME/screenshots/"*.png "$out/"
-	# The patched cgame logs each NPC's animation timing once per view time.
+	# The patched cgame logs each NPC's animation timing once per view time, and
+	# its look ("swjkja look") once the view's time is pinned.
 	if [ "$sp" = 1 ]; then
-		get qconsole.log | grep -a "swjkja npc" >"$out/$map-npcs.txt" || true
+		get qconsole.log | grep -a "swjkja npc\|swjkja look" >"$out/$map-npcs.txt" || true
 	fi
 done
 ls -l "$out"

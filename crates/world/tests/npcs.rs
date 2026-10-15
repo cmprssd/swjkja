@@ -287,6 +287,7 @@ fn pose(legs: &'static str, torso: &'static str) -> Pose {
         torso,
         still_since: 0,
         script: None,
+        name: None,
     }
 }
 

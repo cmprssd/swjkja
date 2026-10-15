@@ -654,3 +654,32 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   time), and `SCRIPTS=1 bench/capture-reference.sh` stops the game at the view's
   time. yavin1's capture never reaches the forced view (its intro, as kor1's), so its
   talking students are not compared.
+
+## 2026-10-15: What NPCs look at: the settled look, head bones only (chosen by the owner)
+
+- **The settled look, not the turn toward it.** cgame turns an NPC's head toward its
+  look target a part of the way each rendered frame (15% scaled by the frame's
+  interpolation), measuring from its eyes as last drawn, so the look settles where
+  the angles from the turned eyes equal the look (about half the way to the target).
+  That settled look is drawn from the moment the script sets the target, the same
+  at any frame rate; the original takes about a second to get there.
+- **Look targets only.** The thoracic, cervical and cranium bones turn
+  (`CG_G2ClientNeckAngles`); the spine's motion-bone correction (`cg_motionBoneComp`
+  2, which turns the lumbar bones of NPCs whose legs and torso play different
+  animations) is left for later, reusing the same bone overrides.
+
+## 2026-10-16: Look targets resolve to NPCs; the target's eyes as it stands (decided by Claude, pending review)
+
+- **A look target is the first NPC of that name** (`NPC_targetname`, ignoring case).
+  Every retail look target (53 lookers on academy1, 2, 4 and 6, all at
+  `npc_luke1`) names exactly one spawned NPC and no map entity, which a retail test
+  checks; other entities and the player as targets are left out until a map needs
+  them.
+- **The target's eyes are where they are as it stands, its own look left out**, so
+  two NPCs looking at each other need no joint solve (no retail target looks at
+  anyone).
+- **Only humanoid skeletons turn** (bones "thoracic", "cervical", "cranium"); every
+  retail looker is one. The other classes' bone shares (droids, the rancor) are
+  left out.
+- **Looks set by other scripts (`affect`) are left out**, as their animations are:
+  two of academy2's students and Luke get theirs that way.

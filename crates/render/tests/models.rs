@@ -439,3 +439,58 @@ fn t2_dpred_stormtroopers_move_as_time_passes() {
         .unwrap();
     assert!(models.bones(item, 7000).is_empty());
 }
+
+/// academy1's seated students look at Luke (their spawnscript's `SET_LOOK_TARGET`):
+/// each settled look (pitch, yaw) as the original's capture logged it
+/// (`renderInfo.lastHeadAngles`, `SCRIPTS=1` at 12345 ms), within a tenth of a
+/// degree.
+#[test]
+fn academy1_students_look_at_luke_as_the_original() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/academy1.bsp").unwrap()).unwrap();
+    let time = 12345;
+    let models = StaticModels::load(&vfs, &bsp, &[], Rules::for_map("maps/academy1.bsp"), time);
+    // Where each student spawned, and its look.
+    let logged = [
+        ([-1312.0, -976.0], [-7.136, -8.547]),
+        ([-1360.0, -976.0], [-7.432, -4.471]),
+        ([-1600.0, -928.0], [-9.426, 14.453]),
+        ([-1488.0, -936.0], [-6.471, 6.026]),
+        ([-1568.0, -992.0], [-2.834, 13.282]),
+        ([-1536.0, -952.0], [-6.482, 9.965]),
+        ([-1448.0, -880.0], [-1.099, 2.999]),
+        ([-1336.0, -904.0], [-5.883, -5.427]),
+        ([-1240.0, -984.0], [-10.486, -13.123]),
+        ([-1288.0, -928.0], [-1.324, -8.036]),
+        ([-1416.0, -928.0], [-10.333, 1.445]),
+    ];
+    let luke = models
+        .instances
+        .iter()
+        .position(|m| m.origin[0] == -1408.0 && m.origin[1] == -1304.0)
+        .unwrap();
+    let mut looking = 0;
+    for n in 0..models.instances.len() {
+        let Some((target, look)) = models.look(n, time) else {
+            continue;
+        };
+        looking += 1;
+        assert_eq!(target, luke);
+        let o = models.instances[n].origin;
+        let (_, want) = logged
+            .iter()
+            .find(|(at, _)| at[0] == o[0] && at[1] == o[1])
+            .unwrap_or_else(|| panic!("no logged look at {o:?}"));
+        assert!(
+            (look[0] - want[0]).abs() < 0.1 && (look[1] - want[1]).abs() < 0.1 && look[2] == 0.0,
+            "{o:?}: {look:?}, logged {want:?}"
+        );
+    }
+    assert_eq!(looking, logged.len());
+    // Before the scripts' first pass, nobody looks.
+    assert!((0..models.instances.len()).all(|n| models.look(n, 1549).is_none()));
+}

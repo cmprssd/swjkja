@@ -200,6 +200,57 @@ fn an_attached_model_hangs_from_its_root() {
 }
 
 #[test]
+fn an_angle_override_turns_its_bone_and_those_below() {
+    // Bones 1 and 2 each sit 10 along their parent's x.
+    let t = |x| comp([1.0, 0.0, 0.0, 0.0], [x, 0.0, 0.0]);
+    let mut gla = Gla::parse(&gla(&[-1, 0, 1], &[t(0.0), t(10.0), t(10.0)])).unwrap();
+    // A quarter turn about z, columns the turned axes: x to y, y to -x.
+    let turn = [
+        [0.0, -1.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+    ];
+    // With bone 1's base pose the identity, its override is the turn itself: bone 1
+    // stays where it was and bone 2 swings from (20, 0) to (10, 10).
+    let o = gla.angles_override(1, &turn);
+    assert!(close(&o, &turn), "{o:?}");
+    let pose = gla.pose_overridden(&IDENTITY, &[0, 0, 0], &[(1, o)]);
+    assert!(close(
+        &pose[1],
+        &multiply(&translation([10.0, 0.0, 0.0]), &turn)
+    ));
+    assert!(
+        close(&pose[2], &multiply(&translation([10.0, 10.0, 0.0]), &turn)),
+        "{pose:?}"
+    );
+    // A base pose 3 along x: the turn is about that point.
+    gla.bones[1].base_pose = translation([3.0, 0.0, 0.0]);
+    gla.bones[1].base_pose_inv = translation([-3.0, 0.0, 0.0]);
+    let o = gla.angles_override(1, &turn);
+    assert!(
+        close(&o, &multiply(&translation([3.0, -3.0, 0.0]), &turn)),
+        "{o:?}"
+    );
+}
+
+#[test]
+fn a_chain_is_its_bones_and_those_above_posed_alone() {
+    // Bone 2's parent is bone 3 (listed after it), whose parent is the root; bone
+    // 1 hangs from the root too.
+    let t = |x| comp([1.0, 0.0, 0.0, 0.0], [x, 0.0, 0.0]);
+    let gla = Gla::parse(&gla(&[-1, 0, 3, 0], &[t(0.0), t(1.0), t(2.0), t(4.0)])).unwrap();
+    let chain = gla.chain(&[2]);
+    assert_eq!(chain, [0, 3, 2]);
+    let locals = gla.locals(&[0, 0, 0, 0]);
+    let pose = gla.pose_chain(&IDENTITY, &locals, &[], &chain);
+    // Bone 2 where the whole pose has it; bone 1, outside the chain, unposed.
+    let full = gla.pose_frames(&IDENTITY, &[0, 0, 0, 0]);
+    assert!(close(&pose[2], &full[2]), "{pose:?}");
+    assert!(close(&pose[2], &translation([6.0, 0.0, 0.0])), "{pose:?}");
+    assert!(close(&pose[1], &IDENTITY));
+}
+
+#[test]
 fn tags_give_axes_from_their_triangle() {
     // The longest side runs +x (vertex 0 to 1), the shortest -y (vertex 2 to 0);
     // the origin is vertex 2.

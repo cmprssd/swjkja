@@ -219,6 +219,69 @@ fn single_player_npcs_find_their_looks() {
     assert_eq!(scripted, 95);
 }
 
+#[test]
+fn single_player_look_targets_name_npcs() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let mut maps: Vec<&str> = vfs
+        .files()
+        .filter(|f| f.ends_with(".bsp") && !f.starts_with("maps/mp/"))
+        .collect();
+    maps.sort_unstable();
+    let mut lookers = std::collections::BTreeMap::new();
+    for name in &maps {
+        let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
+        let spawns = npc::npc_spawns(&bsp.entities, Rules::for_map(name));
+        for n in &spawns {
+            let Some(nodes) = n
+                .spawnscript
+                .as_deref()
+                .and_then(script::script_path)
+                .and_then(|path| vfs.read(&path).ok())
+                .map(|bytes| swjkja_icarus::parse(&bytes).unwrap())
+            else {
+                continue;
+            };
+            let mut targets = Vec::new();
+            sets(&nodes, &mut |set, value| {
+                if set == "SET_LOOK_TARGET" {
+                    targets.push(value.to_owned());
+                }
+            });
+            for t in targets {
+                let named = |v: Option<&str>| v.is_some_and(|v| v.eq_ignore_ascii_case(&t));
+                // G_Find looks by targetname first: no map entity has the name, so
+                // it finds the NPC, whose targetname is its NPC_targetname.
+                assert!(
+                    !bsp.entities
+                        .iter()
+                        .any(|e| named(e.get("targetname")) || named(e.get("script_targetname"))),
+                    "{name}: {t}"
+                );
+                let npcs = spawns.iter().filter(|s| named(s.targetname.as_deref()));
+                assert_eq!(npcs.count(), 1, "{name}: {t}");
+                *lookers.entry((*name, t)).or_insert(0) += 1;
+            }
+        }
+    }
+    // Counted from the scan: the academies' students, each looking at Luke, who is
+    // spawned on the same map.
+    let luke = |map| (map, "npc_luke1".to_owned());
+    assert_eq!(
+        lookers,
+        [
+            (luke("maps/academy1.bsp"), 11),
+            (luke("maps/academy2.bsp"), 15),
+            (luke("maps/academy4.bsp"), 13),
+            (luke("maps/academy6.bsp"), 14),
+        ]
+        .into()
+    );
+}
+
 /// Calls `f` with each `set` command's name and text value in `nodes`, depth first.
 fn sets(nodes: &[swjkja_icarus::Node], f: &mut dyn FnMut(&str, &str)) {
     for n in nodes {
