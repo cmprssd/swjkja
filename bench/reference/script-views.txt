@@ -4,7 +4,11 @@
 # stopped at the view's time. academy1_class looks over the teachers at the seated
 # students (academy1/studentSpawn: BOTH_SIT2 held for good, weapons put away);
 # academy2_class at the standing students in their BOTH_CIN stances, three of whom
-# (academy2/studentSpawn5) wait a random time between animations. yavin1's capture
+# (academy2/studentSpawn5) wait a random time between animations; academy4_class and
+# academy6_class at the same classroom, whose students run academy2's scripts on
+# their own maps' cinematic skeletons. yavin1's capture
 # never reaches the view (its intro), and t1_fatal's corpses die (SET_HEALTH 0).
 academy1  academy1_class   -1400 -1260 790   15 90 0   12345
 academy2  academy2_class   -1400 -1200 780   15 90 0   12345
+academy4  academy4_class   -1400 -1200 780   15 90 0   12345
+academy6  academy6_class   -1400 -1200 780   15 90 0   12345

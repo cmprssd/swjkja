@@ -7,6 +7,22 @@ use swjkja_fs::Vfs;
 /// The animation an NPC starts in (`NPC_Begin`).
 pub const STAND: &str = "BOTH_STAND1";
 
+/// The skeleton humanoid meshes name, the one single player gives a cinematic
+/// skeleton per map ([`cinematic_skeleton`]).
+pub const HUMANOID: &str = "models/players/_humanoid/_humanoid";
+
+/// The cinematic skeleton single player loads after [`HUMANOID`] on the map at `map`
+/// (as "maps/academy2.bsp"), named as a mesh names its skeleton:
+/// "models/players/_humanoid_academy2/_humanoid_academy2" (`G_ParseAnimFileSet`, from
+/// `level.mapname` after its last folder). Its animation file's animations replace
+/// [`HUMANOID`]'s of the same name and play on it.
+pub fn cinematic_skeleton(map: &str) -> String {
+    let map = map.replace('\\', "/");
+    let file = map.rsplit('/').next().unwrap_or(&map);
+    let name = file.strip_suffix(".bsp").unwrap_or(file);
+    format!("models/players/_humanoid_{name}/_humanoid_{name}")
+}
+
 /// The animation file of the skeleton a mesh names (its `anim_name`, as
 /// "models/players/_humanoid/_humanoid"): the skeleton's folder name, its
 /// "<name>.cfg" there, or failing that its "animation.cfg". `None` if neither exists.
@@ -163,6 +179,14 @@ mod tests {
         // Missing, or listed with no frames: unanimated.
         assert_eq!(start("BOTH_RUN1"), None);
         assert_eq!(find("BOTH_STAND1 5 0 0 20", STAND), None);
+    }
+
+    #[test]
+    fn a_maps_cinematic_skeleton_is_named_after_it() {
+        let academy2 = "models/players/_humanoid_academy2/_humanoid_academy2";
+        assert_eq!(cinematic_skeleton("maps/academy2.bsp"), academy2);
+        assert_eq!(cinematic_skeleton("maps\\academy2.bsp"), academy2);
+        assert_eq!(cinematic_skeleton("academy2"), academy2);
     }
 
     #[test]

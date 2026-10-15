@@ -35,7 +35,7 @@ fn frames_in_flight_render_like_single_frames() {
         &shaders,
         &bsp,
         &world,
-        swjkja_world::static_model::Rules::for_map("maps/mp/ffa3.bsp"),
+        "maps/mp/ffa3.bsp",
         0.0,
     )
     .unwrap();

@@ -277,17 +277,8 @@ fn load(gpu: &Arc<Gpu>, game_data: &Path, map: &str, done: &AtomicUsize) -> Resu
     let world = swjkja_world::World::load(&bsp, &Default::default());
     step(3);
     let mut textures = TextureSet::new(gpu).map_err(|e| e.to_string())?;
-    let renderer = WorldRenderer::new(
-        gpu,
-        &mut textures,
-        &vfs,
-        &shaders,
-        &bsp,
-        &world,
-        swjkja_world::static_model::Rules::for_map(&file),
-        0.0,
-    )
-    .map_err(|e| e.to_string())?;
+    let renderer = WorldRenderer::new(gpu, &mut textures, &vfs, &shaders, &bsp, &world, &file, 0.0)
+        .map_err(|e| e.to_string())?;
     step(4);
     eprintln!(
         "{map}: loaded in {:.2} s ({})",

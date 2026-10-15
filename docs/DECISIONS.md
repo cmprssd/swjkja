@@ -683,3 +683,29 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   left out.
 - **Looks set by other scripts (`affect`) are left out**, as their animations are:
   two of academy2's students and Luke get theirs that way.
+
+## 2026-10-16: Per-map cinematic skeletons, checked on four academy views (chosen by the owner)
+
+- **Every single-player map's cinematic skeleton loads** (`_humanoid_<map>.gla` and
+  its animation file, 32 retail maps), not only academy2's. Spawned NPCs play
+  cinematic animations at load on academy1 (the teachers), academy2, academy4 and
+  academy6 (the students; academy4's and 6's run academy2's scripts on their own
+  skeletons, so the same `BOTH_CIN_*` is another motion there).
+- **New reference captures**: academy4_class and academy6_class (the same
+  classroom view as academy2's); academy1_class already shows the teachers.
+
+## 2026-10-16: How the cinematic skeleton plays (decided by Claude, pending review)
+
+- **The whole body switches skeletons**, as `G2API_SetAnimIndex` does: an
+  animation from the cinematic file plays on the cinematic skeleton, any other on
+  the humanoid's, and a switch stops every bone's animation (the other part then
+  plays its parent bone's frames) and blends nothing. A change on both parts at
+  once sets the torso first (`PM_SetAnimFinal`); separate changes in one frame are
+  taken in that order too (the timeline does not keep the script's order).
+- **The renderer takes the map's path, not its rules** (`WorldRenderer::new`,
+  `StaticModels::load`): the rules come from it (`Rules::for_map`), as does the
+  cinematic skeleton's name.
+- **academy1's look test uses the original's point for Luke's eyes**, as
+  academy2's: his spawnscript's `BOTH_CIN_4` now plays (before, missing, he stood
+  in `BOTH_STAND1`), while another script (`affect`, not run here) has him stand in
+  `BOTH_STAND4` from 1950 ms in the original.

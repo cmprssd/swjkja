@@ -506,7 +506,8 @@ fn gpu_stage(s: &MaterialStage, env: Option<TexEnv>) -> GpuStage {
 }
 
 impl WorldRenderer {
-    /// Resolves and uploads everything the world model needs. Textures go into
+    /// Resolves and uploads everything the world model needs, for the map at `map`
+    /// (as "maps/academy2.bsp"; [`StaticModels::load`]). Textures go into
     /// `textures`, which must outlive the renderer. NPCs are posed at each draw's
     /// time; a surface of theirs with vertex deforms would stand as it does at game
     /// time `time` (seconds), but no retail one has any.
@@ -518,7 +519,7 @@ impl WorldRenderer {
         shaders: &ShaderText,
         bsp: &Bsp,
         world: &World,
-        rules: swjkja_world::static_model::Rules,
+        map: &str,
         time: f32,
     ) -> Result<Self> {
         // The global fog (the one without a brush; fog numbers are 1-based) and its
@@ -549,12 +550,13 @@ impl WorldRenderer {
             });
         }
 
+        let rules = swjkja_world::static_model::Rules::for_map(map);
         // Game time in whole milliseconds, as cg.time.
         let mut models = StaticModels::load(
             vfs,
             bsp,
             &fog_volumes,
-            rules,
+            map,
             (f64::from(time) * 1000.0).round() as i32,
         );
 
