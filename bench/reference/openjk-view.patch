@@ -68,7 +68,7 @@ diff --git a/code/cgame/cg_view.cpp b/code/cgame/cg_view.cpp
 index c5a8fd0..4afe019 100644
 --- a/code/cgame/cg_view.cpp
 +++ b/code/cgame/cg_view.cpp
-@@ -1988,10 +1988,48 @@ extern void CG_BuildSolidList( void );
+@@ -1988,10 +1988,66 @@ extern void CG_BuildSolidList( void );
  extern void CG_ClearHealthBarEnts( void );
  extern vec3_t	serverViewOrg;
  static qboolean cg_rangedFogging = qfalse; //so we know if we should go back to normal fog
@@ -79,7 +79,25 @@ index c5a8fd0..4afe019 100644
 +static int swjkjaFirst = -1;
 +static void CG_SwjkjaLogNPCs( void ) {
 +	static int logged = -1;
++	static int heads = -1, headFrames = 0;
 +	const int first = swjkjaFirst;
++	// Each NPC's look (renderInfo.lastHeadAngles) and eyes, once, 100 frames after
++	// a time is pinned (the capture's screenshot comes 200 frames after).
++	if ( !cg_swjkjaTime.string[0] || heads == cg_swjkjaTime.integer ) {
++		headFrames = 0;
++	} else if ( ++headFrames == 100 ) {
++		heads = cg_swjkjaTime.integer;
++		for ( int i = 0; i < ENTITYNUM_WORLD; i++ ) {
++			gentity_t *ent = &g_entities[i];
++			if ( !ent->inuse || !ent->client || !ent->NPC ) {
++				continue;
++			}
++			const renderInfo_t &ri = ent->client->renderInfo;
++			Com_Printf( "swjkja look %d %s target %d head %.3f %.3f %.3f eye %.2f %.2f %.2f eyeangles %.3f %.3f %.3f\n",
++				i, ent->NPC_type, ri.lookTarget, ri.lastHeadAngles[0], ri.lastHeadAngles[1], ri.lastHeadAngles[2],
++				ri.eyePoint[0], ri.eyePoint[1], ri.eyePoint[2], ri.eyeAngles[0], ri.eyeAngles[1], ri.eyeAngles[2] );
++		}
++	}
 +	if ( !cg_swjkjaTime.string[0] || logged == cg_swjkjaTime.integer ) {
 +		return;
 +	}

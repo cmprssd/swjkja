@@ -231,6 +231,7 @@ fn single_player_look_targets_name_npcs() {
         .filter(|f| f.ends_with(".bsp") && !f.starts_with("maps/mp/"))
         .collect();
     maps.sort_unstable();
+    let mut lookers = std::collections::BTreeMap::new();
     for name in &maps {
         let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
         let spawns = npc::npc_spawns(&bsp.entities, Rules::for_map(name));
@@ -251,33 +252,34 @@ fn single_player_look_targets_name_npcs() {
                 }
             });
             for t in targets {
-                let keyed = |key: &str| {
-                    bsp.entities
+                let named = |v: Option<&str>| v.is_some_and(|v| v.eq_ignore_ascii_case(&t));
+                // G_Find looks by targetname first: no map entity has the name, so
+                // it finds the NPC, whose targetname is its NPC_targetname.
+                assert!(
+                    !bsp.entities
                         .iter()
-                        .filter(|e| e.get(key).is_some_and(|v| v.eq_ignore_ascii_case(&t)))
-                        .map(|e| e.get("classname").unwrap_or("").to_owned())
-                        .collect::<Vec<_>>()
-                };
-                let npcs = spawns
-                    .iter()
-                    .filter(|s| {
-                        s.targetname
-                            .as_deref()
-                            .is_some_and(|v| v.eq_ignore_ascii_case(&t))
-                    })
-                    .count();
-                eprintln!(
-                    "{name}: {} ({}, {:?}) looks at {t:?}: targetname {:?}, script_targetname {:?}, NPC_targetname {:?}, spawned NPCs {npcs}",
-                    n.npc_type,
-                    n.spawnscript.as_deref().unwrap_or(""),
-                    n.targetname,
-                    keyed("targetname"),
-                    keyed("script_targetname"),
-                    keyed("NPC_targetname"),
+                        .any(|e| named(e.get("targetname")) || named(e.get("script_targetname"))),
+                    "{name}: {t}"
                 );
+                let npcs = spawns.iter().filter(|s| named(s.targetname.as_deref()));
+                assert_eq!(npcs.count(), 1, "{name}: {t}");
+                *lookers.entry((*name, t)).or_insert(0) += 1;
             }
         }
     }
+    // Counted from the scan: the academies' students, each looking at Luke, who is
+    // spawned on the same map.
+    let luke = |map| (map, "npc_luke1".to_owned());
+    assert_eq!(
+        lookers,
+        [
+            (luke("maps/academy1.bsp"), 11),
+            (luke("maps/academy2.bsp"), 15),
+            (luke("maps/academy4.bsp"), 13),
+            (luke("maps/academy6.bsp"), 14),
+        ]
+        .into()
+    );
 }
 
 /// Calls `f` with each `set` command's name and text value in `nodes`, depth first.

@@ -476,27 +476,35 @@ impl StaticModels {
         }
     }
 
-    /// The overrides that turn instance `n`'s head toward what it looks at at
-    /// `time` (none when it looks at nothing): the settled look ([`look::settle`])
-    /// toward its target's eyes as the target stands (its own look left out).
-    fn look_overrides(&self, n: usize, time: i32) -> Vec<(usize, Mat34)> {
-        let Some(rig) = &self.instances[n].rig else {
-            return Vec::new();
-        };
-        let (Some(head), Some(target)) = (rig.head, rig.looking_at(time)) else {
-            return Vec::new();
-        };
+    /// What instance `n` looks at at `time` and its settled look ([`look::settle`]:
+    /// pitch, yaw, roll, `renderInfo.lastHeadAngles`) toward the target's eyes as
+    /// the target stands (its own look left out); `None` when it looks at nothing or
+    /// has no bones to turn.
+    pub fn look(&self, n: usize, time: i32) -> Option<(usize, look::Vec3)> {
+        let rig = self.instances[n].rig.as_ref()?;
+        let (head, target) = (rig.head?, rig.looking_at(time)?);
         let goal = match &self.instances[target].rig {
             Some(t) => self.eyes(target, &t.body_pose(time, &[])).0,
             None => self.instances[target].origin,
         };
         let gla = &rig.body.gla;
-        let frames = rig.body_frames(time);
+        let locals = gla.locals(&rig.body_frames(time));
         let settled = look::settle(goal, |l| {
-            let body = gla.pose_overridden(&gla::ROOT, &frames, &head.overrides(gla, l));
+            let overrides = head.overrides(gla, l);
+            let body = gla.pose_chain(&gla::ROOT, &locals, &overrides, &rig.eye_chain);
             self.eyes(n, &body)
         });
-        head.overrides(gla, settled).to_vec()
+        Some((target, settled))
+    }
+
+    /// The overrides that turn instance `n`'s head by its look at `time`
+    /// ([`StaticModels::look`]); none when it looks at nothing.
+    fn look_overrides(&self, n: usize, time: i32) -> Vec<(usize, Mat34)> {
+        let (Some(rig), Some((_, settled))) = (&self.instances[n].rig, self.look(n, time)) else {
+            return Vec::new();
+        };
+        let head = rig.head.expect("a look turns a head");
+        head.overrides(&rig.body.gla, settled).to_vec()
     }
 
     /// The surface posed piece `k` draws, and where its part's bones start in its
@@ -680,6 +688,9 @@ pub struct Rig {
     head: Option<Head>,
     /// Its eyes' tag ("*head_eyes"), if its mesh has one.
     eyes: Option<usize>,
+    /// The bones that place the eyes' tag ([`gla::Gla::chain`]), all a look
+    /// needs posed.
+    eye_chain: Vec<usize>,
     /// The name scripts find it by.
     name: Option<String>,
     /// What it looks at from when (ms): the instance, or `None` for nothing.
@@ -723,6 +734,12 @@ impl Rig {
                 anims.push((name.to_owned(), a));
             }
         }
+        let eyes = model.glm.find_surface("*head_eyes");
+        let eye_chain = eyes.map_or_else(Vec::new, |s| {
+            let tag = model.glm.lods[0][s].verts.iter().take(3);
+            let bones: Vec<usize> = tag.flat_map(|v| v.bones.iter().map(|b| b.0)).collect();
+            gla.chain(&bones)
+        });
         Self {
             body: model.clone(),
             timeline,
@@ -730,7 +747,8 @@ impl Rig {
             bones: ["model_root", "lower_lumbar", "Motion"].map(|b| gla.find_bone(b)),
             attached: Vec::new(),
             head: Head::find(gla),
-            eyes: model.glm.find_surface("*head_eyes"),
+            eyes,
+            eye_chain,
             name: pose.name.clone(),
             look: Vec::new(),
         }

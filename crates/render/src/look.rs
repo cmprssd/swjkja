@@ -32,7 +32,7 @@ const CRANIUM_SHARE: Vec3 = [0.4, 0.6, 0.6];
 /// How many steps toward the settled look at most, and the change (degrees) small
 /// enough to stop at.
 const STEPS: usize = 32;
-const SETTLED: f32 = 0.001;
+const SETTLED: f32 = 0.01;
 
 /// `AngleNormalize180`: `angle` within -180..180, through the 16-bit steps of
 /// `AngleNormalize360`.
