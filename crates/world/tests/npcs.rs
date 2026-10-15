@@ -1,9 +1,6 @@
 use swjkja_bsp::Entity;
 use swjkja_world::collision::Collision;
-use swjkja_world::npc::{
-    attached_model, blending_at, npc_gear, npc_look, npc_models, npc_spawns, saber_look,
-    standing_at,
-};
+use swjkja_world::npc::{attached_model, npc_gear, npc_look, npc_models, npc_spawns, saber_look};
 use swjkja_world::static_model::{Attached, Pose, Rules, angles_to_axis};
 
 fn entity(pairs: &[(&str, &str)]) -> Entity {
@@ -213,7 +210,7 @@ fn npcs_stand_upright_at_their_spawner_scaled_from_their_feet() {
         ),
         npc("NPC_Player", &[]),
     ];
-    let models = npc_models(&entities, SP, PARMS, b"", &Collision::default());
+    let models = npc_models(&entities, SP, PARMS, b"", &Collision::default(), &|_| None);
     let [officer, player] = &models[..] else {
         panic!("{models:?}")
     };
@@ -285,16 +282,11 @@ fn gear(npc_type: &str, flags: i64) -> (Pose, Vec<(String, &'static str)>) {
 }
 
 fn pose(legs: &'static str, torso: &'static str) -> Pose {
-    let idle = match legs {
-        "BOTH_STAND1" => Some("BOTH_STAND1IDLE1"),
-        "BOTH_STAND3" => Some("BOTH_STAND3IDLE1"),
-        _ => None,
-    };
     Pose {
         legs,
         torso,
-        idle,
         still_since: 0,
+        script: None,
     }
 }
 
@@ -392,78 +384,4 @@ fn weapon_models_become_their_ghoul2_models() {
         saber_look(SABERS, "nothing").model,
         "models/weapons2/saber_reborn/saber_w.glm"
     );
-}
-
-#[test]
-fn npcs_standing_still_play_their_idle_after_five_seconds() {
-    // BOTH_STAND3IDLE1: 151 frames at 20 per second, held for 150 of them.
-    let idle = Some((7500, 7550));
-    let still = pose("BOTH_STAND3", "TORSO_WEAPONIDLE3");
-    let at = |p: &Pose, time| standing_at(p, idle, time);
-    // The stance from the first frame; the idle from the first frame past 5 s of
-    // level time (5050), on the client's clock a frame behind.
-    assert_eq!(at(&still, 4999), ("BOTH_STAND3", "TORSO_WEAPONIDLE3", 1550));
-    assert_eq!(
-        at(&still, 5000),
-        ("BOTH_STAND3IDLE1", "BOTH_STAND3IDLE1", 5000)
-    );
-    assert_eq!(
-        at(&still, 12345),
-        ("BOTH_STAND3IDLE1", "BOTH_STAND3IDLE1", 5000)
-    );
-    // Held until 12550, then the stance until 5 s after the idle's full length.
-    assert_eq!(
-        at(&still, 12500),
-        ("BOTH_STAND3", "TORSO_WEAPONIDLE3", 12500)
-    );
-    assert_eq!(
-        at(&still, 17599),
-        ("BOTH_STAND3", "TORSO_WEAPONIDLE3", 12500)
-    );
-    assert_eq!(
-        at(&still, 17600),
-        ("BOTH_STAND3IDLE1", "BOTH_STAND3IDLE1", 17600)
-    );
-    // One that fell moved on the first frame: its idle comes 1550 ms later.
-    let fell = Pose {
-        still_since: 1550,
-        ..still.clone()
-    };
-    assert_eq!(at(&fell, 6549).2, 1550);
-    assert_eq!(
-        at(&fell, 6550),
-        ("BOTH_STAND3IDLE1", "BOTH_STAND3IDLE1", 6550)
-    );
-    // No idle animation (the stance has none, or the skeleton lacks it).
-    let imperial = pose("BOTH_STAND4", "BOTH_STAND4");
-    assert_eq!(at(&imperial, 12345), ("BOTH_STAND4", "BOTH_STAND4", 1550));
-    assert_eq!(standing_at(&still, None, 12345).2, 1550);
-}
-
-#[test]
-fn npcs_blend_into_their_idle_and_back_over_100_ms() {
-    let idle = Some((7500, 7550));
-    let still = pose("BOTH_STAND3", "TORSO_WEAPONIDLE3");
-    let at = |time| blending_at(&still, idle, time);
-    // The idle starts at 5000, blending from the stance that started at 1550.
-    assert_eq!(at(4999), None);
-    assert_eq!(
-        at(5000),
-        Some(("BOTH_STAND3", "TORSO_WEAPONIDLE3", 1550, 0.0))
-    );
-    assert_eq!(
-        at(5050),
-        Some(("BOTH_STAND3", "TORSO_WEAPONIDLE3", 1550, 0.5))
-    );
-    assert_eq!(at(5100), None);
-    // The stance comes back at 12500, blending from the idle.
-    assert_eq!(
-        at(12525),
-        Some(("BOTH_STAND3IDLE1", "BOTH_STAND3IDLE1", 5000, 0.25))
-    );
-    assert_eq!(at(12345), None);
-    // The stance on the first frame does not (its BOTH_STAND1 is left out).
-    assert_eq!(at(1600), None);
-    // Nor does an NPC with no idle.
-    assert_eq!(blending_at(&still, None, 5050), None);
 }

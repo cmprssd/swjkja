@@ -618,3 +618,39 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   retail test), as milestone 1 read every asset; only what spawned NPCs reach runs.
 - **Look targets (`SET_LOOK_TARGET`, heads turned toward Luke) are a follow-up PR.**
 - **New reference captures were approved** (game windows on the owner's PC).
+
+## 2026-10-15: Spawnscripts run, a server frame at a time (decided by Claude, pending review)
+
+- **One timeline for every NPC** (`swjkja_world::script::timeline`): the game stepped
+  frame by frame in the original's order, the NPC's movement frame (`Pmove`'s timers,
+  the stance returning to parts no longer held, `G_CheckClientIdle`) then its script
+  (`CTaskManager::Update`: commands until one waits), skipping frames where nothing
+  can change, up to an hour of game time (then the last animations hold). It replaces
+  the closed form for standing NPCs (`standing_at`), which it reproduces exactly
+  (checked at every 7 ms up to 200 s for three stances, idle lengths, a missing idle,
+  and NPCs still or falling on the first frame).
+- **What runs**: `set` of animations and hold times (a script's animation task
+  completes when its timer runs out, as `PM_SetLegsAnimTimer` completes it), timed
+  waits, waits on task groups (`task`, `do`), loops, `if`/`else`. A script's first
+  pass runs in `NPC_Begin`, on the first server frame (1550 ms: spawners think 350
+  ms after the map spawns, `NPC_Begin` 100 ms later), and its animations start then
+  on the client's clock, as the capture log shows (1550); later ones a frame behind
+  the server, as the idle's do.
+- **Random numbers take their range's low end**, as other random choices here take
+  their first branch. The original's differ per NPC and per run, so NPCs whose
+  scripts wait a random time (three of academy2's students) do not match a capture.
+- **Weapon and visibility from the first pass only**: `SET_WEAPON WP_NONE` drops every
+  bolted model and gives the unarmed stance (70 NPCs), `SET_INVISIBLE true` leaves the
+  NPC out (9). A retail test checks no spawned NPC's script sets either later.
+- **Left out**: commands that move or turn the NPC (`SET_NAVGOAL`, `SET_DYAW`, ...)
+  never complete, as with the AI frozen; `affect` (another entity), `run` (no spawned
+  NPC's script runs another), signals, `get` (a condition with one is false), and
+  other weapons than none. Dead NPCs (`SET_HEALTH 0`, t1_fatal's corpses) are left
+  for the death code.
+- **Reference captures run scripts with the AI frozen**: `d_npcfreeze 1` skips the
+  script's later updates too (`NPC_Think` returns before them), so the capture patch
+  adds `d_npcfreeze 2` (AI frozen, scripts run after the movement frame, as an
+  unfrozen think runs them) and `g_swjkjaStop` (the game runs no frame past a level
+  time), and `SCRIPTS=1 bench/capture-reference.sh` stops the game at the view's
+  time. yavin1's capture never reaches the forced view (its intro, as kor1's), so its
+  talking students are not compared.

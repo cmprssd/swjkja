@@ -5,6 +5,9 @@
 # world only (r_drawentities 0, no HUD), full-quality textures, 1280x720.
 # With ENTITIES=1, entities are drawn too (the static models of
 # reference/model-views.txt; those views keep items and movers out of sight).
+# With SCRIPTS=1, single player's NPCs run their scripts (only their AI is frozen)
+# and the game stops at the map's first view's time, so scripted NPCs stand as of
+# that time: a map's views then share one time.
 # Multiplayer maps (mp/...) run in holocron mode (g_gametype 1) because free-for-all
 # opens the force-power menu on joining, over the view. Other maps run in the
 # single-player executable at the easiest skill (g_spskill 0, the cvar's default, as
@@ -20,6 +23,7 @@ mkdir -p "$out"
 
 views=${1:-reference/views.txt}
 entities=${ENTITIES:-0}
+scripts=${SCRIPTS:-0}
 maps=$(grep -v '^#' "$views" | awk 'NF {print $1}' | sort -u)
 for map in $maps; do
 	cfg=$(mktemp)
@@ -30,7 +34,14 @@ for map in $maps; do
 		# spawner's way: their AI does not run (it turns them and moves them),
 		# their movement frames do (their weapon-ready stance, the drop to the
 		# floor). One capture without it found t3_stamp's crates already broken.
-		if [ "$sp" = 1 ]; then echo "set d_npcfreeze 1"; fi
+		# With SCRIPTS=1 the AI alone is frozen (d_npcfreeze 2, a patch addition)
+		# and the game runs no frame the client would draw after the view's time
+		# (it draws one frame behind).
+		if [ "$sp" = 1 ] && [ "$scripts" = 1 ]; then
+			grep -v '^#' "$views" | awk -v m="$map" '$1 == m {print "set d_npcfreeze 2; set g_swjkjaStop " $9 + 50; exit}'
+		elif [ "$sp" = 1 ]; then
+			echo "set d_npcfreeze 1"
+		fi
 		# Cheat cvars need the devmap; r_drawentities 0 leaves only the world.
 		echo "wait 300"
 		# A single-player map may open with a cutscene: skip it as Esc would. The

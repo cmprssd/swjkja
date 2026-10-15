@@ -381,6 +381,33 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Single-player NPCs running their spawnscripts, 2026-10-15
+
+Two views in `bench/reference/script-views.txt` look at academy classes, captured
+with scripts running and the AI frozen, the game stopped at the view's time
+(`SCRIPTS=1`, see the views file). "Before" is main, where every NPC stands in its
+stance holding its weapon.
+
+| View | Mean difference | Before | Pixels off by > 16 | Before |
+|------|------|------|------|------|
+| academy1_class | 1.05 | 4.74 | 1.8% | 6.2% |
+| academy2_class | 4.06 | 5.87 | 7.6% | 9.8% |
+
+The capture log gives each scripted animation's start: 1550 ms on the client's clock
+for those a script's first pass sets, as here. What still differs: the original
+picks a random Jedi for `NPC_Jedi`'s random flag (here the first of twelve) and
+random tints, draws blob shadows, and three of academy2's students wait random times
+(here their range's low end: one capture had them at `BOTH_CIN_2` from 1550,
+`BOTH_CIN_10` from 7690 and `BOTH_CIN_12` from 8988).
+
+The 39 earlier reference views (all but hoth2's and vjun1's) render pixel for pixel
+as on main. `bench_world` (three runs of 600 frames): academy1 5.95-7.11 ms (main
+8.67-9.67), academy2 7.32-8.33 (8.54-8.88), with fewer triangles drawn (weapons put
+away, invisible NPCs left out); dpred_troopers, vjun2_officer and kor2_troopers,
+whose NPCs now stand by the same timeline, within main's spread. Loading academy2 and
+kor2 (`load_profile`, three runs) stays at main's (0.99-1.05 s and 1.36-1.51 s;
+main 1.06-1.08 s and 1.34-1.64 s).
+
 ## Single-player static models compared with the reference, 2026-10-10
 
 Four single-player views in `bench/reference/model-views.txt`, captured with OpenJK's
