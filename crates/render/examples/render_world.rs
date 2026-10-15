@@ -34,7 +34,7 @@ fn main() {
             &shaders,
             &bsp,
             &world,
-            swjkja_world::static_model::Rules::for_map(&format!("maps/{map}.bsp")),
+            &format!("maps/{map}.bsp"),
             // NPCs stand as they do at the map's first view's time.
             lines
                 .iter()

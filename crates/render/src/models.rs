@@ -42,7 +42,7 @@ use std::sync::Arc;
 use swjkja_bsp::{Bsp, DrawVert};
 use swjkja_fs::Vfs;
 use swjkja_model::animation;
-use swjkja_model::gla::{self, Mat34};
+use swjkja_model::gla::{self, Gla, Mat34};
 use swjkja_model::glm::{self, Ghoul2Model};
 use swjkja_model::md3::{Md3, Md3Model};
 use swjkja_model::skin::Skin;
@@ -247,9 +247,14 @@ impl StaticModels {
     /// retail model's fog depends on where the view is (taspir1's Raven's Claw, from
     /// inside fog 1); a retail-data test checks there are no others.
     ///
-    /// NPCs are baked as they stand at game time `time` (ms).
-    pub fn load(vfs: &Vfs, bsp: &Bsp, fogs: &[FogVolume], rules: Rules, time: i32) -> Self {
+    /// The map is the one at `map` (as "maps/academy2.bsp"), which gives the rules
+    /// ([`Rules::for_map`]) and, in single player, the humanoids' cinematic skeleton
+    /// ([`animation::cinematic_skeleton`]). NPCs are baked as they stand at game time
+    /// `time` (ms).
+    pub fn load(vfs: &Vfs, bsp: &Bsp, fogs: &[FogVolume], map: &str, time: i32) -> Self {
+        let rules = Rules::for_map(map);
         let sp = matches!(rules, Rules::SinglePlayer { .. });
+        let cinematic = sp.then(|| Cinematic::load(vfs, map)).flatten();
         let mut world = Collision::at_spawn(bsp, rules);
         let mut placements =
             swjkja_world::static_model::entity_models(&bsp.entities, rules, &mut world);
@@ -321,7 +326,10 @@ impl StaticModels {
                         eprintln!("warning: model {}: a Ghoul2 mesh placed as an MD3", p.model);
                         continue;
                     };
-                    let rig = g.pose.as_ref().map(|pose| Rig::new(vfs, m, pose));
+                    let rig = g
+                        .pose
+                        .as_ref()
+                        .map(|pose| Rig::new(vfs, m, pose, cinematic.as_ref()));
                     let pose = match &rig {
                         Some(rig) => rig.body_pose(time, &[]),
                         None => m.gla.pose(0),
@@ -481,20 +489,27 @@ impl StaticModels {
     /// the target stands (its own look left out); `None` when it looks at nothing or
     /// has no bones to turn.
     pub fn look(&self, n: usize, time: i32) -> Option<(usize, look::Vec3)> {
-        let rig = self.instances[n].rig.as_ref()?;
-        let (head, target) = (rig.head?, rig.looking_at(time)?);
+        let target = self.instances[n].rig.as_ref()?.looking_at(time)?;
         let goal = match &self.instances[target].rig {
             Some(t) => self.eyes(target, &t.body_pose(time, &[])).0,
             None => self.instances[target].origin,
         };
-        let gla = &rig.body.gla;
+        Some((target, self.look_toward(n, time, goal)?))
+    }
+
+    /// Instance `n`'s settled look at `time` toward `goal` ([`StaticModels::look`]),
+    /// whatever it looks at; `None` when it has no bones to turn.
+    pub fn look_toward(&self, n: usize, time: i32, goal: Vec3) -> Option<look::Vec3> {
+        let rig = self.instances[n].rig.as_ref()?;
+        let head = rig.head?;
+        let gla = rig.gla(time);
         let locals = gla.locals(&rig.body_frames(time));
         let settled = look::settle(goal, |l| {
             let overrides = head.overrides(gla, l);
             let body = gla.pose_chain(&gla::ROOT, &locals, &overrides, &rig.eye_chain);
             self.eyes(n, &body)
         });
-        Some((target, settled))
+        Some(settled)
     }
 
     /// The overrides that turn instance `n`'s head by its look at `time`
@@ -504,7 +519,7 @@ impl StaticModels {
             return Vec::new();
         };
         let head = rig.head.expect("a look turns a head");
-        head.overrides(&rig.body.gla, settled).to_vec()
+        head.overrides(rig.gla(time), settled).to_vec()
     }
 
     /// The surface posed piece `k` draws, and where its part's bones start in its
@@ -672,14 +687,48 @@ fn register_skin(
     });
 }
 
+/// A map's cinematic skeleton ([`animation::cinematic_skeleton`]) and its animation
+/// file's text.
+pub struct Cinematic {
+    gla: Arc<Gla>,
+    text: String,
+}
+
+impl Cinematic {
+    /// The cinematic skeleton of the map at `map`, if it has one that loads.
+    fn load(vfs: &Vfs, map: &str) -> Option<Self> {
+        let name = animation::cinematic_skeleton(map);
+        let file = format!("{name}.gla");
+        let data = vfs.read(&file).ok()?;
+        let gla = Gla::parse(&data)
+            .inspect_err(|e| eprintln!("warning: {file}: {e}"))
+            .ok()?;
+        let text = animation::config_file(vfs, &name)
+            .and_then(|file| vfs.read(&file).ok())
+            .map(|text| String::from_utf8_lossy(&text).into_owned())
+            .unwrap_or_default();
+        Some(Self {
+            gla: Arc::new(gla),
+            text,
+        })
+    }
+}
+
 /// An NPC's skeleton, the models bolted to it, and what it plays over time.
 pub struct Rig {
     body: Arc<Ghoul2Model>,
+    /// The map's cinematic skeleton, for a humanoid: skeleton 1, the body's own 0.
+    cinematic: Option<Arc<Gla>>,
     /// What its legs and torso play over time ([`script::timeline`]).
     timeline: Timeline,
     /// The animations it can play (those of its timeline, and `BOTH_STAND1`), by
-    /// name, those its skeleton has.
-    anims: Vec<(String, animation::Animation)>,
+    /// name, those its skeletons have, and the skeleton each plays on.
+    anims: Vec<(String, animation::Animation, usize)>,
+    /// From when (ms) the body plays on another skeleton, and which.
+    switches: Vec<(i32, usize)>,
+    /// When a switch of skeleton stops each change of the legs' and the torso's
+    /// animation ([`Timeline`]'s), if one does.
+    stopped: Stopped,
     /// Bones "model_root", "lower_lumbar" and "Motion", if the skeleton has them.
     bones: [Option<usize>; 3],
     /// The models bolted to it and the body's surfaces they are bolted to.
@@ -699,41 +748,61 @@ pub struct Rig {
 
 impl Rig {
     /// `model` standing in `pose` and running its script, its animations from its
-    /// animation file.
-    fn new(vfs: &Vfs, model: &Arc<Ghoul2Model>, pose: &Pose) -> Self {
+    /// animation file and, for a humanoid, `cinematic`'s, which replace those of the
+    /// same name (`G_ParseAnimFileSet`). A cinematic skeleton whose bones are not
+    /// the body's is left out.
+    fn new(
+        vfs: &Vfs,
+        model: &Arc<Ghoul2Model>,
+        pose: &Pose,
+        cinematic: Option<&Cinematic>,
+    ) -> Self {
         let gla = &model.gla;
+        let cinematic = cinematic.filter(|c| {
+            model
+                .glm
+                .anim_name
+                .eq_ignore_ascii_case(animation::HUMANOID)
+                && c.gla.bones.len() == gla.bones.len()
+        });
         let text = animation::config_file(vfs, &model.glm.anim_name)
             .and_then(|file| vfs.read(&file).ok())
             .map(|text| String::from_utf8_lossy(&text).into_owned())
             .unwrap_or_default();
-        let find = |name: &str| {
-            animation::find(&text, name).filter(|a| a.first + a.count <= gla.frame_count)
+        let find_in = |text: &str, gla: &Gla, name: &str| {
+            animation::find(text, name).filter(|a| a.first + a.count <= gla.frame_count)
         };
         // Each animation once: finding one reads the whole file.
         let found = std::cell::RefCell::new(HashMap::new());
-        let holds = |name: &str| {
+        let find = |name: &str| {
             *found
                 .borrow_mut()
                 .entry(name.to_owned())
                 .or_insert_with(|| {
-                    find(name).map(|a| {
-                        let lerp = a.frame_lerp.abs();
-                        ((a.count as i32 - 1) * lerp, a.count as i32 * lerp)
-                    })
+                    let cine =
+                        cinematic.and_then(|c| find_in(&c.text, &c.gla, name).map(|a| (a, 1)));
+                    cine.or_else(|| find_in(&text, gla, name).map(|a| (a, 0)))
                 })
         };
+        let holds = |name: &str| {
+            find(name).map(|(a, _): (animation::Animation, usize)| {
+                let lerp = a.frame_lerp.abs();
+                ((a.count as i32 - 1) * lerp, a.count as i32 * lerp)
+            })
+        };
         let timeline = script::timeline(pose, pose.script.as_deref().map(Vec::as_slice), &holds);
-        let mut anims: Vec<(String, animation::Animation)> = Vec::new();
+        let mut anims: Vec<(String, animation::Animation, usize)> = Vec::new();
         let changes = timeline.legs.iter().chain(&timeline.torso);
         let names =
             changes.flat_map(|c| [Some(c.anim.as_str()), c.from.as_ref().map(|f| f.0.as_str())]);
         for name in names.flatten().chain([animation::STAND]) {
-            if !anims.iter().any(|(n, _)| n == name)
-                && let Some(a) = find(name)
+            if !anims.iter().any(|(n, ..)| n == name)
+                && let Some((a, skeleton)) = find(name)
             {
-                anims.push((name.to_owned(), a));
+                anims.push((name.to_owned(), a, skeleton));
             }
         }
+        let (switches, stopped) = switches(&timeline, |name| find(name).map(|(_, s)| s));
         let eyes = model.glm.find_surface("*head_eyes");
         let eye_chain = eyes.map_or_else(Vec::new, |s| {
             let tag = model.glm.lods[0][s].verts.iter().take(3);
@@ -742,8 +811,11 @@ impl Rig {
         });
         Self {
             body: model.clone(),
+            cinematic: cinematic.map(|c| c.gla.clone()),
             timeline,
             anims,
+            switches,
+            stopped,
             bones: ["model_root", "lower_lumbar", "Motion"].map(|b| gla.find_bone(b)),
             attached: Vec::new(),
             head: Head::find(gla),
@@ -760,47 +832,79 @@ impl Rig {
         self.look[..after].last().and_then(|(_, target)| *target)
     }
 
+    /// The skeleton the body plays on at game time `time` (ms): its own, or the
+    /// cinematic one from when it plays a cinematic animation.
+    fn skeleton(&self, time: i32) -> usize {
+        let after = self.switches.partition_point(|(start, _)| *start <= time);
+        after.checked_sub(1).map_or(0, |i| self.switches[i].1)
+    }
+
+    /// The skeleton the body's bones are posed by at game time `time` (ms).
+    fn gla(&self, time: i32) -> &Gla {
+        match (self.skeleton(time), &self.cinematic) {
+            (1, Some(cinematic)) => cinematic,
+            _ => &self.body.gla,
+        }
+    }
+
     /// Each bone's frame at game time `time` (ms), each part at the frame its
     /// animation has reached ([`Timeline::at`], `G2_TimingModel`). A part whose
-    /// animation the skeleton lacks (or a skeleton with no animation file) plays
+    /// animation the skeletons lack (or a skeleton with no animation file) plays
     /// `BOTH_STAND1` instead, as `NPC_Begin` started it, or stays at frame 0 without
     /// that too (`PM_SetAnimFinal` sets nothing then); so does a part whose bone the
-    /// skeleton lacks.
+    /// skeleton lacks. A part whose animation a switch of skeleton stopped, or that
+    /// plays on the other skeleton, plays its parent bone's frames.
     ///
     /// For [`script::BLEND_MS`] after a part's animation changes, it blends from where
     /// the one before had reached ([`Timeline::blending_at`],
     /// [`animation::Animation::blend_from`]); not into an animation played
-    /// backwards (`PM_SetAnimFinal`), nor into one the skeleton lacks (nothing
-    /// changes then).
+    /// backwards (`PM_SetAnimFinal`), nor into one the skeletons lack (nothing
+    /// changes then), nor from one a switch of skeleton stopped.
     fn body_frames(&self, time: i32) -> Vec<gla::Blend> {
-        let gla = &self.body.gla;
-        let find = |name: &str| self.anims.iter().find(|(n, _)| n == name).map(|(_, a)| *a);
+        let skeleton = self.skeleton(time);
+        let find = |name: &str| {
+            let found = self.anims.iter().find(|(n, ..)| n == name);
+            found.map(|(_, a, s)| (*a, *s))
+        };
         let stand = find(animation::STAND);
         let frame = |(frame, next, lerp)| gla::Frame { frame, next, lerp };
         let mut anims = Vec::new();
         for (bone, part) in self.bones.into_iter().zip([0, 1, 1]) {
-            let change = self.timeline.at(part, time);
-            let (Some(bone), Some(anim)) = (bone, find(&change.anim).or(stand)) else {
+            let changes = if part == 0 {
+                &self.timeline.legs
+            } else {
+                &self.timeline.torso
+            };
+            let i = changes
+                .partition_point(|c| c.start <= time)
+                .saturating_sub(1);
+            let (change, stopped) = (&changes[i], &self.stopped[part]);
+            let (Some(bone), Some((anim, on))) = (bone, find(&change.anim).or(stand)) else {
                 continue;
             };
+            if on != skeleton || stopped[i].is_some_and(|s| s <= time) {
+                continue;
+            }
             let mut blend = gla::Blend::from(frame(anim.frame_at(time - change.start)));
             if let Some((old, old_start, weight)) = self.timeline.blending_at(part, time) {
-                let blends =
-                    old != change.anim && find(&change.anim).is_some_and(|a| a.frame_lerp >= 0);
-                if let (true, Some(from)) = (blends, find(old).or(stand)) {
+                let blends = old != change.anim
+                    && find(&change.anim).is_some_and(|(a, _)| a.frame_lerp >= 0)
+                    && i.checked_sub(1)
+                        .is_none_or(|j| stopped[j].is_none_or(|s| s > change.start));
+                if let (true, Some((from, _))) = (blends, find(old).or(stand)) {
                     blend.from = frame(from.blend_from(change.start - old_start));
                     blend.weight = weight;
                 }
             }
             anims.push((bone, blend));
         }
-        gla.frames(&anims)
+        self.body.gla.frames(&anims)
     }
 
     /// The body's pose at game time `time` ([`Rig::body_frames`]), its bones turned
     /// by `overrides`.
     fn body_pose(&self, time: i32, overrides: &[(usize, Mat34)]) -> Vec<Mat34> {
-        let gla = &self.body.gla;
+        let gla = self.gla(time);
         gla.pose_overridden(&gla::ROOT, &self.body_frames(time), overrides)
     }
 
@@ -838,6 +942,44 @@ impl Rig {
             .collect();
         std::iter::once(body).chain(attached).collect()
     }
+}
+
+/// When a switch of skeleton stops each of a timeline's changes, per part.
+type Stopped = [Vec<Option<i32>>; 2];
+
+/// When the body switches skeletons as `timeline` plays, `skeleton` giving the one
+/// each animation plays on (`None` for one the skeletons lack, which sets nothing):
+/// from when (ms) it plays on which, and when a switch stops each of the timeline's
+/// changes, if one does (per part, legs first, as [`Rig::stopped`]).
+///
+/// `PM_SetAnimFinal` sets the animation's skeleton before the animation
+/// (`G2API_SetAnimIndex`), and setting another skeleton stops every bone's animation;
+/// a change on both parts sets the torso first. The body starts on its own skeleton.
+fn switches(
+    timeline: &Timeline,
+    skeleton: impl Fn(&str) -> Option<usize>,
+) -> (Vec<(i32, usize)>, Stopped) {
+    let parts = [&timeline.legs, &timeline.torso];
+    let mut order: Vec<(usize, usize)> = (0..2)
+        .flat_map(|part| (0..parts[part].len()).map(move |i| (part, i)))
+        .collect();
+    order.sort_by_key(|&(part, i)| (parts[part][i].start, part == 0));
+    let mut stopped = parts.map(|changes| vec![None; changes.len()]);
+    let (mut switches, mut on, mut playing) = (Vec::new(), 0, Vec::<(usize, usize)>::new());
+    for (part, i) in order {
+        let change = &parts[part][i];
+        if let Some(s) = skeleton(&change.anim)
+            && s != on
+        {
+            for (p, j) in playing.drain(..) {
+                stopped[p][j] = Some(change.start);
+            }
+            switches.push((change.start, s));
+            on = s;
+        }
+        playing.push((part, i));
+    }
+    (switches, stopped)
 }
 
 /// A bolted model's pose: frame 0 of its skeleton, from its bolt's matrix `root`.
@@ -1090,6 +1232,73 @@ mod tests {
         assert_eq!(sp_fog_num(&fogs, [0.0; 3], 10.0, 0), 1);
         // Out of every fog.
         assert_eq!(sp_fog_num(&fogs, [100.0; 3], 10.0, 0), 0);
+    }
+
+    fn changes(list: &[(&str, i32)]) -> Vec<script::Change> {
+        list.iter()
+            .map(|&(anim, start)| script::Change {
+                start,
+                anim: anim.to_owned(),
+                from: None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn playing_on_another_skeleton_stops_every_part() {
+        let skeleton = |anim: &str| match anim {
+            "BOTH_CIN_2" | "BOTH_CIN_4" => Some(1),
+            "MISSING" => None,
+            _ => Some(0),
+        };
+        // Both parts into a cinematic animation and back: the switch to it stops
+        // both standings, the one back both cinematic animations.
+        let timeline = Timeline {
+            legs: changes(&[
+                ("BOTH_STAND1", 0),
+                ("BOTH_CIN_2", 1550),
+                ("BOTH_STAND1", 9000),
+            ]),
+            torso: changes(&[
+                ("BOTH_STAND1", 0),
+                ("BOTH_CIN_2", 1550),
+                ("BOTH_STAND1", 9000),
+            ]),
+            look: Vec::new(),
+        };
+        let (at, stopped) = switches(&timeline, skeleton);
+        assert_eq!(at, [(1550, 1), (9000, 0)]);
+        let both = vec![Some(1550), Some(9000), None];
+        assert_eq!(stopped, [both.clone(), both]);
+        // The torso alone: the legs' standing stops too; a cinematic animation
+        // after another on the same skeleton switches nothing, nor does one the
+        // skeletons lack.
+        let timeline = Timeline {
+            legs: changes(&[("BOTH_STAND1", 0)]),
+            torso: changes(&[
+                ("BOTH_STAND1", 0),
+                ("BOTH_CIN_2", 1550),
+                ("BOTH_CIN_4", 3000),
+                ("MISSING", 4000),
+            ]),
+            look: Vec::new(),
+        };
+        let (at, stopped) = switches(&timeline, skeleton);
+        assert_eq!(at, [(1550, 1)]);
+        assert_eq!(
+            stopped,
+            [vec![Some(1550)], vec![Some(1550), None, None, None]]
+        );
+        // On both parts at once, the torso is set first: the legs' change of
+        // skeleton stops the torso's.
+        let timeline = Timeline {
+            legs: changes(&[("BOTH_CIN_2", 0)]),
+            torso: changes(&[("BOTH_STAND1", 0)]),
+            look: Vec::new(),
+        };
+        let (at, stopped) = switches(&timeline, skeleton);
+        assert_eq!(at, [(0, 1)]);
+        assert_eq!(stopped, [vec![None], vec![Some(0)]]);
     }
 
     #[test]

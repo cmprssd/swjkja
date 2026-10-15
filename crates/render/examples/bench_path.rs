@@ -106,7 +106,7 @@ fn main() {
         &shaders,
         &bsp,
         &world,
-        swjkja_world::static_model::Rules::for_map(&format!("maps/{map}.bsp")),
+        &format!("maps/{map}.bsp"),
         0.0,
     )
     .unwrap();

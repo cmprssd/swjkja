@@ -165,3 +165,39 @@ fn every_player_model_skin_loads_and_its_skeleton_stands() {
     // beside them.
     assert_eq!((meshes.len(), skins), (77, 305));
 }
+
+#[test]
+fn every_cinematic_skeleton_has_the_humanoids_bones() {
+    let Some(vfs) = retail() else { return };
+    let load = |name: &str| Gla::parse(&vfs.read(&format!("{name}.gla")).unwrap()).unwrap();
+    let humanoid = load(animation::HUMANOID);
+    let mut maps: Vec<&str> = vfs
+        .files()
+        .filter(|f| f.ends_with(".bsp") && !f.starts_with("maps/mp/"))
+        .collect();
+    maps.sort_unstable();
+    let mut found = Vec::new();
+    for map in maps {
+        let name = animation::cinematic_skeleton(map);
+        if !vfs.contains(&format!("{name}.gla")) {
+            continue;
+        }
+        let gla = load(&name);
+        // The meshes index the bones of whichever skeleton plays: the same bones,
+        // in the same order, under the same parents, at the same base pose.
+        assert_eq!(gla.bones, humanoid.bones, "{name}");
+        let file = animation::config_file(&vfs, &name).unwrap();
+        let text = String::from_utf8(vfs.read(&file).unwrap()).unwrap();
+        for line in text.lines() {
+            let Some(anim) = line.split_ascii_whitespace().next() else {
+                continue;
+            };
+            if let Some(a) = animation::find(&text, anim) {
+                assert!(a.first + a.count <= gla.frame_count, "{file}: {anim}");
+            }
+        }
+        found.push(map.trim_start_matches("maps/").trim_end_matches(".bsp"));
+    }
+    // Counted from the scan.
+    assert_eq!(found.len(), 32, "{found:?}");
+}

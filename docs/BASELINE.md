@@ -381,6 +381,35 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Single-player NPCs on their maps' cinematic skeletons, 2026-10-16
+
+NPCs playing a map's cinematic animations (`BOTH_CIN_*`) now play them on the
+map's cinematic skeleton (`models/players/_humanoid_<map>/`), as the original
+does: academy2's six students stand in their cinematic stances, as do academy1's
+teachers and academy4's and academy6's students. Two new views of the same
+classroom (`bench/reference/script-views.txt`, captured with `SCRIPTS=1`):
+
+| View | Mean difference | Before | Pixels off by > 16 | Before |
+|------|------|------|------|------|
+| academy1_class | 0.95 | 0.99 | 1.6% | 1.7% |
+| academy2_class | 2.68 | 4.06 | 5.9% | 7.6% |
+| academy4_class | 3.95 | 5.09 | 7.9% | 9.1% |
+| academy6_class | 4.89 | 6.78 | 10.0% | 12.2% |
+
+- The poses now match the captures; most of what is left is the students' random
+  Jedi looks (heads, skins and tints the original picks per NPC, not done here).
+- academy2: given the original's eye point for Luke, the four students in
+  cinematic stances whose scripts wait no random time and who look at Luke are
+  within 0.02 degrees of the logged looks (a retail test checks 0.05).
+- Every retail cinematic skeleton has `_humanoid.gla`'s bones, parents and base
+  poses, and its animations fit its frames (a retail test).
+
+The 39 other reference views render pixel for pixel as on main. `bench_world`
+(three runs of 600 frames) on the NPC views is within main's spread (academy2
+6.72-7.59 ms, main 7.02-8.14; academy6 7.03-7.31, main 7.22-8.03); loading
+(`load_profile`, three runs, twice) academy2 and academy6 within main's spread,
+kor2 about 45 ms more (its cinematic skeleton is 10 MB).
+
 ## Single-player NPCs looking at their look targets, 2026-10-16
 
 The academies' students look at Luke (their spawnscripts' `SET_LOOK_TARGET`): their
