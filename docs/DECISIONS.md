@@ -607,3 +607,14 @@ equals the same frame rendered alone (it fails if the frames share one slot).
 - **Cost**: bench_world on the five views within main's spread (three runs of 600
   frames each); t3_hevil draws 465 materials instead of 383 (each fan's surfaces
   are drawn per entity).
+
+## 2026-10-15: What a standing NPC does next: its spawnscript first (chosen by the owner)
+
+- **First slice: the state spawnscripts set**, not AI movement. 104 of the 245 NPCs
+  the retail maps spawn at load run a spawnscript (compiled ICARUS, `.ibi`); most only
+  set state: animations and how long they hold, the weapon, visibility. AI movement
+  (looking around, wandering, patrols, navgoals) comes later.
+- **The ICARUS reader reads every retail script** (all 1,011 `.ibi` files, pinned by a
+  retail test), as milestone 1 read every asset; only what spawned NPCs reach runs.
+- **Look targets (`SET_LOOK_TARGET`, heads turned toward Luke) are a follow-up PR.**
+- **New reference captures were approved** (game windows on the owner's PC).
