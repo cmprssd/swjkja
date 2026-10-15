@@ -493,13 +493,12 @@ fn academy1_students_look_at_luke_as_the_original() {
     assert!((0..models.instances.len()).all(|n| models.look(n, 1549).is_none()));
 }
 
-/// academy2's students who stand in the map's cinematic animations (`BOTH_CIN_*`, on
-/// its cinematic skeleton) look at Luke as the original's capture log has them,
-/// given its point for Luke's eyes (Luke plays an animation another script sets
-/// here, which is not run). Left out: those whose scripts wait a random time and
-/// those that look at another student (set by another script too).
+/// academy2's students look at Luke as the original's capture log has them, those
+/// in the map's cinematic stances (`BOTH_CIN_*`, on its cinematic skeleton) too.
+/// Left out: those whose scripts wait a random time and the one whose look target
+/// the intro sets (`affect`, not run here).
 #[test]
-fn academy2_students_in_cinematic_stances_look_as_the_original() {
+fn academy2_students_look_at_luke_as_the_original() {
     let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
         eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
         return;
@@ -508,13 +507,25 @@ fn academy2_students_in_cinematic_stances_look_as_the_original() {
     let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/academy2.bsp").unwrap()).unwrap();
     let time = 12345;
     let models = StaticModels::load(&vfs, &bsp, &[], "maps/academy2.bsp", time);
-    let luke_eyes = [-1426.03, -1304.95, 756.76];
+    let luke = models
+        .instances
+        .iter()
+        .position(|m| m.origin[0] == -1408.0 && m.origin[1] == -1304.0)
+        .unwrap();
     // Where each student spawned, and its logged look (pitch, yaw).
     let logged = [
-        ([-1402.0, -992.0], [-4.960, -2.214]),
-        ([-1516.0, -960.0], [-4.779, -13.068]),
-        ([-1268.0, -982.0], [-5.142, 11.673]),
-        ([-1364.0, -1000.0], [-5.510, -0.099]),
+        ([-1402.0, -992.0], [-7.004, -0.483]),
+        ([-1516.0, -960.0], [-6.537, -11.508]),
+        ([-1482.0, -928.0], [-5.284, -6.317]),
+        ([-1336.0, -924.0], [-6.356, 2.807]),
+        ([-1382.0, -912.0], [-5.169, -1.840]),
+        ([-1268.0, -982.0], [-7.103, 12.887]),
+        ([-1530.0, -996.0], [-6.103, -4.010]),
+        ([-1308.0, -994.0], [-6.356, 13.535]),
+        ([-1348.0, -960.0], [-10.245, 1.950]),
+        ([-1428.0, -954.0], [-10.212, 1.593]),
+        ([-1438.0, -1008.0], [-6.790, -1.983]),
+        ([-1364.0, -1000.0], [-7.679, 1.538]),
     ];
     for (at, want) in logged {
         let n = models
@@ -522,7 +533,8 @@ fn academy2_students_in_cinematic_stances_look_as_the_original() {
             .iter()
             .position(|m| m.origin[0] == at[0] && m.origin[1] == at[1])
             .unwrap();
-        let look = models.look_toward(n, time, luke_eyes).unwrap();
+        let (target, look) = models.look(n, time).unwrap();
+        assert_eq!(target, luke);
         assert!(
             (look[0] - want[0]).abs() < 0.05 && (look[1] - want[1]).abs() < 0.05,
             "{at:?}: {look:?}, logged {want:?}"

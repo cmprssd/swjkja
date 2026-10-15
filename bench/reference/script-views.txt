@@ -8,7 +8,10 @@
 # academy6_class at the same classroom, whose students run academy2's scripts on
 # their own maps' cinematic skeletons. yavin1's capture
 # never reaches the view (its intro), and t1_fatal's corpses die (SET_HEALTH 0).
+# A tenth column is how far behind the eye the capture's player stands (128 if
+# none): 128 behind the classroom views at y -1200 lands on Luke, whom setviewpos
+# then kills.
 academy1  academy1_class   -1400 -1260 790   15 90 0   12345
-academy2  academy2_class   -1400 -1200 780   15 90 0   12345
-academy4  academy4_class   -1400 -1200 780   15 90 0   12345
-academy6  academy6_class   -1400 -1200 780   15 90 0   12345
+academy2  academy2_class   -1400 -1200 780   15 90 0   12345   64
+academy4  academy4_class   -1400 -1200 780   15 90 0   12345   64
+academy6  academy6_class   -1400 -1200 780   15 90 0   12345   64

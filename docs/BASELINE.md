@@ -381,6 +381,21 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Captures that no longer kill Luke, 2026-10-16
+
+The capture script stands the player 128 units behind each view's eye, and
+`setviewpos` kills whatever the player's box lands on (`G_KillBox`): on the
+classroom views at y -1200 (academy2, 4 and 6) that was Luke, who then played a
+death animation from about 11.8 s, and the students' logged looks followed his
+falling eyes. Those views now stand the player 64 units behind (a views file's
+optional tenth column), and were captured again: Luke stands, his eyes where ours
+are (within 0.01 units on academy2), and 12 of academy2's students look as logged
+within 0.03 degrees (a retail test checks 0.05; left out: the two whose scripts
+wait a random time and the one whose look target the intro sets). Mean difference
+academy2_class 2.70, academy4_class 4.10, academy6_class 4.71: the original picks
+its random Jedi looks anew each run, so these views move by a few hundredths to
+tenths between captures.
+
 ## Single-player NPCs on their maps' cinematic skeletons, 2026-10-16
 
 NPCs playing a map's cinematic animations (`BOTH_CIN_*`) now play them on the
