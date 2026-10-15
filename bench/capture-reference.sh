@@ -48,14 +48,17 @@ for map in $maps; do
 		# renderer draws only the areas the player's snapshot marks visible and
 		# single player never clears the screen, so the player is moved to each
 		# view (noclip, setviewpos) or other views' stale pixels stay on screen. The
-		# player stands 128 units behind the eye: holding a saber, single player
-		# draws the player's body in third person, around the eye.
+		# player stands 128 units behind the eye (or a view's tenth column): holding
+		# a saber, single player draws the player's body in third person, around
+		# the eye. setviewpos kills whatever the player's box lands on (G_KillBox),
+		# so a view with an NPC there moves the player closer.
 		if [ "$sp" = 1 ]; then echo "exitview"; echo "wait 300"; echo "noclip"; fi
 		# No console notify lines (the patched cgame logs NPC timing to the console).
 		echo "set cg_draw2D 0; set r_drawentities $entities; set cg_drawGun 0; set con_notifytime 0"
 		echo "wait 300"
 		grep -v '^#' "$views" | awk -v m="$map" -v sp="$sp" '$1 == m {
-			if (sp) printf "setviewpos %.0f %.0f %s %s\nwait 100\n", $3 - 128 * cos($7 * 3.14159265 / 180), $4 - 128 * sin($7 * 3.14159265 / 180), $5, $7
+			back = NF >= 10 ? $10 : 128
+			if (sp) printf "setviewpos %.0f %.0f %s %s\nwait 100\n", $3 - back * cos($7 * 3.14159265 / 180), $4 - back * sin($7 * 3.14159265 / 180), $5, $7
 			printf "set cg_swjkjaView \"%s %s %s %s %s %s\"\nset cg_swjkjaTime %s\nwait 200\nscreenshot_png %s\nwait 100\n", $3, $4, $5, $6, $7, $8, $9, $2
 		}'
 		echo "quit"
