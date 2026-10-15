@@ -1486,6 +1486,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "swjkja-icarus"
+version = "0.0.0"
+dependencies = [
+ "swjkja-fs",
+]
+
+[[package]]
 name = "swjkja-image"
 version = "0.0.0"
 dependencies = [
