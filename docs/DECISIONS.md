@@ -654,3 +654,16 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   time), and `SCRIPTS=1 bench/capture-reference.sh` stops the game at the view's
   time. yavin1's capture never reaches the forced view (its intro, as kor1's), so its
   talking students are not compared.
+
+## 2026-10-15: What NPCs look at: the settled look, head bones only (chosen by the owner)
+
+- **The settled look, not the turn toward it.** cgame turns an NPC's head toward its
+  look target a part of the way each rendered frame (15% scaled by the frame's
+  interpolation), measuring from its eyes as last drawn, so the look settles where
+  the angles from the turned eyes equal the look (about half the way to the target).
+  That settled look is drawn from the moment the script sets the target, the same
+  at any frame rate; the original takes about a second to get there.
+- **Look targets only.** The thoracic, cervical and cranium bones turn
+  (`CG_G2ClientNeckAngles`); the spine's motion-bone correction (`cg_motionBoneComp`
+  2, which turns the lumbar bones of NPCs whose legs and torso play different
+  animations) is left for later, reusing the same bone overrides.

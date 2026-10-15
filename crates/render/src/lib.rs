@@ -6,6 +6,7 @@ pub mod deform;
 pub mod fog;
 pub mod frames;
 pub mod gpu;
+pub mod look;
 pub mod models;
 pub mod parallel;
 pub mod path;

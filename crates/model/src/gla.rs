@@ -1,7 +1,8 @@
 //! Ghoul2 skeletons and their animation frames, format "2LGA" version 6 (OpenJK
 //! `mdx_format.h`), read the way `rd-vanilla/tr_ghoul2.cpp` reads them
-//! (`R_LoadMDXA`), and the pose of one frame (`G2_TransformBone` with nothing
-//! overriding a bone) from the root every model hangs from ([`ROOT`]).
+//! (`R_LoadMDXA`), and the pose of one frame (`G2_TransformBone`) from the root
+//! every model hangs from ([`ROOT`]), with bones turned by angle overrides
+//! (`BONE_ANGLES_POSTMULT`) or none.
 //!
 //! [`Gla::parse`] checks every offset and index in the file, so code that uses a
 //! parsed skeleton can index without further checks.
@@ -274,6 +275,15 @@ impl Gla {
         self.pose_frames(&ROOT, &vec![frame; self.bones.len()])
     }
 
+    /// `G2_Generate_Matrix` for `BONE_ANGLES_POSTMULT`: the override that turns bone
+    /// `bone` by `rotation` (its columns the turned axes, as `Create_Matrix` builds
+    /// it) about the bone's base pose: the base pose after the rotation after the
+    /// base pose's inverse.
+    pub fn angles_override(&self, bone: usize, rotation: &Mat34) -> Mat34 {
+        let b = &self.bones[bone];
+        multiply(&b.base_pose, &multiply(rotation, &b.base_pose_inv))
+    }
+
     /// The bone named `name`, ignoring case (`G2API_GetBoneIndex`).
     pub fn find_bone(&self, name: &str) -> Option<usize> {
         self.bones
@@ -335,6 +345,18 @@ impl Gla {
     /// bone, each below `frame_count`, a [`Frame`] or a [`Blend`]), the root bone's parent `root`
     /// (`G2_TransformGhoulBones`; an attached model's root is its bolt).
     pub fn pose_frames<F: Copy + Into<Blend>>(&self, root: &Mat34, frames: &[F]) -> Vec<Mat34> {
+        self.pose_overridden(root, frames, &[])
+    }
+
+    /// [`Gla::pose_frames`] with the bones of `overrides` (bone, override; from
+    /// [`Gla::angles_override`]) turned: each such bone's transform after its
+    /// override (`BONE_ANGLES_POSTMULT`), which the bones below it inherit.
+    pub fn pose_overridden<F: Copy + Into<Blend>>(
+        &self,
+        root: &Mat34,
+        frames: &[F],
+        overrides: &[(usize, Mat34)],
+    ) -> Vec<Mat34> {
         let mut pose: Vec<Option<Mat34>> = vec![None; self.bones.len()];
         for b in 0..self.bones.len() {
             // Pose the unposed chain above this bone, from the top down.
@@ -350,7 +372,11 @@ impl Gla {
                     continue;
                 }
                 let parent = self.bones[c].parent.map_or(*root, |p| pose[p].unwrap());
-                pose[c] = Some(multiply(&parent, &self.local_blended(frames[c].into(), c)));
+                let mut m = multiply(&parent, &self.local_blended(frames[c].into(), c));
+                if let Some((_, o)) = overrides.iter().find(|(b, _)| *b == c) {
+                    m = multiply(&m, o);
+                }
+                pose[c] = Some(m);
             }
         }
         pose.into_iter().map(Option::unwrap).collect()

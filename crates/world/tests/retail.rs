@@ -219,6 +219,67 @@ fn single_player_npcs_find_their_looks() {
     assert_eq!(scripted, 95);
 }
 
+#[test]
+fn single_player_look_targets_name_npcs() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let mut maps: Vec<&str> = vfs
+        .files()
+        .filter(|f| f.ends_with(".bsp") && !f.starts_with("maps/mp/"))
+        .collect();
+    maps.sort_unstable();
+    for name in &maps {
+        let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
+        let spawns = npc::npc_spawns(&bsp.entities, Rules::for_map(name));
+        for n in &spawns {
+            let Some(nodes) = n
+                .spawnscript
+                .as_deref()
+                .and_then(script::script_path)
+                .and_then(|path| vfs.read(&path).ok())
+                .map(|bytes| swjkja_icarus::parse(&bytes).unwrap())
+            else {
+                continue;
+            };
+            let mut targets = Vec::new();
+            sets(&nodes, &mut |set, value| {
+                if set == "SET_LOOK_TARGET" {
+                    targets.push(value.to_owned());
+                }
+            });
+            for t in targets {
+                let keyed = |key: &str| {
+                    bsp.entities
+                        .iter()
+                        .filter(|e| e.get(key).is_some_and(|v| v.eq_ignore_ascii_case(&t)))
+                        .map(|e| e.get("classname").unwrap_or("").to_owned())
+                        .collect::<Vec<_>>()
+                };
+                let npcs = spawns
+                    .iter()
+                    .filter(|s| {
+                        s.targetname
+                            .as_deref()
+                            .is_some_and(|v| v.eq_ignore_ascii_case(&t))
+                    })
+                    .count();
+                eprintln!(
+                    "{name}: {} ({}, {:?}) looks at {t:?}: targetname {:?}, script_targetname {:?}, NPC_targetname {:?}, spawned NPCs {npcs}",
+                    n.npc_type,
+                    n.spawnscript.as_deref().unwrap_or(""),
+                    n.targetname,
+                    keyed("targetname"),
+                    keyed("script_targetname"),
+                    keyed("NPC_targetname"),
+                );
+            }
+        }
+    }
+}
+
 /// Calls `f` with each `set` command's name and text value in `nodes`, depth first.
 fn sets(nodes: &[swjkja_icarus::Node], f: &mut dyn FnMut(&str, &str)) {
     for n in nodes {

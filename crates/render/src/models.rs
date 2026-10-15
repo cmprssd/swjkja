@@ -32,7 +32,8 @@
 //! sees (`R_SetupEntityLighting` turns the light into the model's scaled axes). An
 //! NPC's pose changes as time passes: its [`Rig`] gives its bones at a time, in
 //! world space, for the renderer to skin its surfaces by
-//! ([`StaticModels::bones`]).
+//! ([`StaticModels::bones`]), its head turned toward what it looks at
+//! ([`crate::look`]).
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -53,6 +54,7 @@ use swjkja_world::static_model::{Pose, Rules, StaticModel};
 
 use crate::camera::Camera;
 use crate::fog::FogVolume;
+use crate::look::{self, Head};
 use crate::vis::{EntityLink, Frustum, WorldVis};
 
 pub type Vec3 = [f32; 3];
@@ -321,7 +323,7 @@ impl StaticModels {
                     };
                     let rig = g.pose.as_ref().map(|pose| Rig::new(vfs, m, pose));
                     let pose = match &rig {
-                        Some(rig) => rig.body_pose(time),
+                        Some(rig) => rig.body_pose(time, &[]),
                         None => m.gla.pose(0),
                     };
                     let body = Part::new(m, pose, skin(&g.skin), &g.switches);
@@ -418,6 +420,7 @@ impl StaticModels {
                 rig: None,
             });
         }
+        resolve_looks(&mut instances);
         let distance_cull = bsp
             .entities
             .first()
@@ -451,17 +454,49 @@ impl StaticModels {
         let Some(rig) = &m.rig else {
             return Vec::new();
         };
-        let poses = rig.poses(time);
-        let place = |b: &Mat34| -> Mat34 {
-            std::array::from_fn(|i| {
-                let t = [0, 1, 2].map(|k| m.axes[k][i]);
-                let mut r: [f32; 4] =
-                    std::array::from_fn(|j| t[0] * b[0][j] + t[1] * b[1][j] + t[2] * b[2][j]);
-                r[3] += m.origin[i];
-                r
-            })
+        let poses = rig.poses(time, &self.look_overrides(n, time));
+        poses.iter().flatten().map(|b| place(m, b)).collect()
+    }
+
+    /// Where instance `n`'s eyes are with its body posed by `body`, and the angles
+    /// they face (`renderInfo.eyePoint`, `eyeAngles`): its "*head_eyes" tag, or its
+    /// origin and angles without one.
+    fn eyes(&self, n: usize, body: &[Mat34]) -> (Vec3, Vec3) {
+        let m = &self.instances[n];
+        let tag = m.rig.as_ref().and_then(|rig| {
+            let eyes = rig.eyes?;
+            glm::bolt(&rig.body.glm, eyes, body)
+        });
+        match tag {
+            Some(tag) => {
+                let tag = place(m, &tag);
+                ([0, 1, 2].map(|r| tag[r][3]), look::eye_angles(&tag))
+            }
+            None => (m.origin, look::vectoangles(m.axes[0])),
+        }
+    }
+
+    /// The overrides that turn instance `n`'s head toward what it looks at at
+    /// `time` (none when it looks at nothing): the settled look ([`look::settle`])
+    /// toward its target's eyes as the target stands (its own look left out).
+    fn look_overrides(&self, n: usize, time: i32) -> Vec<(usize, Mat34)> {
+        let Some(rig) = &self.instances[n].rig else {
+            return Vec::new();
         };
-        poses.iter().flatten().map(place).collect()
+        let (Some(head), Some(target)) = (rig.head, rig.looking_at(time)) else {
+            return Vec::new();
+        };
+        let goal = match &self.instances[target].rig {
+            Some(t) => self.eyes(target, &t.body_pose(time, &[])).0,
+            None => self.instances[target].origin,
+        };
+        let gla = &rig.body.gla;
+        let frames = rig.body_frames(time);
+        let settled = look::settle(goal, |l| {
+            let body = gla.pose_overridden(&gla::ROOT, &frames, &head.overrides(gla, l));
+            self.eyes(n, &body)
+        });
+        head.overrides(gla, settled).to_vec()
     }
 
     /// The surface posed piece `k` draws, and where its part's bones start in its
@@ -641,6 +676,14 @@ pub struct Rig {
     bones: [Option<usize>; 3],
     /// The models bolted to it and the body's surfaces they are bolted to.
     attached: Vec<(Arc<Ghoul2Model>, usize)>,
+    /// The bones its look turns, if its skeleton has them.
+    head: Option<Head>,
+    /// Its eyes' tag ("*head_eyes"), if its mesh has one.
+    eyes: Option<usize>,
+    /// The name scripts find it by.
+    name: Option<String>,
+    /// What it looks at from when (ms): the instance, or `None` for nothing.
+    look: Vec<(i32, Option<usize>)>,
 }
 
 impl Rig {
@@ -686,10 +729,20 @@ impl Rig {
             anims,
             bones: ["model_root", "lower_lumbar", "Motion"].map(|b| gla.find_bone(b)),
             attached: Vec::new(),
+            head: Head::find(gla),
+            eyes: model.glm.find_surface("*head_eyes"),
+            name: pose.name.clone(),
+            look: Vec::new(),
         }
     }
 
-    /// The body's pose at game time `time` (ms), each part at the frame its
+    /// The instance it looks at at `time`, if any.
+    fn looking_at(&self, time: i32) -> Option<usize> {
+        let after = self.look.partition_point(|(start, _)| *start <= time);
+        self.look[..after].last().and_then(|(_, target)| *target)
+    }
+
+    /// Each bone's frame at game time `time` (ms), each part at the frame its
     /// animation has reached ([`Timeline::at`], `G2_TimingModel`). A part whose
     /// animation the skeleton lacks (or a skeleton with no animation file) plays
     /// `BOTH_STAND1` instead, as `NPC_Begin` started it, or stays at frame 0 without
@@ -701,7 +754,7 @@ impl Rig {
     /// [`animation::Animation::blend_from`]); not into an animation played
     /// backwards (`PM_SetAnimFinal`), nor into one the skeleton lacks (nothing
     /// changes then).
-    fn body_pose(&self, time: i32) -> Vec<Mat34> {
+    fn body_frames(&self, time: i32) -> Vec<gla::Blend> {
         let gla = &self.body.gla;
         let find = |name: &str| self.anims.iter().find(|(n, _)| n == name).map(|(_, a)| *a);
         let stand = find(animation::STAND);
@@ -723,7 +776,14 @@ impl Rig {
             }
             anims.push((bone, blend));
         }
-        gla.pose_frames(&gla::ROOT, &gla.frames(&anims))
+        gla.frames(&anims)
+    }
+
+    /// The body's pose at game time `time` ([`Rig::body_frames`]), its bones turned
+    /// by `overrides`.
+    fn body_pose(&self, time: i32, overrides: &[(usize, Mat34)]) -> Vec<Mat34> {
+        let gla = &self.body.gla;
+        gla.pose_overridden(&gla::ROOT, &self.body_frames(time), overrides)
     }
 
     /// How many bones its parts have.
@@ -745,10 +805,10 @@ impl Rig {
         }
     }
 
-    /// Each part's pose at game time `time` (ms): the body's, then each bolted
-    /// model's from where its bolt is.
-    fn poses(&self, time: i32) -> Vec<Vec<Mat34>> {
-        let body = self.body_pose(time);
+    /// Each part's pose at game time `time` (ms): the body's, its bones turned by
+    /// `overrides`, then each bolted model's from where its bolt is.
+    fn poses(&self, time: i32, overrides: &[(usize, Mat34)]) -> Vec<Vec<Mat34>> {
+        let body = self.body_pose(time, overrides);
         let attached: Vec<_> = self
             .attached
             .iter()
@@ -881,6 +941,44 @@ fn ghoul2_instance(
         ghoul2_radius: Some(scaled_radius),
         lods,
         rig: None,
+    }
+}
+
+/// Bone or tag matrix `b` of instance `m`, from its model's space to the world's:
+/// after the instance's axes and origin.
+fn place(m: &Instance, b: &Mat34) -> Mat34 {
+    std::array::from_fn(|i| {
+        let t = [0, 1, 2].map(|k| m.axes[k][i]);
+        let mut r: [f32; 4] =
+            std::array::from_fn(|j| t[0] * b[0][j] + t[1] * b[1][j] + t[2] * b[2][j]);
+        r[3] += m.origin[i];
+        r
+    })
+}
+
+/// Finds what each NPC's look targets name (`Q3_LookTarget`: `G_Find`, ignoring
+/// case): the first NPC of that name. A name that finds none changes nothing, as
+/// the original's, which only logs it.
+fn resolve_looks(instances: &mut [Instance]) {
+    let names: Vec<(usize, String)> = instances
+        .iter()
+        .enumerate()
+        .filter_map(|(i, m)| Some((i, m.rig.as_ref()?.name.clone()?)))
+        .collect();
+    for m in instances.iter_mut() {
+        let Some(rig) = &mut m.rig else { continue };
+        let mut look: Vec<(i32, Option<usize>)> = Vec::new();
+        for (start, name) in &rig.timeline.look {
+            let target = match name {
+                None => None,
+                Some(name) => match names.iter().find(|(_, n)| n.eq_ignore_ascii_case(name)) {
+                    Some(&(i, _)) => Some(i),
+                    None => continue,
+                },
+            };
+            look.push((*start, target));
+        }
+        rig.look = look;
     }
 }
 

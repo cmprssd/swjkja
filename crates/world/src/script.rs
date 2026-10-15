@@ -11,7 +11,7 @@
 //! nothing can change are skipped.
 //!
 //! Only what a script does to the NPC itself is modelled: its animations and their
-//! hold times, the tasks a script waits for (an animation's completes when its timer
+//! hold times, what it looks at (`SET_LOOK_TARGET`), the tasks a script waits for (an animation's completes when its timer
 //! runs out), timed waits, loops, conditions and task groups. Commands that move it
 //! (`SET_NAVGOAL`, ...) never complete, as with the AI frozen; `affect` (another
 //! entity), `run` (no spawnscript of a map-spawned NPC runs another) and the other
@@ -55,14 +55,25 @@ pub struct Change {
     pub from: Option<(String, i32)>,
 }
 
-/// The legs' and the torso's animations over time, from the first frame.
+/// The legs' and the torso's animations over time, from the first frame, and what
+/// the NPC looks at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Timeline {
     pub legs: Vec<Change>,
     pub torso: Vec<Change>,
+    /// Each change of look target (`SET_LOOK_TARGET`): from when (ms, on the
+    /// client's clock, as an animation set in the same frame) and the name of the
+    /// entity it looks at, or `None` once cleared ("none", "NULL").
+    pub look: Vec<(i32, Option<String>)>,
 }
 
 impl Timeline {
+    /// The name of what the NPC looks at at `time`, if anything.
+    pub fn look_at(&self, time: i32) -> Option<&str> {
+        let after = self.look.partition_point(|(start, _)| *start <= time);
+        after.checked_sub(1).and_then(|i| self.look[i].1.as_deref())
+    }
+
     /// What part `part` (0 the legs, 1 the torso) plays at `time`: its last change
     /// started by then (its first before the first frame).
     pub fn at(&self, part: usize, time: i32) -> &Change {
@@ -254,6 +265,7 @@ struct Npc<'a> {
     holds: Holds<'a>,
     parts: [Part; 2],
     changes: [Vec<Change>; 2],
+    look: Vec<(i32, Option<String>)>,
     /// `client->idleTime`.
     idle_time: i32,
     /// The task each animation slot waits on, if any.
@@ -443,6 +455,16 @@ impl<'a> Npc<'a> {
                 self.slots[BOTH] = None;
                 self.slot(slot, task);
                 true
+            }
+            "SET_LOOK_TARGET" => {
+                // Q3_LookTarget: "none" or "NULL" clears it.
+                let cleared =
+                    text.eq_ignore_ascii_case("none") || text.eq_ignore_ascii_case("NULL");
+                let target = (!cleared).then_some(text);
+                if self.look.last().map(|(_, t)| t) != Some(&target) {
+                    self.look.push((Self::client_time(level), target));
+                }
+                false
             }
             _ => never_completes(name),
         }
@@ -651,6 +673,7 @@ pub fn timeline(stance: &Pose, script: Option<&[Node]>, holds: Holds<'_>) -> Tim
         holds,
         parts: [part(), part()],
         changes: [Vec::new(), Vec::new()],
+        look: Vec::new(),
         idle_time: stance.still_since,
         slots: [None; 3],
         groups: all,
@@ -685,6 +708,7 @@ pub fn timeline(stance: &Pose, script: Option<&[Node]>, holds: Holds<'_>) -> Tim
         }
     }
     let [legs, torso] = npc.changes;
+    let look = npc.look;
     let first = |anim: &str| Change {
         start: FIRST_FRAME,
         anim: anim.to_owned(),
@@ -699,6 +723,7 @@ pub fn timeline(stance: &Pose, script: Option<&[Node]>, holds: Holds<'_>) -> Tim
     Timeline {
         legs: start(legs),
         torso: start(torso),
+        look,
     }
 }
 

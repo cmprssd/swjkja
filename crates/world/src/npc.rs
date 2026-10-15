@@ -36,6 +36,8 @@ pub struct NpcSpawn {
     /// The script it runs as it begins ("spawnscript"), unless that names a
     /// behavior state (`G_ActivateBehavior` sets those instead).
     pub spawnscript: Option<String>,
+    /// The name scripts find the NPC by ("NPC_targetname", its `targetname`).
+    pub targetname: Option<String>,
 }
 
 /// The spawn function's choice of type for spawner class `class` (lowercase) with
@@ -272,6 +274,7 @@ pub fn npc_spawns(entities: &[Entity], rules: Rules) -> Vec<NpcSpawn> {
                 .get("spawnscript")
                 .filter(|s| !s.is_empty() && !s.to_ascii_uppercase().starts_with("BS_"))
                 .map(str::to_owned);
+            let targetname = e.get("NPC_targetname").map(str::to_owned);
             Some(NpcSpawn {
                 npc_type,
                 origin,
@@ -279,6 +282,7 @@ pub fn npc_spawns(entities: &[Entity], rules: Rules) -> Vec<NpcSpawn> {
                 message,
                 flags,
                 spawnscript,
+                targetname,
             })
         })
         .collect()
@@ -822,6 +826,7 @@ pub fn npc_gear(
             torso,
             still_since: 0,
             script: None,
+            name: None,
         },
         attached,
     )
@@ -920,6 +925,7 @@ pub fn npc_models(
             let pose = Pose {
                 still_since: if moving { FIRST_FRAME } else { 0 },
                 script,
+                name: n.targetname,
                 ..pose
             };
             let mut origin = at;
