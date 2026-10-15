@@ -1525,6 +1525,7 @@ dependencies = [
  "raw-window-handle",
  "swjkja-bsp",
  "swjkja-fs",
+ "swjkja-icarus",
  "swjkja-image",
  "swjkja-model",
  "swjkja-shader",
@@ -1547,6 +1548,7 @@ version = "0.0.0"
 dependencies = [
  "swjkja-bsp",
  "swjkja-fs",
+ "swjkja-icarus",
  "swjkja-shader",
 ]
 

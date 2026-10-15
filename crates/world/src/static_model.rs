@@ -99,20 +99,20 @@ pub struct Ghoul2 {
     pub attached: Vec<Attached>,
 }
 
-/// The animations (named as in `animation.cfg`) an NPC's legs and torso start
+/// The animations (named as in `animation.cfg`) an NPC's legs and torso stand
 /// in: the legs' on bone "model_root", the torso's on "lower_lumbar" and "Motion"
 /// (`PM_SetAnimFinal`), every other bone playing its parent's. A part whose
-/// animation the skeleton lacks stays in "BOTH_STAND1", as it started.
+/// animation the skeleton lacks stays in "BOTH_STAND1", as it started. What it
+/// plays over time is [`crate::script::timeline`]'s.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pose {
     pub legs: &'static str,
     pub torso: &'static str,
-    /// The animation both parts play once it has stood still for five seconds
-    /// (`G_CheckClientIdle`), if its stance has one.
-    pub idle: Option<&'static str>,
     /// The level time (ms) it last moved at, as its `idleTime` keeps it: 0 when it
     /// stands still from the start.
     pub still_since: i32,
+    /// The spawnscript it runs, if any.
+    pub script: Option<std::sync::Arc<Vec<swjkja_icarus::Node>>>,
 }
 
 /// A Ghoul2 model bolted to another (`G_CreateG2AttachedWeaponModel`), posed at

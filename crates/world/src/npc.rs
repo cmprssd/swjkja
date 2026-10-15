@@ -14,10 +14,13 @@ use swjkja_shader::text::Cursor;
 
 use crate::Vec3;
 use crate::collision::{Collision, MASK_NPCSOLID, MIN_WORLD_COORD};
+use crate::script::{FIRST_FRAME, FirstPass, first_pass};
 use crate::static_model::{
     Attached, Ghoul2, Pose, Rules, StaticModel, angles_to_axis, origin_and_angles, spawns_at,
 };
 use crate::style::atoi;
+use std::sync::Arc;
+use swjkja_icarus::Node;
 
 /// An NPC spawner's type, as its spawn function picks it.
 #[derive(Debug, Clone, PartialEq)]
@@ -30,6 +33,9 @@ pub struct NpcSpawn {
     pub message: bool,
     /// The spawner's "spawnflags", which the NPC keeps.
     pub flags: i64,
+    /// The script it runs as it begins ("spawnscript"), unless that names a
+    /// behavior state (`G_ActivateBehavior` sets those instead).
+    pub spawnscript: Option<String>,
 }
 
 /// The spawn function's choice of type for spawner class `class` (lowercase) with
@@ -262,12 +268,17 @@ pub fn npc_spawns(entities: &[Entity], rules: Rules) -> Vec<NpcSpawn> {
             let message = e.get("message").is_some();
             let npc_type = npc_type(&class, flags, e.get("NPC_type"), message)?;
             let (origin, angles) = origin_and_angles(e);
+            let spawnscript = e
+                .get("spawnscript")
+                .filter(|s| !s.is_empty() && !s.to_ascii_uppercase().starts_with("BS_"))
+                .map(str::to_owned);
             Some(NpcSpawn {
                 npc_type,
                 origin,
                 angles,
                 message,
                 flags,
+                spawnscript,
             })
         })
         .collect()
@@ -803,6 +814,23 @@ pub fn npc_gear(
         _ => {}
     }
 
+    let dual_pistols = attached.len() == 2 && held("WP_BLASTER_PISTOL");
+    let (legs, torso) = stance(class, weapon_number, dual_pistols);
+    (
+        Pose {
+            legs,
+            torso,
+            still_since: 0,
+            script: None,
+        },
+        attached,
+    )
+}
+
+/// The stance an NPC of class `class` holding weapon `weapon_number` stands in with
+/// its weapon idle, `dual_pistols` when it holds a blaster pistol in each hand: its
+/// legs' and torso's animations (`PM_Footsteps`, `PM_TorsoAnimation`).
+fn stance(class: &str, weapon_number: usize, dual_pistols: bool) -> (&'static str, &'static str) {
     // PM_Footsteps: a gun between the saber and the detonation pack (exclusive).
     let gun_held = (weapon("WP_SABER") + 1..weapon("WP_DET_PACK")).contains(&weapon_number);
     let legs = match class {
@@ -813,7 +841,6 @@ pub fn npc_gear(
         _ => "BOTH_STAND1",
     };
     // PM_TorsoAnimation, weapon idle: the legs' guard idles first, then by weapon.
-    let dual_pistols = attached.len() == 2 && held("WP_BLASTER_PISTOL");
     let torso = match WEAPONS[weapon_number].0 {
         _ if class == "class_galakmech" => "BOTH_STAND2",
         "WP_SABER" => legs,
@@ -840,99 +867,7 @@ pub fn npc_gear(
         "WP_THERMAL" | "WP_TRIP_MINE" | "WP_DET_PACK" => "BOTH_STAND1",
         _ => "TORSO_WEAPONIDLE3",
     };
-    // G_CheckClientIdle: the stances with an idle (BOTH_STAND2 picks one of two at
-    // random: the first).
-    let idle = match legs {
-        "BOTH_STAND1" => Some("BOTH_STAND1IDLE1"),
-        "BOTH_STAND2" => Some("BOTH_STAND2IDLE1"),
-        "BOTH_STAND3" => Some("BOTH_STAND3IDLE1"),
-        "BOTH_STAND5" => Some("BOTH_STAND5IDLE1"),
-        _ => None,
-    };
-    (
-        Pose {
-            legs,
-            torso,
-            idle,
-            still_since: 0,
-        },
-        attached,
-    )
-}
-
-/// The level time (ms) of the server's first frame on a map: four settling frames
-/// from 1000 ms 100 ms apart and one more at 1400 ms leave the clock at 1500, and
-/// each frame then runs 50 ms later (`SV_SpawnServer`, `SV_Frame` at `sv_fps` 20).
-pub const FIRST_FRAME: i32 = 1550;
-/// Milliseconds between server frames.
-pub const FRAME_MS: i32 = 50;
-
-/// The first server frame after level time `t`.
-fn frame_after(t: i32) -> i32 {
-    FIRST_FRAME + ((t - FIRST_FRAME).div_euclid(FRAME_MS) + 1).max(0) * FRAME_MS
-}
-
-/// What an NPC standing in `pose` with nothing to do plays at `time` (ms, on the
-/// clock the client draws by), with `idle` its idle animation's hold and length
-/// (ms) from its animation file, or `None` if it has none: the legs' and torso's
-/// animations and the time they started.
-///
-/// Its stance starts on the first frame, the client's clock still at 0
-/// (`PM_SetAnimFinal` then takes the level's time). On the first frame at which it
-/// has stood still for more than five seconds of level time, both parts play the
-/// idle animation, held until its hold runs out; the next idle comes five seconds
-/// after its full length (plus a random 0 to 2 s: 0 here). The client draws by a
-/// clock one frame behind the level's, so an animation the server starts at level
-/// time t starts at t - 50 for the client.
-pub fn standing_at(
-    pose: &Pose,
-    idle: Option<(i32, i32)>,
-    time: i32,
-) -> (&'static str, &'static str, i32) {
-    let stance = |start| (pose.legs, pose.torso, start);
-    let (Some(name), Some((hold, length))) = (pose.idle, idle) else {
-        return stance(FIRST_FRAME);
-    };
-    let (mut since, mut start) = (pose.still_since, FIRST_FRAME);
-    loop {
-        let trigger = frame_after(since + 5000);
-        if time < trigger - FRAME_MS {
-            return stance(start);
-        }
-        // The hold counts down a frame at a time; the stance returns on the frame
-        // it runs out.
-        let end = frame_after(trigger + hold - 1);
-        if time < end - FRAME_MS {
-            return (name, name, trigger - FRAME_MS);
-        }
-        start = end - FRAME_MS;
-        since = trigger + length;
-    }
-}
-
-/// Milliseconds a part blends from its previous animation into a new one
-/// (`SETANIM_BLEND_DEFAULT`, which the idle's `NPC_SetAnim` and the stance's
-/// `PM_SetAnim` pass).
-pub const BLEND_MS: i32 = 100;
-
-/// What an NPC standing as [`standing_at`] has it at `time` blends from: the legs'
-/// and torso's animations before the ones playing, the time those started, and how
-/// far the blend has gone (0 to 1), or `None` outside a blend
-/// (`G2_Set_Bone_Anim_Index` starts one at the new animation's start,
-/// `G2_TransformBone` plays it). The stance on the first frame blends from the
-/// `BOTH_STAND1` `NPC_Begin` started (left out: over by 1650).
-pub fn blending_at(
-    pose: &Pose,
-    idle: Option<(i32, i32)>,
-    time: i32,
-) -> Option<(&'static str, &'static str, i32, f32)> {
-    let start = standing_at(pose, idle, time).2;
-    let elapsed = time - start;
-    if start == FIRST_FRAME || !(0..BLEND_MS).contains(&elapsed) {
-        return None;
-    }
-    let (legs, torso, old_start) = standing_at(pose, idle, start - 1);
-    Some((legs, torso, old_start, elapsed as f32 / BLEND_MS as f32))
+    (legs, torso)
 }
 
 /// The models of the NPCs `entities` spawn under `rules`, with `parms` the `.npc`
@@ -945,18 +880,35 @@ pub fn blending_at(
 /// left out (the original logs an error for a missing one).
 ///
 /// Each stands where its first movement frames put it ([`settle`]) in `world`.
+///
+/// `scripts` reads a spawnscript by name (`scripts/<name>.IBI`). Its first pass
+/// ([`first_pass`]) may put the NPC's weapon away (nothing bolted to it, and the
+/// unarmed stance) or make it invisible (left out); the NPC keeps the script, which
+/// [`crate::script::timeline`] runs.
 pub fn npc_models(
     entities: &[Entity],
     rules: Rules,
     parms: &[u8],
     sabers: &[u8],
     world: &Collision,
+    scripts: &dyn Fn(&str) -> Option<Vec<Node>>,
 ) -> Vec<StaticModel> {
     npc_spawns(entities, rules)
         .into_iter()
         .filter_map(|n| {
             let look = npc_look(parms, &n.npc_type, n.message)?;
-            let (pose, attached) = npc_gear(&look, &n.npc_type, n.flags, sabers);
+            let (mut pose, mut attached) = npc_gear(&look, &n.npc_type, n.flags, sabers);
+            let script = n.spawnscript.as_deref().and_then(scripts).map(Arc::new);
+            let first = script
+                .as_deref()
+                .map_or_else(FirstPass::default, |s| first_pass(s));
+            if first.invisible {
+                return None;
+            }
+            if first.unarmed {
+                (pose.legs, pose.torso) = stance(&look.class, 0, false);
+                attached.clear();
+            }
             let folder = format!("models/players/{}/", look.model);
             let skin = if look.skin.contains('|') {
                 format!("{folder}|{}", look.skin)
@@ -967,6 +919,7 @@ pub fn npc_models(
             let (at, moving) = settle(world, n.origin, look.mins, look.maxs);
             let pose = Pose {
                 still_since: if moving { FIRST_FRAME } else { 0 },
+                script,
                 ..pose
             };
             let mut origin = at;

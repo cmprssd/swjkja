@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use swjkja_bsp::{Bsp, SurfaceKind};
 use swjkja_world::collision::Collision;
 use swjkja_world::static_model::Rules;
-use swjkja_world::{Geometry, Options, World, npc};
+use swjkja_world::{Geometry, Options, World, npc, script};
 
 #[test]
 fn every_retail_map_builds() {
@@ -139,6 +139,8 @@ fn single_player_npcs_find_their_looks() {
     let mut not_drawn = std::collections::BTreeSet::new();
     let mut poses = std::collections::BTreeMap::new();
     let mut held = std::collections::BTreeMap::new();
+    let script_effects = std::cell::RefCell::new(std::collections::BTreeMap::new());
+    let mut scripted = 0;
     for name in &maps {
         let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
         let rules = Rules::for_map(name);
@@ -158,15 +160,38 @@ fn single_player_npcs_find_their_looks() {
                 }
             }
         }
-        for m in npc::npc_models(
+        let scripts = |name: &str| {
+            let bytes = vfs.read(&script::script_path(name)?).ok()?;
+            let nodes = swjkja_icarus::parse(&bytes).unwrap();
+            // What the first pass leaves is all a script sets of the NPC's weapon
+            // and visibility.
+            let first = script::first_pass(&nodes);
+            let (mut unarmed, mut invisible) = (None, None);
+            sets(&nodes, &mut |name, value| match name {
+                "SET_WEAPON" => unarmed = Some(value.eq_ignore_ascii_case("WP_NONE")),
+                "SET_INVISIBLE" => invisible = Some(value.eq_ignore_ascii_case("true")),
+                _ => {}
+            });
+            assert_eq!(unarmed.unwrap_or(false), first.unarmed, "{name}");
+            assert_eq!(invisible.unwrap_or(false), first.invisible, "{name}");
+            *script_effects
+                .borrow_mut()
+                .entry((first.unarmed, first.invisible))
+                .or_insert(0) += 1;
+            Some(nodes)
+        };
+        let models = npc::npc_models(
             &bsp.entities,
             rules,
             &parms,
             &sabers,
             &Collision::at_spawn(&bsp, rules),
-        ) {
+            &scripts,
+        );
+        for m in models {
             let g = m.ghoul2.unwrap();
             let pose = g.pose.unwrap();
+            scripted += pose.script.is_some() as usize;
             *poses.entry((pose.legs, pose.torso)).or_insert(0) += 1;
             for a in g.attached {
                 *held.entry(a.model).or_insert(0) += 1;
@@ -181,6 +206,35 @@ fn single_player_npcs_find_their_looks() {
     // mice (t1_surprise, t3_byss), MD3 droids in the original, are not drawn.
     assert_eq!((spawns, drawn), (245, 243));
     assert_eq!(not_drawn.iter().collect::<Vec<_>>(), ["mouse"]);
+    eprintln!(
+        "{scripted} drawn run a spawnscript; (unarmed, invisible): {:?}",
+        script_effects.borrow()
+    );
+    // Counted independently with Python over the spawners' "spawnscript" keys and
+    // the scripts' set commands: 104 scripts (none a vehicle's or left out by
+    // skill), 70 putting the weapon away, 9 making the NPC invisible (not drawn).
+    let effects = script_effects.into_inner();
+    assert_eq!(effects.values().sum::<usize>(), 104);
+    assert_eq!((effects[&(true, false)], effects[&(false, true)]), (70, 9));
+    assert_eq!(scripted, 95);
+}
+
+/// Calls `f` with each `set` command's name and text value in `nodes`, depth first.
+fn sets(nodes: &[swjkja_icarus::Node], f: &mut dyn FnMut(&str, &str)) {
+    for n in nodes {
+        match n {
+            swjkja_icarus::Node::Command(b) if b.id == swjkja_icarus::id::SET => {
+                if let (Some(name), Some(value)) = (
+                    b.members.first().and_then(|m| m.text()),
+                    b.members.get(1).and_then(|m| m.text()),
+                ) {
+                    f(name, value);
+                }
+            }
+            swjkja_icarus::Node::Body(_, body) => sets(body, f),
+            _ => {}
+        }
+    }
 }
 
 #[test]

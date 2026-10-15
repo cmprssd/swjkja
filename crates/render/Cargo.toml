@@ -18,6 +18,7 @@ gpu-allocator = { version = "0.28.0", default-features = false, features = ["std
 raw-window-handle = "0.6.2"
 swjkja-bsp = { version = "0.0.0", path = "../bsp" }
 swjkja-fs = { version = "0.0.0", path = "../fs" }
+swjkja-icarus = { version = "0.0.0", path = "../icarus" }
 swjkja-image = { version = "0.0.0", path = "../image" }
 swjkja-model = { version = "0.0.0", path = "../model" }
 swjkja-shader = { version = "0.0.0", path = "../shader" }

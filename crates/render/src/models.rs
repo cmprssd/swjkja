@@ -48,6 +48,7 @@ use swjkja_model::skin::Skin;
 use swjkja_world::Geometry;
 use swjkja_world::collision::Collision;
 use swjkja_world::npc;
+use swjkja_world::script::{self, Timeline};
 use swjkja_world::static_model::{Pose, Rules, StaticModel};
 
 use crate::camera::Camera;
@@ -268,12 +269,19 @@ impl StaticModels {
                 text("ext_data/npcs", ".npc"),
                 text("ext_data/sabers", ".sab"),
             );
+            let scripts = |name: &str| {
+                let bytes = vfs.read(&script::script_path(name)?).ok()?;
+                swjkja_icarus::parse(&bytes)
+                    .inspect_err(|e| eprintln!("warning: script {name}: {e}"))
+                    .ok()
+            };
             placements.extend(npc::npc_models(
                 &bsp.entities,
                 rules,
                 &parms,
                 &sabers,
                 &world,
+                &scripts,
             ));
         }
         placements.extend(swjkja_world::static_model::static_models(
@@ -621,15 +629,14 @@ fn register_skin(
     });
 }
 
-/// An NPC's skeleton, the models bolted to it, and the animations it stands in.
+/// An NPC's skeleton, the models bolted to it, and what it plays over time.
 pub struct Rig {
     body: Arc<Ghoul2Model>,
-    pose: Pose,
-    /// Its idle animation's hold and length (ms), if its skeleton has the idle.
-    idle: Option<(i32, i32)>,
-    /// The animations it can play (its stance's, its idle and `BOTH_STAND1`), by
+    /// What its legs and torso play over time ([`script::timeline`]).
+    timeline: Timeline,
+    /// The animations it can play (those of its timeline, and `BOTH_STAND1`), by
     /// name, those its skeleton has.
-    anims: Vec<(&'static str, animation::Animation)>,
+    anims: Vec<(String, animation::Animation)>,
     /// Bones "model_root", "lower_lumbar" and "Motion", if the skeleton has them.
     bones: [Option<usize>; 3],
     /// The models bolted to it and the body's surfaces they are bolted to.
@@ -637,70 +644,80 @@ pub struct Rig {
 }
 
 impl Rig {
-    /// `model` standing in `pose`, its animations from its animation file.
+    /// `model` standing in `pose` and running its script, its animations from its
+    /// animation file.
     fn new(vfs: &Vfs, model: &Arc<Ghoul2Model>, pose: &Pose) -> Self {
         let gla = &model.gla;
         let text = animation::config_file(vfs, &model.glm.anim_name)
             .and_then(|file| vfs.read(&file).ok())
             .map(|text| String::from_utf8_lossy(&text).into_owned())
             .unwrap_or_default();
-        let find =
-            |name| animation::find(&text, name).filter(|a| a.first + a.count <= gla.frame_count);
-        let idle = pose.idle.and_then(find).map(|a| {
-            let lerp = a.frame_lerp.abs();
-            ((a.count as i32 - 1) * lerp, a.count as i32 * lerp)
-        });
-        let names = [
-            Some(pose.legs),
-            Some(pose.torso),
-            pose.idle,
-            Some(animation::STAND),
-        ];
-        let anims = names
-            .into_iter()
-            .flatten()
-            .filter_map(|name| Some((name, find(name)?)))
-            .collect();
+        let find = |name: &str| {
+            animation::find(&text, name).filter(|a| a.first + a.count <= gla.frame_count)
+        };
+        // Each animation once: finding one reads the whole file.
+        let found = std::cell::RefCell::new(HashMap::new());
+        let holds = |name: &str| {
+            *found
+                .borrow_mut()
+                .entry(name.to_owned())
+                .or_insert_with(|| {
+                    find(name).map(|a| {
+                        let lerp = a.frame_lerp.abs();
+                        ((a.count as i32 - 1) * lerp, a.count as i32 * lerp)
+                    })
+                })
+        };
+        let timeline = script::timeline(pose, pose.script.as_deref().map(Vec::as_slice), &holds);
+        let mut anims: Vec<(String, animation::Animation)> = Vec::new();
+        let changes = timeline.legs.iter().chain(&timeline.torso);
+        let names =
+            changes.flat_map(|c| [Some(c.anim.as_str()), c.from.as_ref().map(|f| f.0.as_str())]);
+        for name in names.flatten().chain([animation::STAND]) {
+            if !anims.iter().any(|(n, _)| n == name)
+                && let Some(a) = find(name)
+            {
+                anims.push((name.to_owned(), a));
+            }
+        }
         Self {
             body: model.clone(),
-            pose: pose.clone(),
-            idle,
+            timeline,
             anims,
             bones: ["model_root", "lower_lumbar", "Motion"].map(|b| gla.find_bone(b)),
             attached: Vec::new(),
         }
     }
 
-    /// The body's pose standing at game time `time` (ms), each part at the frame its
-    /// animation has reached ([`npc::standing_at`], `G2_TimingModel`). A part whose
+    /// The body's pose at game time `time` (ms), each part at the frame its
+    /// animation has reached ([`Timeline::at`], `G2_TimingModel`). A part whose
     /// animation the skeleton lacks (or a skeleton with no animation file) plays
     /// `BOTH_STAND1` instead, as `NPC_Begin` started it, or stays at frame 0 without
     /// that too (`PM_SetAnimFinal` sets nothing then); so does a part whose bone the
     /// skeleton lacks.
     ///
-    /// For [`npc::BLEND_MS`] after a part's animation changes, it blends from where
-    /// the one before had reached ([`npc::blending_at`],
+    /// For [`script::BLEND_MS`] after a part's animation changes, it blends from where
+    /// the one before had reached ([`Timeline::blending_at`],
     /// [`animation::Animation::blend_from`]); not into an animation played
     /// backwards (`PM_SetAnimFinal`), nor into one the skeleton lacks (nothing
     /// changes then).
     fn body_pose(&self, time: i32) -> Vec<Mat34> {
         let gla = &self.body.gla;
-        let (legs, torso, start) = npc::standing_at(&self.pose, self.idle, time);
-        let before = npc::blending_at(&self.pose, self.idle, time);
-        let find = |name| self.anims.iter().find(|(n, _)| *n == name).map(|(_, a)| *a);
+        let find = |name: &str| self.anims.iter().find(|(n, _)| n == name).map(|(_, a)| *a);
         let stand = find(animation::STAND);
         let frame = |(frame, next, lerp)| gla::Frame { frame, next, lerp };
         let mut anims = Vec::new();
-        for (part, (bone, name)) in self.bones.into_iter().zip([legs, torso, torso]).enumerate() {
-            let (Some(bone), Some(anim)) = (bone, find(name).or(stand)) else {
+        for (bone, part) in self.bones.into_iter().zip([0, 1, 1]) {
+            let change = self.timeline.at(part, time);
+            let (Some(bone), Some(anim)) = (bone, find(&change.anim).or(stand)) else {
                 continue;
             };
-            let mut blend = gla::Blend::from(frame(anim.frame_at(time - start)));
-            if let Some((old_legs, old_torso, old_start, weight)) = before {
-                let old = if part == 0 { old_legs } else { old_torso };
-                let blends = old != name && find(name).is_some_and(|a| a.frame_lerp >= 0);
+            let mut blend = gla::Blend::from(frame(anim.frame_at(time - change.start)));
+            if let Some((old, old_start, weight)) = self.timeline.blending_at(part, time) {
+                let blends =
+                    old != change.anim && find(&change.anim).is_some_and(|a| a.frame_lerp >= 0);
                 if let (true, Some(from)) = (blends, find(old).or(stand)) {
-                    blend.from = frame(from.blend_from(start - old_start));
+                    blend.from = frame(from.blend_from(change.start - old_start));
                     blend.weight = weight;
                 }
             }
