@@ -776,3 +776,34 @@ equals the same frame rendered alone (it fails if the frames share one slot).
 - **A spawner's misnumbered "saberColor" key** (a blade number outside 2 to 8), which
   the original reads past without its value, draws nothing here (no retail block
   has one).
+
+## 2026-10-16: NPCs' blob shadows (chosen by the owner)
+
+- **The question**: the captures run with `cg_shadows` at its default, 1 (blob
+  shadows). Draw only those, or other modes too; and lay them as the original does,
+  or as a simple quad?
+- **Chosen: blob shadows only, laid as the original lays them**: `_PlayerShadow`'s
+  box trace down through the world (`MASK_PLAYERSOLID`, the world model only, as
+  `cgi_CM_BoxTrace` with model 0), `CG_ImpactMark`'s square turned with the legs, and
+  `R_MarkFragments` chopping it onto the world's surfaces (`swjkja_world::mark`).
+  Stencil and projected shadows (`cg_shadows` 2 and 3) are left out.
+
+## 2026-10-16: How shadows are laid (decided by Claude, pending review)
+
+- **A cinematic NPC's shadow comes from its eyes**, as the original's does: it reads
+  the bolt numbered `rootBone`, and `rootBone` is a bone list number (0, the first
+  bone added). Checked against the captures (closer than from the origin on all
+  three cinematic views).
+- **The surfaces a mark can land on** are every world surface whose bounds meet the
+  projection's box, not those of the BSP leaves it touches, and without the 64
+  surface cap. The chop leaves nothing of a surface outside the projection either
+  way.
+- **The trace leaves out patches** (the collision here has none), as NPCs' drops do.
+- **Polygons pick their fog as seen from outside any fog** (`RE_AddPolyToScene`'s
+  partial-fog rule needs the view's fog), as static models do.
+- **The `markShadow` material is created after the world's**, before the models'
+  (cgame registers it after loading the world), which orders it among other
+  sort-4 (decal) materials.
+- **Left out**: the rancor's and the AT-ST's larger shadows (64 units, and the
+  AT-ST's feet), cloaked NPCs and sand creatures (none), the player's own shadow.
+
