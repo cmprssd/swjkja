@@ -20,9 +20,9 @@
 //! runs the block first) and runs it at once. Commands that move an NPC
 //! (`SET_NAVGOAL`, `SET_ORIGIN`, ...) are left out (those that complete later never
 //! do, as with the AI frozen), and so are cameras, `run` (no script reached here
-//! runs another) and the other commands. A random number is its range's low end, as
-//! other random choices here take their first branch; a `get` reads nothing (a
-//! condition with one is false).
+//! runs another) and the other commands. A random number is its range's low end
+//! (once the client runs, what the shared generator draws depends on frame timing:
+//! [`crate::rand`]); a `get` reads nothing (a condition with one is false).
 
 use std::collections::HashMap;
 

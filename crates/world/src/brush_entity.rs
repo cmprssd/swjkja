@@ -235,6 +235,7 @@ fn secondary(
             radius: 120.0,
             pose: None,
             attached: Vec::new(),
+            color: [0; 4],
         }),
     })
 }

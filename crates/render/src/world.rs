@@ -1683,8 +1683,7 @@ impl WorldRenderer {
                 ambient: v4(light.ambient),
                 directed: v4(light.directed),
                 light_dir: v4(light.dir),
-                // cgame leaves a static model's shaderRGBA zeroed.
-                color: [0.0; 4],
+                color: m.color.map(f32::from),
             };
             let at = (n + 1) * size_of::<GpuEntity>();
             table[at..at + size_of::<GpuEntity>()].copy_from_slice(bytemuck::bytes_of(&entity));

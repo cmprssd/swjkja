@@ -10,7 +10,10 @@
 # that time: a map's views then share one time. The player then enters the world
 # at 2000 ms exactly (sv_swjkjaBegin, a patch addition), so scripts it starts (the
 # academies' intros) start then, and a cutscene runs on instead of being skipped.
-# CAPTURE_ARGS adds engine arguments (e.g. "+set g_ICARUSDebug 4" traces scripts).
+# CAPTURE_ARGS adds engine arguments (e.g. "+set g_ICARUSDebug 4" traces scripts;
+# "+set g_swjkjaRand 2000" logs every draw from the game's random numbers up to
+# that time, with its caller, to <map>-npcs.txt: a debugging run only, as the lines
+# also show on screen).
 # Multiplayer maps (mp/...) run in holocron mode (g_gametype 1) because free-for-all
 # opens the force-power menu on joining, over the view. Other maps run in the
 # single-player executable at the easiest skill (g_spskill 0, the cvar's default, as
@@ -99,7 +102,7 @@ for map in $maps; do
 	# The patched cgame logs each NPC's animation timing once per view time, and
 	# its look ("swjkja look") once the view's time is pinned.
 	if [ "$sp" = 1 ]; then
-		get qconsole.log | grep -a "swjkja npc\|swjkja look\|swjkja begin" >"$out/$map-npcs.txt" || true
+		get qconsole.log | grep -a "swjkja npc\|swjkja look\|swjkja begin\|swjkja rand" >"$out/$map-npcs.txt" || true
 	fi
 done
 ls -l "$out"

@@ -1,6 +1,7 @@
 use swjkja_bsp::Entity;
 use swjkja_world::collision::Collision;
 use swjkja_world::npc::{attached_model, npc_gear, npc_look, npc_models, npc_spawns, saber_look};
+use swjkja_world::rand::Rand;
 use swjkja_world::static_model::{Attached, Pose, Rules, angles_to_axis};
 
 fn entity(pairs: &[(&str, &str)]) -> Entity {
@@ -21,7 +22,7 @@ fn npc(class: &str, extra: &[(&str, &str)]) -> Entity {
 const SP: Rules = Rules::SinglePlayer { skill: 0 };
 
 fn types(entities: &[Entity]) -> Vec<String> {
-    npc_spawns(entities, SP)
+    npc_spawns(entities, SP, b"", &mut Rand::default())
         .into_iter()
         .map(|n| n.npc_type)
         .collect()
@@ -42,7 +43,7 @@ fn spawners_pick_their_type_by_class_flags_and_key() {
             "NPC_Human_Merc",
             &[("spawnflags", "1"), ("message", "goodie")],
         ),
-        // A random saber cultist: the first strength, throwing.
+        // A random saber cultist: its strength and throwing drawn.
         npc("NPC_Cultist", &[("spawnflags", "1")]),
         // Saber cultists' "all" (4) is unreachable; powers ones add "2", but not
         // the throwing plain one.
@@ -55,13 +56,15 @@ fn spawners_pick_their_type_by_class_flags_and_key() {
     assert_eq!(
         types(&entities),
         [
-            "StormTrooper",
+            // The first draw (0): the coin flip's "else".
+            "StormTrooper2",
             "stcommander",
             "stofficer",
             "jedi2",
             "tavion_new",
             "human_merc_key",
-            "cultist_saber_med_throw",
+            // The next two (0, 0): medium, not throwing.
+            "cultist_saber_med",
             "cultist_saber",
             "cultist_saber_strong2",
             "cultist_saber_throw",
@@ -69,6 +72,74 @@ fn spawners_pick_their_type_by_class_flags_and_key() {
             "Gran",
         ]
     );
+}
+
+#[test]
+fn random_choices_draw_in_spawn_order() {
+    // academy1's draws, logged by the reference capture: eight random Jedi (one
+    // drawn twice: jedi_tf1 is the player's character's), then the player start's
+    // saber, then the first NPC's colour as it spawns. A waiting spawner draws too.
+    let jedi = || npc("NPC_Jedi", &[("spawnflags", "4")]);
+    let entities = [
+        jedi(),
+        jedi(),
+        jedi(),
+        jedi(),
+        jedi(),
+        jedi(),
+        npc("NPC_Jedi", &[("spawnflags", "4"), ("targetname", "later")]),
+        jedi(),
+        entity(&[("classname", "info_player_start")]),
+    ];
+    let mut rand = Rand::default();
+    let spawns = npc_spawns(&entities, SP, b"single_1 { saberColor random }", &mut rand);
+    let types: Vec<_> = spawns.iter().map(|n| n.npc_type.as_str()).collect();
+    assert_eq!(
+        types,
+        [
+            "jedi_kdm2",
+            "jedi_hm1",
+            "jedi_hf2",
+            "jedi_hf2",
+            "jedi_zf1",
+            "jedi_rm2",
+            "jedi_hf1"
+        ]
+    );
+    let parms = b"jedi_hf1 { playerModel jedi_hf customRGBA jedi_hf }";
+    let look = npc_look(parms, b"", "jedi_hf1", false, &mut rand).unwrap();
+    assert_eq!(look.color, [255, 157, 114, 255]);
+}
+
+#[test]
+fn an_npc_s_block_sets_its_colour() {
+    let parms = b"
+    plain { playerModel kyle }
+    red {
+        playerModel kyle
+        customRGBA 255 0 0
+    }
+    any {
+        playerModel kyle
+        customRGBA random
+    }
+    me {
+        playerModel player
+        customRGBA 1 2 3 4
+    }
+    ";
+    let color = |name| {
+        npc_look(parms, b"", name, false, &mut Rand::default())
+            .unwrap()
+            .color
+    };
+    assert_eq!(color("plain"), [255; 4]);
+    // The alpha left out stays white.
+    assert_eq!(color("red"), [255, 0, 0, 255]);
+    // Three draws, 0-255 each.
+    assert_eq!(color("any"), [111, 63, 34, 255]);
+    // The player's character takes the player's colour.
+    assert_eq!(color("me"), [255; 4]);
 }
 
 #[test]
@@ -85,14 +156,22 @@ fn only_spawners_that_spawn_at_load_make_npcs() {
         npc("NPC_spawner", &[]),
         npc("misc_model_static", &[]),
     ];
-    let spawns = npc_spawns(&entities, SP);
+    let spawns = npc_spawns(&entities, SP, b"", &mut Rand::default());
     let [kyle] = &spawns[..] else {
         panic!("{spawns:?}")
     };
     assert_eq!(kyle.npc_type, "Kyle");
     assert_eq!(kyle.origin, [1.0, 2.0, 3.0]);
     assert_eq!(kyle.angles, [0.0, 90.0, 0.0]);
-    assert!(npc_spawns(&entities, Rules::Multiplayer { gametype: 0 }).is_empty());
+    assert!(
+        npc_spawns(
+            &entities,
+            Rules::Multiplayer { gametype: 0 },
+            b"",
+            &mut Rand::default()
+        )
+        .is_empty()
+    );
 }
 
 const PARMS: &[u8] = b"
@@ -145,7 +224,7 @@ Player
 fn looks_come_from_the_first_block_of_the_name() {
     // Matched ignoring case; the second \"trooper\" is never read. Unknown keys skip
     // their line.
-    let t = npc_look(PARMS, "TROOPER", false).unwrap();
+    let t = npc_look(PARMS, b"", "TROOPER", false, &mut Rand::default()).unwrap();
     assert_eq!(
         (t.model.as_str(), t.skin.as_str()),
         ("stormtrooper", "default")
@@ -161,7 +240,7 @@ fn looks_come_from_the_first_block_of_the_name() {
     assert_eq!(t.radius, 64.0);
 
     // Several keys on a line; the switches, off then on, split on whitespace.
-    let o = npc_look(PARMS, "officer", false).unwrap();
+    let o = npc_look(PARMS, b"", "officer", false, &mut Rand::default()).unwrap();
     assert_eq!(o.skin, "officer");
     assert_eq!(o.scale, [1.05, 1.05, 1.1]);
     assert_eq!(
@@ -176,29 +255,46 @@ fn looks_come_from_the_first_block_of_the_name() {
     assert_eq!(o.radius, 40.0);
 
     // An imperial with a key shows its sleeve after the block's switches.
-    let c = npc_look(PARMS, "Commander", true).unwrap();
+    let c = npc_look(PARMS, b"", "Commander", true, &mut Rand::default()).unwrap();
     assert_eq!(
         c.switches,
         [("l_arm_key".into(), true), ("l_arm_key".into(), false)]
     );
     assert_eq!(
-        npc_look(PARMS, "Commander", false).unwrap().switches.len(),
+        npc_look(PARMS, b"", "Commander", false, &mut Rand::default())
+            .unwrap()
+            .switches
+            .len(),
         1
     );
 
     // A rancor's radius is fixed by its class.
-    assert_eq!(npc_look(PARMS, "rancor", false).unwrap().radius, 150.0);
+    assert_eq!(
+        npc_look(PARMS, b"", "rancor", false, &mut Rand::default())
+            .unwrap()
+            .radius,
+        150.0
+    );
     // The player's character, with no switches.
-    let p = npc_look(PARMS, "player", false).unwrap();
+    let p = npc_look(PARMS, b"", "player", false, &mut Rand::default()).unwrap();
     assert_eq!(
         (p.model.as_str(), p.skin.as_str()),
         ("jedi_tf", "head_a1|torso_a1|lower_a1")
     );
     assert!(p.switches.is_empty());
     // MD3 NPCs, vehicles and unknown names are not drawn.
-    assert_eq!(npc_look(PARMS, "mouse", false), None);
-    assert_eq!(npc_look(PARMS, "speeder", false), None);
-    assert_eq!(npc_look(PARMS, "nobody", false), None);
+    assert_eq!(
+        npc_look(PARMS, b"", "mouse", false, &mut Rand::default()),
+        None
+    );
+    assert_eq!(
+        npc_look(PARMS, b"", "speeder", false, &mut Rand::default()),
+        None
+    );
+    assert_eq!(
+        npc_look(PARMS, b"", "nobody", false, &mut Rand::default()),
+        None
+    );
 }
 
 #[test]
@@ -275,7 +371,7 @@ staff { saberModel models/weapons2/saber_dual_1/saber_dual_1.glm twoHanded 1 }
 ";
 
 fn gear(npc_type: &str, flags: i64) -> (Pose, Vec<(String, &'static str)>) {
-    let look = npc_look(GEAR, npc_type, false).unwrap();
+    let look = npc_look(GEAR, SABERS, npc_type, false, &mut Rand::default()).unwrap();
     let (pose, attached) = npc_gear(&look, npc_type, flags, SABERS);
     let held = attached.into_iter().map(|a| (a.model, a.bolt)).collect();
     (pose, held)
@@ -295,7 +391,7 @@ fn pose(legs: &'static str, torso: &'static str) -> Pose {
 fn npcs_hold_their_weapons_and_stand_with_them() {
     // Two sabers, blades off: hilts in both hands (one at the wrist, with its skin),
     // the torso following the legs.
-    let look = npc_look(GEAR, "jedi", false).unwrap();
+    let look = npc_look(GEAR, SABERS, "jedi", false, &mut Rand::default()).unwrap();
     let (p, attached) = npc_gear(&look, "jedi", 0, SABERS);
     assert_eq!(p, pose("BOTH_STAND1", "BOTH_STAND1"));
     assert_eq!(

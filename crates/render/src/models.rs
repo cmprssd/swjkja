@@ -128,6 +128,9 @@ pub struct Instance {
     pub lods: Vec<ModelLod>,
     /// What poses it as time passes: an NPC's skeleton and animations.
     pub rig: Option<Rig>,
+    /// The entity's colour (`shaderRGBA`), 0-255: a Ghoul2 model's
+    /// ([`swjkja_world::static_model::Ghoul2::color`]), else zero.
+    pub color: [u8; 4],
 }
 
 pub struct StaticModels {
@@ -474,6 +477,7 @@ impl StaticModels {
                 ghoul2_radius: None,
                 lods,
                 rig: None,
+                color: [0; 4],
             });
         }
         resolve_looks(&mut instances);
@@ -1179,6 +1183,7 @@ fn ghoul2_instance(
         ghoul2_radius: Some(scaled_radius),
         lods,
         rig: None,
+        color: p.ghoul2.as_ref().map_or([0; 4], |g| g.color),
     }
 }
 

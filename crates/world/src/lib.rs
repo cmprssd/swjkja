@@ -12,6 +12,7 @@ pub mod collision;
 pub mod light_grid;
 pub mod npc;
 pub mod patch;
+pub mod rand;
 pub mod script;
 pub mod sound;
 pub mod static_model;
