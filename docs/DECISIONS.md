@@ -637,8 +637,9 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   on the client's clock, as the capture log shows (1550); later ones a frame behind
   the server, as the idle's do.
 - **Random numbers take their range's low end**, as other random choices here take
-  their first branch. The original's differ per NPC and per run, so NPCs whose
-  scripts wait a random time (three of academy2's students) do not match a capture.
+  their first branch. The original's differ per NPC and per run (the C library's
+  `rand()`, seeded from the clock); the captures pin them to the same low end (see
+  2026-10-16, "Script random numbers pinned in the captures").
 - **Weapon and visibility from the first pass only**: `SET_WEAPON WP_NONE` drops every
   bolted model and gives the unarmed stance (70 NPCs), `SET_INVISIBLE true` leaves the
   NPC out (9). A retail test checks no spawned NPC's script sets either later.
@@ -769,10 +770,10 @@ equals the same frame rendered alone (it fails if the frames share one slot).
 - **Other entities' spawn draws** (ammo racks' spread, effects, breakables and
   the like) are left out: none of the academies' entities draw before their NPCs,
   but a map whose do would shift every NPC pick after them.
-- **Draws after the spawn stay at their range's low end** (scripts' random waits):
-  once the client runs, cgame draws from the same generator every frame it draws,
-  so what a script draws depends on frame timing. That, not the looks, is why
-  captures of academy2's students differ between runs.
+- **Draws after the spawn are not replayed**: once the client runs, cgame draws from
+  the same generator every frame it draws, so what the game draws then depends on
+  frame timing. Scripts' random numbers do not come from it (see 2026-10-16,
+  "Script random numbers pinned in the captures").
 - **A spawner's misnumbered "saberColor" key** (a blade number outside 2 to 8), which
   the original reads past without its value, draws nothing here (no retail block
   has one).
@@ -835,3 +836,18 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   lagging behind the torso (`CG_PlayerLegsYawFromMovement`; NPCs stand still), and
   pitch from `lerpAngles` (0 for a standing NPC). An NPC on the cinematic skeleton
   reads "Motion" by the same bone number, as the rest of its rig does.
+
+## 2026-10-16: Script random numbers pinned in the captures (chosen by the owner)
+
+- **The question**: three of academy2's students (`studentSpawn5`, run on academy4
+  and 6 too) wait a random time between animations, and the captures differed from
+  run to run. Pin them in the capture (a patch), or model the original's draws?
+- **Found**: ICARUS's random numbers (`CQuake3GameInterface::Random`) call the C
+  library's `rand()`, not the game's `Q_irand`, and the game seeds it from the clock
+  (`srand( randomSeed )` in `InitGame`, `com_frameTime`): no model of the game could
+  predict them.
+- **Chosen: pin them in the capture.** With `g_swjkjaScriptRand` set (a patch
+  addition, on the command line with `SCRIPTS=1`, so spawnscripts that draw as the
+  map loads get it too), `Random` returns its range's low end, as the new renderer
+  takes it. Two captures of academy2, 4 and 6 now log the same animations; academy2
+  1.61 -> 1.27, academy4 2.23 -> 1.40, academy6 2.45 -> 1.98.
