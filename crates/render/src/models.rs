@@ -189,8 +189,17 @@ pub fn fog_num(fogs: &[FogVolume], origin: Vec3, md3: &Md3) -> usize {
 /// same red and green, fog 0's being zero); failing both, the first fog holding a
 /// corner.
 pub fn sp_fog_num(fogs: &[FogVolume], center: Vec3, radius: f32, view_fog: usize) -> usize {
-    let lo = center.map(|c| c - radius);
-    let hi = center.map(|c| c + radius);
+    sp_fog_num_box(
+        fogs,
+        center.map(|c| c - radius),
+        center.map(|c| c + radius),
+        view_fog,
+    )
+}
+
+/// [`sp_fog_num`] for the box `lo`..`hi` (`RE_AddPolyToScene`'s test for a
+/// polygon's bounds).
+pub fn sp_fog_num_box(fogs: &[FogVolume], lo: Vec3, hi: Vec3, view_fog: usize) -> usize {
     let inside =
         |p: Vec3, f: &FogVolume| (0..3).all(|j| p[j] >= f.bounds[0][j] && p[j] <= f.bounds[1][j]);
     let parms = |n: usize| match n {
@@ -572,6 +581,35 @@ impl StaticModels {
         };
         let head = rig.head.expect("a look turns a head");
         head.overrides(rig.gla(time), settled).to_vec()
+    }
+
+    /// Where instance `n`, an NPC, casts its shadow from at game time `time` (ms),
+    /// and the way its legs face (yaw, degrees): `CG_PlayerShadow`'s root origin,
+    /// its origin, but while it plays a cinematic animation the point of its bolt
+    /// numbered as its root bone (`rootBone`, the bone list's first entry, read as
+    /// a bolt number): its eyes' tag ("*head_eyes", the first bolt `G_SetG2PlayerModel`
+    /// adds). `bones` is its [`StaticModels::bones`] at `time` if already posed.
+    /// `None` for a model that is not an NPC.
+    pub fn shadow(&self, n: usize, time: i32, bones: Option<&[Mat34]>) -> Option<(Vec3, f32)> {
+        let m = &self.instances[n];
+        let rig = m.rig.as_ref()?;
+        let yaw = m.axes[0][1].atan2(m.axes[0][0]).to_degrees();
+        let tag = match (rig.skeleton(time), rig.eyes) {
+            (1, Some(eyes)) => {
+                let posed;
+                let bones = match bones {
+                    Some(b) => b,
+                    None => {
+                        posed = self.bones(n, time);
+                        &posed
+                    }
+                };
+                glm::bolt(&rig.body.glm, eyes, &bones[..rig.body.gla.bones.len()])
+            }
+            _ => None,
+        };
+        let origin = tag.map_or(m.origin, |t| [t[0][3], t[1][3], t[2][3]]);
+        Some((origin, yaw))
     }
 
     /// The surface posed piece `k` draws, and where its part's bones start in its

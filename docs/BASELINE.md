@@ -381,6 +381,44 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Single-player NPCs' blob shadows, 2026-10-16
+
+NPCs now cast the original's blob shadow (`cg_shadows 1`, the captures' setting):
+a 14 x 14 x 2 box traced 128 units down from each NPC the server sends within 1000
+units of the view, a 32-unit `markShadow` square laid on the floor it hits, faded
+with the height, and chopped onto the world's faces, patches and triangle soups
+(`R_MarkFragments`). Against the same captures:
+
+| View | Mean difference | main | Pixels off by > 16 | main |
+|------|------|------|------|------|
+| academy1_class | 0.46 | 0.57 | 0.3% | 0.6% |
+| academy2_class | 1.61 | 2.14 | 3.3% | 4.8% |
+| academy4_class | 2.23 | 2.77 | 4.4% | 5.9% |
+| academy6_class | 2.45 | 3.07 | 5.5% | 7.2% |
+
+- An NPC playing a cinematic animation casts its shadow from its eyes' tag, not its
+  root: `CG_PlayerShadow` passes `rootBone` (a bone list number, 0) as a bolt
+  number, and bolt 0 is "*head_eyes". The captures agree: from the NPCs' origins
+  instead, academy2, 4 and 6 come out at 1.73, 2.42 and 2.61. From that height the
+  shadows of the standing students are fainter (about half alpha against four
+  fifths).
+- What is left on the academy views is mostly the poses of the students whose
+  scripts wait a random time.
+- Of the 39 other reference views, dpred_troopers (1.13 to 1.02) and vjun2_officer
+  (0.58 to 0.52) come closer with their NPCs' shadows; rancor_gates changes (0.85 to
+  0.94) because two of the stray flares the original does not draw there now pass
+  their depth test. That comes from texture numbering, not shadows: one more
+  texture in the set, with shadows off, gives the same image. The rest render pixel
+  for pixel as on main.
+- `bench_world` (600 frames, alternating with main, three runs, then three more of
+  academy6 and dpred_troopers): academy1 6.2-7.9 ms (main 6.7-7.3), academy2
+  6.7-7.7 (7.0-8.1), academy4 7.5-8.1 (7.4-12.9), academy6 7.2-8.4 (6.6-8.4),
+  dpred_troopers 6.7-7.1 (6.0-6.9), vjun2_officer 5.4-5.5 (5.4-5.6), kor2_troopers
+  8.3-9.0 (8.1-11.0): within main's spread. A shadow is laid again only when its
+  origin or facing changes; before that cache, laying them every frame cost
+  0.3-0.7 ms. Loading builds the shadows' data in under 8 ms (academy2, kor2);
+  loads alternated with main fall within their run-to-run spread.
+
 ## Single-player random picks as the original's, 2026-10-16
 
 Single player never seeds the game's random numbers, so what a map's spawn picks at

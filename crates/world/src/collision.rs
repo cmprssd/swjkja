@@ -15,6 +15,7 @@ use crate::static_model::{Rules, spawns_at, vector_prefix};
 use crate::style::atoi;
 
 pub const CONTENTS_SOLID: i32 = 0x1;
+pub const CONTENTS_PLAYERCLIP: i32 = 0x10;
 pub const CONTENTS_MONSTERCLIP: i32 = 0x20;
 pub const CONTENTS_BOTCLIP: i32 = 0x40;
 pub const CONTENTS_BODY: i32 = 0x100;
@@ -23,6 +24,9 @@ pub const CONTENTS_OPAQUE: i32 = 0x8000;
 /// What blocks an NPC (`MASK_NPCSOLID`).
 pub const MASK_NPCSOLID: i32 =
     CONTENTS_SOLID | CONTENTS_MONSTERCLIP | CONTENTS_BODY | CONTENTS_TERRAIN;
+/// What blocks a player (`MASK_PLAYERSOLID`).
+pub const MASK_PLAYERSOLID: i32 =
+    CONTENTS_SOLID | CONTENTS_PLAYERCLIP | CONTENTS_BODY | CONTENTS_TERRAIN;
 /// `MIN_WORLD_COORD`: how far down a drop to the floor looks.
 pub const MIN_WORLD_COORD: f32 = -64.0 * 1024.0;
 /// How far a trace stops short of the face it hits.

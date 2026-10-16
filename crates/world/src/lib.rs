@@ -10,6 +10,7 @@
 pub mod brush_entity;
 pub mod collision;
 pub mod light_grid;
+pub mod mark;
 pub mod npc;
 pub mod patch;
 pub mod rand;

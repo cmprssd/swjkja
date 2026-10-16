@@ -224,6 +224,29 @@ enum DynamicSource {
         flares: Vec<([f32; 3], [f32; 3])>,
         radius: f32,
     },
+    /// The NPCs' shadows in fog `fog`: the polygons in that fog, from the shadows'
+    /// shared region ([`Shadows`]), filled each frame (see draw()).
+    Shadows { fog: usize },
+}
+
+/// The NPCs' blob shadows (`CG_PlayerShadow` with `cg_shadows 1`): what they are
+/// traced against and laid on, and their region of the dynamic buffers (each
+/// shadow material's vertices start at `first_vertex`).
+struct Shadows {
+    world: swjkja_world::collision::Collision,
+    marks: swjkja_world::mark::MarkSurfaces,
+    first_vertex: u32,
+    first_index: u32,
+    max_vertices: usize,
+    /// Per instance: the shadow last laid, from where and facing which way, and
+    /// its pieces with their fogs (laid again only when either changes).
+    laid: Vec<Option<Laid>>,
+}
+
+/// One NPC's shadow: its origin and yaw, and its pieces, each with its fog.
+struct Laid {
+    from: ([f32; 3], f32),
+    pieces: Vec<(usize, Vec<swjkja_world::mark::MarkVert>)>,
 }
 
 /// A material's identity: its shader, lightmap pages and styles, and whether its
@@ -298,6 +321,10 @@ pub struct WorldRenderer {
     /// Per model: where its bones start in the frame's bones, if it is posed.
     first_bone: Vec<Option<usize>>,
     light_grid: swjkja_world::light_grid::LightGrid,
+    /// The map's fog volumes, by fog number - 1.
+    fog_volumes: Vec<fog::FogVolume>,
+    /// The NPCs' shadows, if the map has NPCs.
+    shadows: Option<Shadows>,
 }
 
 /// One frame's data: its uniforms, deformed geometry and visible index ranges, and
@@ -726,6 +753,33 @@ impl WorldRenderer {
             };
         }
 
+        // The NPCs' shadows' material, as cgame registers it once the world has
+        // loaded ("markShadow", no lightmap, default styles), with a draw for each fog
+        // number its polygons can take.
+        let npcs = models.instances.iter().filter(|m| m.rig.is_some()).count();
+        let shadow_material = (npcs > 0).then(|| {
+            let mut loader = Loader {
+                vfs,
+                decoded: &mut decoded,
+            };
+            let lightmaps = [swjkja_shader::resolve::LIGHTMAP_NONE; 4];
+            let styles = [0, 255, 255, 255];
+            materials.push(resolve_map_shader(
+                shaders,
+                SHADOW_SHADER,
+                lightmaps,
+                styles,
+                bsp.lightmap_pages(),
+                &mut loader,
+                &mut |_| false,
+            ));
+            held.push(false);
+            surfaces_of.push((0..=bsp.fogs.len()).map(|f| (f, Vec::new())).collect());
+            let m = materials.len() - 1;
+            material_index.insert((SHADOW_SHADER.to_owned(), lightmaps, styles, false), m);
+            m
+        });
+
         // The models' materials, in the order the models register their shaders
         // (R_LoadMD3: no lightmap, default styles), then their surfaces.
         let world_materials = materials.len();
@@ -941,6 +995,28 @@ impl WorldRenderer {
                 Some(first)
             })
             .collect();
+        // The shadows' region: an NPC's shadow has at most MAX_MARK_POINTS points,
+        // each piece drawn as a fan (fewer indexes than three per point).
+        let shadows = shadow_material.map(|_| {
+            let max_vertices = npcs * swjkja_world::mark::MAX_MARK_POINTS;
+            let shadows = Shadows {
+                world: swjkja_world::collision::Collision::new(bsp),
+                marks: swjkja_world::mark::MarkSurfaces::new(surfaces_in(0).map(|i| {
+                    let shader = &bsp.shaders[world.surfaces[i].shader];
+                    (
+                        &world.surfaces[i],
+                        (shader.surface_flags, shader.content_flags),
+                    )
+                })),
+                first_vertex: dynamic_vertices,
+                first_index: dynamic_indexes,
+                max_vertices,
+                laid: Vec::new(),
+            };
+            dynamic_vertices += max_vertices as u32;
+            dynamic_indexes += max_vertices as u32 * 3;
+            shadows
+        });
         let first_turning_bone = bone_count;
         bone_count += turning_count;
         for b in &mut brushes {
@@ -1104,7 +1180,16 @@ impl WorldRenderer {
                         _ => None,
                     })
                     .collect();
-                let (first_index, index_count, dynamic) = if !flares.is_empty() {
+                let (first_index, index_count, dynamic) = if let (Some(s), true) =
+                    (&shadows, Some(m) == shadow_material)
+                {
+                    let dynamic = Dynamic {
+                        vertex_offset: s.first_vertex,
+                        index_offset: s.first_index,
+                        source: DynamicSource::Shadows { fog },
+                    };
+                    (0, 0, Some(dynamic))
+                } else if !flares.is_empty() {
                     // Built each frame from the view (RB_SurfaceFlare).
                     let n = flares.len() as u32;
                     let dynamic = Dynamic {
@@ -1495,6 +1580,8 @@ impl WorldRenderer {
             first_model_surface,
             first_bone,
             light_grid: swjkja_world::light_grid::LightGrid::load(bsp, 0),
+            fog_volumes,
+            shadows,
             surface_gate,
             gate_count: gates,
         })
@@ -1573,6 +1660,7 @@ impl WorldRenderer {
                 DynamicSource::Flares { flares, radius } => {
                     flare_quads(flares, *radius, camera, &view)
                 }
+                DynamicSource::Shadows { .. } => continue,
             };
             let out: Vec<Vertex> = verts
                 .iter()
@@ -1666,8 +1754,10 @@ impl WorldRenderer {
         // The static models this view draws (each at its level of detail), lit from
         // the light grid, NPCs posed as they stand now; entity n + 1 is model n.
         let table = entities.mapped_mut()?;
+        // The NPCs posed for this view, kept for their shadows.
+        let mut posed: Vec<Option<Vec<Mat34>>> = vec![None; self.models.instances.len()];
         table[..size_of::<GpuEntity>()].copy_from_slice(bytemuck::bytes_of(&GpuEntity::WORLD));
-        for n in 0..self.models.instances.len() {
+        for (n, posed) in posed.iter_mut().enumerate() {
             let Some(level) = self
                 .models
                 .visible(n, camera, &frustum, view_cluster, &self.vis)
@@ -1692,11 +1782,67 @@ impl WorldRenderer {
                 let at = first * size_of::<Mat34>();
                 bone_table[at..at + size_of_val(&pose[..])]
                     .copy_from_slice(bytemuck::cast_slice(&pose));
+                *posed = Some(pose);
             }
             for piece in m.lods[level].pieces.clone() {
                 if let Some(r) = self.surface_draw[self.first_model_surface + piece] {
                     ranges.push(r);
                 }
+            }
+        }
+        if let Some(shadows) = &mut self.shadows {
+            let cast = lay_shadows(
+                &self.models,
+                shadows,
+                &self.fog_volumes,
+                camera.origin,
+                |link| self.vis.sends(view_cluster, link),
+                ms,
+                &posed,
+            );
+            let pieces = cast
+                .iter()
+                .flat_map(|&n| &shadows.laid[n].as_ref().unwrap().pieces);
+            // Each fog's pieces together, as fans, the vertices from the region's
+            // start.
+            let mut verts: Vec<Vertex> = Vec::new();
+            let mut fans: Vec<(usize, Vec<u32>)> = Vec::new();
+            for (fog, piece) in pieces {
+                let fog = *fog;
+                if verts.len() + piece.len() > shadows.max_vertices {
+                    break;
+                }
+                let base = verts.len() as u32;
+                verts.extend(piece.iter().map(|v| Vertex {
+                    xyz: v.xyz,
+                    normal: [0.0; 3],
+                    st: v.st,
+                    lightmap: [[0.0; 2]; 4],
+                    color: [255, 255, 255, v.alpha],
+                }));
+                let fan = (2..piece.len() as u32).flat_map(|k| [base, base + k - 1, base + k]);
+                fans.push((fog, fan.collect()));
+            }
+            fans.sort_by_key(|f| f.0);
+            let vstart = shadows.first_vertex as usize * size_of::<Vertex>();
+            vb[vstart..vstart + size_of_val(&verts[..])]
+                .copy_from_slice(bytemuck::cast_slice(&verts));
+            let mut at = shadows.first_index;
+            for m in &mut self.materials {
+                let Some(Dynamic {
+                    source: DynamicSource::Shadows { fog },
+                    ..
+                }) = &m.dynamic
+                else {
+                    continue;
+                };
+                m.first_index = at;
+                for (_, fan) in fans.iter().filter(|f| f.0 == *fog) {
+                    let i = at as usize * 4;
+                    ib[i..i + fan.len() * 4].copy_from_slice(bytemuck::cast_slice(fan));
+                    at += fan.len() as u32;
+                }
+                m.index_count = at - m.first_index;
             }
         }
         ranges.sort_by_key(|r| r.0);
@@ -1800,6 +1946,65 @@ impl WorldRenderer {
         }
         Ok(())
     }
+}
+
+/// The shader of the NPCs' shadows (`cgs.media.shadowMarkShader`).
+const SHADOW_SHADER: &str = "markShadow";
+
+/// Lays the NPCs' shadows (`CG_PlayerShadow`, `_PlayerShadow`) in `shadows.laid`,
+/// each piece with its fog (`RE_AddPolyToScene`, seen from outside any fog), and
+/// returns the NPCs that cast one: those the server sends (`sent`) whose shadow's
+/// origin is within [`swjkja_world::mark::SHADOW_RANGE`] of the view, a mark of
+/// [`swjkja_world::mark::SHADOW_RADIUS`] on the floor below, turned with their
+/// legs. `posed` holds the NPCs this view posed. The rancor's and the AT-ST's
+/// larger shadows, and cloaked NPCs' and sand creatures' lack of one, are left
+/// out.
+fn lay_shadows(
+    models: &StaticModels,
+    shadows: &mut Shadows,
+    fogs: &[fog::FogVolume],
+    view: [f32; 3],
+    sent: impl Fn(&vis::EntityLink) -> bool,
+    time: i32,
+    posed: &[Option<Vec<Mat34>>],
+) -> Vec<usize> {
+    use swjkja_world::mark::{SHADOW_RADIUS, SHADOW_RANGE, impact_mark, shadow_floor};
+    shadows.laid.resize_with(models.instances.len(), || None);
+    let mut cast = Vec::new();
+    for (n, m) in models.instances.iter().enumerate() {
+        if !m.link.as_ref().is_some_and(&sent) {
+            continue;
+        }
+        let Some(from @ (origin, yaw)) = models.shadow(n, time, posed[n].as_deref()) else {
+            continue;
+        };
+        let d = [0, 1, 2].map(|k| origin[k] - view[k]);
+        if d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > SHADOW_RANGE * SHADOW_RANGE {
+            continue;
+        }
+        if shadows.laid[n].as_ref().is_none_or(|l| l.from != from) {
+            let pieces = shadow_floor(&shadows.world, origin).map_or_else(Vec::new, |floor| {
+                let (floor, normal, alpha) = floor;
+                let marks = impact_mark(&shadows.marks, floor, normal, yaw, alpha, SHADOW_RADIUS);
+                marks
+                    .into_iter()
+                    .map(|piece| {
+                        let fold = |f: fn(f32, f32) -> f32| {
+                            let first = piece[0].xyz;
+                            piece
+                                .iter()
+                                .fold(first, |b, v| [0, 1, 2].map(|k| f(b[k], v.xyz[k])))
+                        };
+                        let (lo, hi) = (fold(f32::min), fold(f32::max));
+                        (crate::models::sp_fog_num_box(fogs, lo, hi, 0), piece)
+                    })
+                    .collect()
+            });
+            shadows.laid[n] = Some(Laid { from, pieces });
+        }
+        cast.push(n);
+    }
+    cast
 }
 
 /// `RB_SurfaceFlare` without its depth test (the shader does that): a quad 3 units in
