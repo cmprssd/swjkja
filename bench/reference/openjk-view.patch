@@ -206,10 +206,46 @@ index d1c794e..0cb9b9e 100644
  	}
  
 diff --git a/code/game/g_main.cpp b/code/game/g_main.cpp
-index a349d4f..18b99d0 100644
+index a349d4f..730edc8 100644
 --- a/code/game/g_main.cpp
 +++ b/code/game/g_main.cpp
-@@ -1901,6 +1901,12 @@ void G_RunFrame( int levelTime ) {
+@@ -722,6 +722,19 @@ InitGame
+ int giMapChecksum;
+ SavedGameJustLoaded_e g_eSavedGameJustLoaded;
+ qboolean g_qbLoadTransition = qfalse;
++// swjkja reference capture: with g_swjkjaRand set, every draw from the shared
++// random number generator up to that level time (ms) is logged.
++static int swjkjaRandDraws;
++static int swjkjaRandUntil;
++static void G_SwjkjaRandLog( const char *file, int line, float min, float max, float result, unsigned state )
++{
++	if ( level.time <= swjkjaRandUntil ) {
++		const char *base = strrchr( file, '\\' ) ? strrchr( file, '\\' ) + 1 : file;
++		gi.Printf( "swjkja rand %d time %d %s:%d %g %g %g state %08x\n", swjkjaRandDraws, level.time, base, line, min, max, result, state );
++	}
++	swjkjaRandDraws++;
++}
++
+ void InitGame(  const char *mapname, const char *spawntarget, int checkSum, const char *entities, int levelTime, int randomSeed, int globalTime, SavedGameJustLoaded_e eSavedGameJustLoaded, qboolean qbLoadTransition )
+ {
+ 	//rww - default this to 0, we will auto-set it to 1 if we run into a terrain ent
+@@ -741,6 +754,15 @@ void InitGame(  const char *mapname, const char *spawntarget, int checkSum, cons
+ 
+ 	G_InitCvars();
+ 
++	{
++		cvar_t *swjkjaRand = gi.cvar( "g_swjkjaRand", "", 0 );
++		if ( swjkjaRand->string[0] ) {
++			swjkjaRandUntil = swjkjaRand->integer;
++			Q_swjkjaRandLog = G_SwjkjaRandLog;
++			gi.Printf( "swjkja rand init draws %d\n", swjkjaRandDraws );
++		}
++	}
++
+ 	G_InitMemory();
+ 
+ 	// set some level globals
+@@ -1901,6 +1923,12 @@ void G_RunFrame( int levelTime ) {
  	int			i;
  	gentity_t	*ent;
  	int			ents_inuse=0; // someone's gonna be pissed I put this here...
@@ -406,3 +442,65 @@ index ceb9bd8..d899b2d 100644
  XCVAR_DEF( cg_fovAspectAdjust,					"0",					NULL,					CVAR_ARCHIVE )
  XCVAR_DEF( cg_fovViewmodel,						"0",					NULL,					CVAR_ARCHIVE )
  XCVAR_DEF( cg_fovViewmodelAdjust,				"1",					NULL,					CVAR_ARCHIVE )
+diff --git a/shared/qcommon/q_math.c b/shared/qcommon/q_math.c
+index b15b3db..f6ad22c 100644
+--- a/shared/qcommon/q_math.c
++++ b/shared/qcommon/q_math.c
+@@ -21,6 +21,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
+ ===========================================================================
+ */
+ 
++#define Q_MATH_SWJKJA
+ #include "q_math.h"
+ #include <assert.h>
+ #include <float.h>
+@@ -264,6 +265,26 @@ int Q_irand( int value1, int value2 )
+ 	return irand(value1, value2);
+ }
+ 
++void (*Q_swjkjaRandLog)( const char *file, int line, float min, float max, float result, unsigned state ) = NULL;
++
++float Q_flrandAt( float min, float max, const char *file, int line )
++{
++	float result = flrand( min, max );
++	if ( Q_swjkjaRandLog ) {
++		Q_swjkjaRandLog( file, line, min, max, result, holdrand );
++	}
++	return result;
++}
++
++int Q_irandAt( int min, int max, const char *file, int line )
++{
++	int result = irand( min, max );
++	if ( Q_swjkjaRandLog ) {
++		Q_swjkjaRandLog( file, line, (float)min, (float)max, (float)result, holdrand );
++	}
++	return result;
++}
++
+ /*
+ erandom
+ 
+diff --git a/shared/qcommon/q_math.h b/shared/qcommon/q_math.h
+index f52e45d..5a259e2 100644
+--- a/shared/qcommon/q_math.h
++++ b/shared/qcommon/q_math.h
+@@ -73,6 +73,18 @@ int   irand( int min, int max );
+ 
+ float erandom( float mean );
+ 
++// swjkja reference capture: with a log set (the game's g_swjkjaRand), every draw
++// from the shared generator is logged with its caller and the generator's state.
++extern void (*Q_swjkjaRandLog)( const char *file, int line, float min, float max, float result, unsigned state );
++float Q_flrandAt( float min, float max, const char *file, int line );
++int   Q_irandAt( int min, int max, const char *file, int line );
++#if defined( SP_GAME ) && !defined( Q_MATH_SWJKJA )
++#define Q_flrand( min, max ) Q_flrandAt( min, max, __FILE__, __LINE__ )
++#define flrand( min, max ) Q_flrandAt( min, max, __FILE__, __LINE__ )
++#define Q_irand( min, max ) Q_irandAt( min, max, __FILE__, __LINE__ )
++#define irand( min, max ) Q_irandAt( min, max, __FILE__, __LINE__ )
++#endif
++
+ 
+ ///////////////////////////////////////////////////////////////////////////
+ //

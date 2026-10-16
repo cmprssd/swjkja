@@ -97,6 +97,9 @@ pub struct Ghoul2 {
     pub pose: Option<Pose>,
     /// Models bolted to it, in the order the original attaches them.
     pub attached: Vec<Attached>,
+    /// The entity's colour (`shaderRGBA`), which its models and those bolted to it
+    /// are drawn with: an NPC's `customRGBA`, else zero (cgame leaves it zeroed).
+    pub color: [u8; 4],
 }
 
 /// The animations (named as in `animation.cfg`) an NPC's legs and torso stand
@@ -545,6 +548,7 @@ fn rack_item(item: Item, origin: Vec3, angles: Vec3, right: f32, up: f32) -> Sta
             radius: ITEM_RADIUS,
             pose: None,
             attached: Vec::new(),
+            color: [0; 4],
         });
     }
     m

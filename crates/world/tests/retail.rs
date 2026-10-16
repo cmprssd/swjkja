@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use swjkja_bsp::{Bsp, SurfaceKind};
 use swjkja_world::collision::Collision;
+use swjkja_world::rand::Rand;
 use swjkja_world::static_model::Rules;
 use swjkja_world::{Geometry, Options, World, npc, script};
 
@@ -144,9 +145,10 @@ fn single_player_npcs_find_their_looks() {
     for name in &maps {
         let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
         let rules = Rules::for_map(name);
-        for n in npc::npc_spawns(&bsp.entities, rules) {
+        let mut rand = Rand::default();
+        for n in npc::npc_spawns(&bsp.entities, rules, &sabers, &mut rand) {
             spawns += 1;
-            match npc::npc_look(&parms, &n.npc_type, n.message) {
+            match npc::npc_look(&parms, &sabers, &n.npc_type, n.message, &mut rand) {
                 Some(look) => {
                     drawn += 1;
                     let folder = format!("models/players/{}/", look.model);
@@ -220,6 +222,72 @@ fn single_player_npcs_find_their_looks() {
 }
 
 #[test]
+fn the_academies_random_jedi_look_as_in_the_original() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let text = |folder: &str, ext: &str| {
+        let files: Vec<Vec<u8>> = vfs
+            .list(folder, ext)
+            .iter()
+            .map(|f| vfs.read(&format!("{folder}/{f}")).unwrap())
+            .collect();
+        npc::join_parms(files.iter().map(Vec::as_slice))
+    };
+    let (parms, sabers) = (
+        text("ext_data/npcs", ".npc"),
+        text("ext_data/sabers", ".sab"),
+    );
+    // Logged by the reference capture (g_swjkjaRand): the random Jedi in spawn
+    // order, and the colour each draws from its set, by index.
+    let jedi = [
+        "jedi_kdm2",
+        "jedi_hm1",
+        "jedi_hf2",
+        "jedi_hf2",
+        "jedi_zf1",
+        "jedi_rm2",
+        "jedi_zf1",
+        "jedi_hf1",
+    ];
+    let logged: [(&str, &[usize]); 4] = [
+        ("academy1", &[3, 2, 2, 3, 6, 0, 0, 7]),
+        ("academy2", &[1, 6, 3, 4, 5, 4, 7]),
+        ("academy4", &[7, 6, 2, 3, 6, 0, 7, 3]),
+        ("academy6", &[7, 6, 3, 1, 5, 2, 0]),
+    ];
+    for (map, colors) in logged {
+        let bsp = Bsp::parse(&vfs.read(&format!("maps/{map}.bsp")).unwrap()).unwrap();
+        let mut rand = Rand::default();
+        let spawns = npc::npc_spawns(&bsp.entities, Rules::for_map(map), &sabers, &mut rand);
+        let looks: Vec<_> = spawns
+            .iter()
+            .map(|n| {
+                (
+                    n,
+                    npc::npc_look(&parms, &sabers, &n.npc_type, n.message, &mut rand),
+                )
+            })
+            .filter(|(n, _)| n.npc_type.starts_with("jedi_"))
+            .map(|(n, look)| (n.npc_type.as_str(), look.unwrap().color))
+            .collect();
+        let expected: Vec<_> = jedi
+            .iter()
+            .zip(colors)
+            .map(|(&name, &i)| {
+                let set = name.trim_end_matches(char::is_numeric);
+                let (_, palette) = npc::PALETTES.iter().find(|(n, _)| *n == set).unwrap();
+                let [r, g, b] = palette[i];
+                (name, [r, g, b, 255])
+            })
+            .collect();
+        assert_eq!(looks, expected, "{map}");
+    }
+}
+
+#[test]
 fn single_player_look_targets_name_npcs() {
     let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
         eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
@@ -234,7 +302,12 @@ fn single_player_look_targets_name_npcs() {
     let mut lookers = std::collections::BTreeMap::new();
     for name in &maps {
         let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
-        let spawns = npc::npc_spawns(&bsp.entities, Rules::for_map(name));
+        let spawns = npc::npc_spawns(
+            &bsp.entities,
+            Rules::for_map(name),
+            b"",
+            &mut Rand::default(),
+        );
         for n in &spawns {
             let Some(nodes) = n
                 .spawnscript

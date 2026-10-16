@@ -381,6 +381,35 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Single-player random picks as the original's, 2026-10-16
+
+Single player never seeds the game's random numbers, so what a map's spawn picks at
+random is the same every run. The capture patch can now log every draw with its
+caller (`g_swjkjaRand`): replaying the generator through the spawn gives the
+academies' random Jedi (kdm2, hm1, hf2, hf2, zf1, rm2, zf1 and on academy1 and 4
+hf1) and their tints as logged (a retail test), and NPCs draw with their colour
+(`customRGBA`) where they drew with none. The four academy views were captured
+again; main against the same captures:
+
+| View | Mean difference | main | Pixels off by > 16 | main |
+|------|------|------|------|------|
+| academy1_class | 0.57 | 0.95 | 0.6% | 1.6% |
+| academy2_class | 2.14 | 2.64 | 4.8% | 5.8% |
+| academy4_class | 2.77 | 3.46 | 5.9% | 7.1% |
+| academy6_class | 3.07 | 4.24 | 7.2% | 9.2% |
+
+- The students' heads, clothes and tints now match the captures one for one; what
+  is left is lighting (blob shadows, not drawn here) and the poses of the students
+  whose scripts wait a random time: those draws come after the client starts,
+  whose every frame draws from the same generator, so they vary between captures.
+- The 39 other reference views render pixel for pixel as on main (the NPCs of
+  dpred_troopers, vjun2_officer and kor2_troopers have no shaders that use the
+  colour). `bench_world` (three runs of 300 frames) on the academy views is within
+  main's spread (6.6 to 9.1 ms, main 6.4 to 15.5). Loading academy1 and academy2
+  takes about 350 ms more (1.40 s against 1.05, three runs each): the random Jedi
+  are now six models, not one, with 35 more textures (148 against 113 on academy1),
+  which the original loads too.
+
 ## Single-player level scripts and their cutscenes, 2026-10-16
 
 A map's script runners now run with its NPCs: the academies' intros start as the

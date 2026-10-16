@@ -8,12 +8,16 @@
 //! waits to be used, and the ones it spawns depend on scripts. Each stands where
 //! its spawner is, as it spawned, dropped to the floor: the game then runs its AI
 //! and scripts.
+//!
+//! What the spawn picks at random is the original's pick: the game's generator
+//! ([`crate::rand`]) is replayed through the spawn functions and each NPC's block.
 
 use swjkja_bsp::Entity;
 use swjkja_shader::text::Cursor;
 
 use crate::Vec3;
 use crate::collision::{Collision, MASK_NPCSOLID, MIN_WORLD_COORD};
+use crate::rand::Rand;
 use crate::script::{FIRST_FRAME, FirstPass, first_pass};
 use crate::static_model::{
     Attached, Ghoul2, Pose, Rules, StaticModel, angles_to_axis, origin_and_angles, spawns_at,
@@ -41,15 +45,20 @@ pub struct NpcSpawn {
 }
 
 /// The spawn function's choice of type for spawner class `class` (lowercase) with
-/// `flags`, `key` its "NPC_type" and `message` whether it has one. `None` for the
-/// spawners that make no NPC here: vehicles (another model, chosen by
-/// `vehicles.dat`), `NPC_Galak` (spawns nothing), and an `NPC_spawner` without a
-/// type (a random one).
-///
-/// A random choice takes the branch written first: a coin flip its "if" side, a
-/// pick among several its first case.
-fn npc_type(class: &str, flags: i64, key: Option<&str>, message: bool) -> Option<String> {
-    let f = |bit: i64| flags & bit != 0;
+/// `flags`, `key` its "NPC_type" and `message` whether it has one, drawing its
+/// random choices from `rand`. `None` for the spawners that make no NPC here:
+/// vehicles (another model, chosen by `vehicles.dat`), `NPC_Galak` (spawns
+/// nothing), and an `NPC_spawner` without a type (a random one). A random saber
+/// cultist's spawn function sets its flags anew.
+fn npc_type(
+    class: &str,
+    flags: &mut i64,
+    key: Option<&str>,
+    message: bool,
+    rand: &mut Rand,
+) -> Option<String> {
+    let flags_in = *flags;
+    let f = |bit: i64| flags_in & bit != 0;
     // The spawn functions that keep a type the spawner names.
     let keeps_key = matches!(
         class,
@@ -91,7 +100,8 @@ fn npc_type(class: &str, flags: i64, key: Option<&str>, message: bool) -> Option
     // SP_NPC_Cultist_Saber(_Powers): medium (1), strong (2), or neither; throwing
     // (8). Its "all" branch tests 2 again, so 4 is never reached, and the
     // throwing plain one has no "2".
-    let cultist_saber = |powers: bool| {
+    let cultist_saber = |flags: i64, powers: bool| {
+        let f = |bit: i64| flags & bit != 0;
         let name = match (f(1), f(2), f(8)) {
             (true, _, true) => "cultist_saber_med_throw",
             (true, _, false) => "cultist_saber_med",
@@ -134,13 +144,12 @@ fn npc_type(class: &str, flags: i64, key: Option<&str>, message: bool) -> Option
         "npc_chewbacca" => "Chewie",
         "npc_bartender" => "Bartender",
         "npc_morgankatarn" => "MorganKatarn",
-        // A random Jedi (4): the first of twelve.
-        "npc_jedi" if f(4) => "jedi_hf1",
+        "npc_jedi" if f(4) => random_jedi(rand),
         "npc_jedi" if f(2) => "jedimaster",
         "npc_jedi" if f(1) => "jeditrainer",
-        "npc_jedi" => "Jedi",
-        "npc_prisoner" if f(1) => "elder",
-        "npc_prisoner" => "Prisoner",
+        "npc_jedi" => rand.flip("Jedi", "Jedi2"),
+        "npc_prisoner" if f(1) => rand.flip("elder", "elder2"),
+        "npc_prisoner" => rand.flip("Prisoner", "Prisoner2"),
         "npc_merchant" => "merchant",
         "npc_rebel" => "Rebel",
         "npc_human_merc" if message => "human_merc_key",
@@ -154,7 +163,7 @@ fn npc_type(class: &str, flags: i64, key: Option<&str>, message: bool) -> Option
         "npc_stormtrooper" if f(2) => "stcommander",
         "npc_stormtrooper" | "npc_stormtrooperofficer" if f(1) => "stofficer",
         "npc_stormtrooperofficer" => "stofficer",
-        "npc_stormtrooper" => "StormTrooper",
+        "npc_stormtrooper" => rand.flip("StormTrooper", "StormTrooper2"),
         "npc_snowtrooper" => "snowtrooper",
         "npc_tie_pilot" => "stormpilot",
         "npc_rockettrooper" if f(1) => "rockettrooper2Officer",
@@ -162,15 +171,15 @@ fn npc_type(class: &str, flags: i64, key: Option<&str>, message: bool) -> Option
         "npc_hazardtrooper" if f(1) => "hazardtrooperofficer",
         "npc_hazardtrooper" if f(2) => "hazardtrooperconcussion",
         "npc_hazardtrooper" => "hazardtrooper",
-        "npc_ugnaught" => "Ugnaught",
+        "npc_ugnaught" => rand.flip("Ugnaught", "Ugnaught2"),
         "npc_jawa" if f(1) => "jawa_armed",
         "npc_jawa" => "jawa",
         "npc_gran" if f(1) => "granshooter",
         "npc_gran" if f(2) => "granboxer",
-        "npc_gran" => "gran",
+        "npc_gran" => rand.flip("gran", "gran2"),
         "npc_rodian" if f(1) => "rodian2",
         "npc_rodian" => "rodian",
-        "npc_weequay" => "Weequay",
+        "npc_weequay" => ["Weequay", "Weequay2", "Weequay3", "Weequay4"][rand.irand(0, 3) as usize],
         "npc_trandoshan" => "Trandoshan",
         "npc_tusken" if f(1) => "tuskensniper",
         "npc_tusken" => "tusken",
@@ -181,7 +190,7 @@ fn npc_type(class: &str, flags: i64, key: Option<&str>, message: bool) -> Option
         "npc_imperial" if f(2) => "ImpCommander",
         "npc_imperial" => "Imperial",
         "npc_impworker" => "ImpWorker",
-        "npc_bespincop" => "BespinCop",
+        "npc_bespincop" => rand.flip("BespinCop2", "BespinCop"),
         "npc_reborn" | "npc_colombian_soldier" | "npc_colombian_rebel" => match () {
             _ if f(1) => "rebornforceuser",
             _ if f(2) => "rebornfencer",
@@ -200,17 +209,24 @@ fn npc_type(class: &str, flags: i64, key: Option<&str>, message: bool) -> Option
             (_, _, _, true) => "reborn_staff",
             _ => "reborn_new",
         },
-        "npc_cultist_saber" => return Some(cultist_saber(false)),
-        "npc_cultist_saber_powers" => return Some(cultist_saber(true)),
-        // A random saber cultist (1): the first strength (medium), throwing.
-        "npc_cultist" if f(1) => "cultist_saber_med_throw",
+        "npc_cultist_saber" => return Some(cultist_saber(flags_in, false)),
+        "npc_cultist_saber_powers" => return Some(cultist_saber(flags_in, true)),
+        // A random saber cultist (1): medium, strong or "all" (4, which ends up
+        // neither), and throwing or not.
+        "npc_cultist" if f(1) => {
+            *flags = [1, 2, 4][rand.irand(0, 2) as usize];
+            *flags |= rand.flip(8, 0);
+            return Some(cultist_saber(*flags, false));
+        }
         "npc_cultist" if f(2) => "cultist_grip",
         "npc_cultist" if f(4) => "cultist_lightning",
         "npc_cultist" if f(8) => "cultist_drain",
         "npc_cultist" => "cultist",
         "npc_cultist_commando" => "cultistcommando",
         "npc_cultist_destroyer" => "cultist_destroyer",
-        "npc_shadowtrooper" | "npc_colombian_emplacedgunner" => "ShadowTrooper",
+        "npc_shadowtrooper" | "npc_colombian_emplacedgunner" => {
+            rand.flip("ShadowTrooper2", "ShadowTrooper")
+        }
         "npc_saboteur" if f(1) => "saboteursniper",
         "npc_saboteur" if f(2) => "saboteurpistol",
         "npc_saboteur" if f(4) => "saboteurcommando",
@@ -254,38 +270,99 @@ fn npc_type(class: &str, flags: i64, key: Option<&str>, message: bool) -> Option
     Some(name.to_owned())
 }
 
+/// `SP_NPC_Jedi`'s random Jedi (spawn flag 4): one of twelve, drawn again (up to
+/// 20 draws) while it is one of the player's character's (`g_char_model`,
+/// "jedi_tf" by default).
+fn random_jedi(rand: &mut Rand) -> &'static str {
+    const JEDI: [&str; 12] = [
+        "jedi_hf1",
+        "jedi_hf2",
+        "jedi_hm1",
+        "jedi_hm2",
+        "jedi_kdm1",
+        "jedi_kdm2",
+        "jedi_rm1",
+        "jedi_rm2",
+        "jedi_tf1",
+        "jedi_tf2",
+        "jedi_zf1",
+        "jedi_zf2",
+    ];
+    let mut name = JEDI[0];
+    for _ in 0..20 {
+        name = JEDI[rand.irand(0, 11) as usize];
+        if !name.contains(PLAYER_MODEL) {
+            break;
+        }
+    }
+    name
+}
+
 /// The NPCs `entities` spawn as the map loads under `rules` (none in multiplayer), in
 /// entity order: the spawners not left out by skill and not waiting to be used (no
 /// "targetname").
-pub fn npc_spawns(entities: &[Entity], rules: Rules) -> Vec<NpcSpawn> {
+///
+/// The map's spawn functions draw from `rand` in entity order: the NPC spawners'
+/// random types (a waiting spawner's too), and each player start, which reads the
+/// player's saber's block in `sabers` (the `.sab` files' text) to precache it
+/// (`SP_info_player_deathmatch`; not with the stun baton, flag 32). Other entities'
+/// draws are left out.
+pub fn npc_spawns(
+    entities: &[Entity],
+    rules: Rules,
+    sabers: &[u8],
+    rand: &mut Rand,
+) -> Vec<NpcSpawn> {
     let Rules::SinglePlayer { skill } = rules else {
         return Vec::new();
     };
-    entities
-        .iter()
-        .filter(|e| spawns_at(e, skill) && e.get("targetname").is_none())
-        .filter_map(|e| {
-            let class = e.get("classname")?.to_ascii_lowercase();
-            let flags = e.get("spawnflags").map_or(0, atoi);
-            let message = e.get("message").is_some();
-            let npc_type = npc_type(&class, flags, e.get("NPC_type"), message)?;
-            let (origin, angles) = origin_and_angles(e);
-            let spawnscript = e
-                .get("spawnscript")
-                .filter(|s| !s.is_empty() && !s.to_ascii_uppercase().starts_with("BS_"))
-                .map(str::to_owned);
-            let targetname = e.get("NPC_targetname").map(str::to_owned);
-            Some(NpcSpawn {
-                npc_type,
-                origin,
-                angles,
-                message,
-                flags,
-                spawnscript,
-                targetname,
-            })
-        })
-        .collect()
+    let mut spawns = Vec::new();
+    for e in entities.iter().filter(|e| spawns_at(e, skill)) {
+        let Some(class) = e.get("classname").map(str::to_ascii_lowercase) else {
+            continue;
+        };
+        let mut flags = e.get("spawnflags").map_or(0, atoi);
+        if matches!(
+            class.as_str(),
+            "info_player_start" | "info_player_deathmatch"
+        ) {
+            if flags & 32 == 0 {
+                draw_saber_colors(sabers, PLAYER_SABER, rand);
+            }
+            continue;
+        }
+        let message = e.get("message").is_some();
+        let Some(npc_type) = npc_type(&class, &mut flags, e.get("NPC_type"), message, rand) else {
+            continue;
+        };
+        if e.get("targetname").is_some() {
+            continue;
+        }
+        let (origin, angles) = origin_and_angles(e);
+        let spawnscript = e
+            .get("spawnscript")
+            .filter(|s| !s.is_empty() && !s.to_ascii_uppercase().starts_with("BS_"))
+            .map(str::to_owned);
+        let targetname = e.get("NPC_targetname").map(str::to_owned);
+        spawns.push(NpcSpawn {
+            npc_type,
+            origin,
+            angles,
+            message,
+            flags,
+            spawnscript,
+            targetname,
+        });
+    }
+    spawns
+}
+
+/// The draws reading saber `name`'s block in `sabers` makes: one per colour it
+/// picks at random (`Q_irand(SABER_ORANGE, SABER_PURPLE)`).
+fn draw_saber_colors(sabers: &[u8], name: &str, rand: &mut Rand) {
+    for _ in 0..saber_look(sabers, name).random_colors {
+        rand.irand(1, 5);
+    }
 }
 
 /// The `.npc` files' texts as `NPC_LoadParms` joins them, in the order given (the
@@ -301,6 +378,24 @@ pub fn join_parms<'a>(files: impl IntoIterator<Item = &'a [u8]>) -> Vec<u8> {
     parms
 }
 
+/// The inside of the first block named `name` (ignoring case) in `text`, as
+/// `NPC_ParseParms` and `WP_SaberParseParms` find it: past its "{". `None` if no
+/// block has the name, or it has no "{".
+fn block<'a>(text: &'a [u8], name: &str) -> Option<Cursor<'a>> {
+    let mut p = Cursor::new(text);
+    loop {
+        let token = p.token(true);
+        if token.is_empty() {
+            return None;
+        }
+        if token.eq_ignore_ascii_case(name.as_bytes()) {
+            break;
+        }
+        p.skip_braced_section(0);
+    }
+    (p.token(true) == b"{").then_some(p)
+}
+
 /// `DEFAULT_MINS_2`: an NPC's box always starts 24 units below its origin.
 const DEFAULT_MINS_2: f32 = -24.0;
 /// `playerMins` and `playerMaxs`, the box an NPC has unless its block sets one.
@@ -311,6 +406,101 @@ const PLAYER_MAXS: Vec3 = [15.0, 15.0, 40.0];
 /// their defaults).
 const PLAYER_MODEL: &str = "jedi_tf";
 const PLAYER_SKIN: &str = "head_a1|torso_a1|lower_a1";
+/// The saber the player's character carries (`g_saber`'s default).
+const PLAYER_SABER: &str = "single_1";
+
+/// The colour sets "customRGBA" names, one drawn at random (`NPC_ParseParms`).
+pub const PALETTES: [(&str, &[[u8; 3]]); 7] = [
+    (
+        "random1",
+        &[
+            [127, 153, 255],
+            [177, 29, 13],
+            [47, 90, 40],
+            [181, 207, 255],
+            [138, 83, 0],
+            [254, 199, 14],
+        ],
+    ),
+    (
+        "jedi_hf",
+        &[
+            [165, 48, 21],
+            [254, 230, 132],
+            [181, 207, 255],
+            [233, 183, 208],
+            [161, 226, 240],
+            [101, 159, 255],
+            [255, 157, 114],
+            [216, 160, 255],
+        ],
+    ),
+    (
+        "jedi_hm",
+        &[
+            [252, 243, 180],
+            [69, 109, 255],
+            [254, 197, 73],
+            [178, 78, 18],
+            [112, 153, 161],
+            [123, 182, 255],
+            [0, 88, 105],
+            [138, 0, 0],
+        ],
+    ),
+    (
+        "jedi_kdm",
+        &[
+            [85, 120, 255],
+            [173, 142, 219],
+            [254, 197, 73],
+            [138, 83, 0],
+            [254, 199, 14],
+            [68, 194, 217],
+            [170, 3, 30],
+            [225, 226, 144],
+            [167, 202, 255],
+        ],
+    ),
+    (
+        "jedi_rm",
+        &[
+            [127, 153, 255],
+            [208, 249, 85],
+            [181, 207, 255],
+            [138, 83, 0],
+            [224, 171, 44],
+            [49, 155, 131],
+            [163, 79, 17],
+            [148, 104, 228],
+            [138, 136, 0],
+        ],
+    ),
+    (
+        "jedi_tf",
+        &[
+            [255, 235, 100],
+            [62, 155, 255],
+            [255, 110, 120],
+            [180, 150, 255],
+            [255, 200, 212],
+            [255, 255, 255],
+        ],
+    ),
+    (
+        "jedi_zf",
+        &[
+            [204, 19, 21],
+            [255, 107, 40],
+            [255, 148, 155],
+            [255, 164, 59],
+            [216, 160, 255],
+            [101, 159, 255],
+            [161, 226, 240],
+            [37, 155, 181],
+        ],
+    ),
+];
 
 /// What an NPC's `.npc` block says about how it looks.
 #[derive(Debug, Clone, PartialEq)]
@@ -336,6 +526,11 @@ pub struct NpcLook {
     pub weapon: usize,
     /// "saber" and "saber2": the names of their `.sab` blocks.
     pub sabers: [Option<String>; 2],
+    /// `customRGBA`, which cgame draws it with (`shaderRGBA`): white, or the
+    /// block's "customRGBA": its numbers, a colour of a set ([`PALETTES`]) or three
+    /// random components ("random"). The player's character is white (the
+    /// `g_char_color_*` defaults).
+    pub color: [u8; 4],
 }
 
 /// "playerTeam" (`team_t`): any other name is no team the game knows, which acts
@@ -352,21 +547,21 @@ pub enum Team {
 /// them, in order: the first block of a name wins), for an NPC whose spawner has a
 /// "message" or not. `None` if no block has the name, or it gives no Ghoul2 model
 /// ("playerModel"): the original's MD3 NPCs and vehicles are not drawn here.
-pub fn npc_look(parms: &[u8], npc_type: &str, message: bool) -> Option<NpcLook> {
-    let mut p = Cursor::new(parms);
-    loop {
-        let token = p.token(true);
-        if token.is_empty() {
-            return None;
-        }
-        if token.eq_ignore_ascii_case(npc_type.as_bytes()) {
-            break;
-        }
-        p.skip_braced_section(0);
-    }
-    if p.token(true) != b"{" {
-        return None;
-    }
+///
+/// Its random choices are drawn from `rand` as the block is read: "customRGBA"'s,
+/// and the colours of the sabers it names (their blocks in `sabers`, the `.sab`
+/// files' text; [`SaberLook::random_colors`]; a second saber only beside a
+/// one-handed first), and a "saberColor" (or "saber2Color", or either with a blade
+/// number) of "random". The player's character then takes the player's saber.
+/// No block, no draws.
+pub fn npc_look(
+    parms: &[u8],
+    sabers_text: &[u8],
+    npc_type: &str,
+    message: bool,
+    rand: &mut Rand,
+) -> Option<NpcLook> {
+    let mut p = block(parms, npc_type)?;
     let mut model = None;
     let mut skin = "default".to_owned();
     let (mut off, mut on) = (String::new(), String::new());
@@ -378,6 +573,8 @@ pub fn npc_look(parms: &[u8], npc_type: &str, message: bool) -> Option<NpcLook> 
     let mut rank = 0;
     let mut weapon = 0;
     let mut sabers = [None, None];
+    let mut color = [255; 4];
+    let mut two_handed = false;
     loop {
         let token = p.token(true);
         if token.is_empty() {
@@ -447,8 +644,45 @@ pub fn npc_look(parms: &[u8], npc_type: &str, message: bool) -> Option<NpcLook> 
                     weapon = w;
                 }
             }
-            "saber" if !value.is_empty() => sabers[0] = Some(value),
-            "saber2" if !value.is_empty() => sabers[1] = Some(value),
+            "saber" if !value.is_empty() => {
+                two_handed = saber_look(sabers_text, &value).two_handed;
+                draw_saber_colors(sabers_text, &value, rand);
+                sabers[0] = Some(value);
+            }
+            "saber2" if !value.is_empty() => {
+                if !two_handed {
+                    draw_saber_colors(sabers_text, &value, rand);
+                }
+                sabers[1] = Some(value);
+            }
+            "customrgba" if !value.is_empty() => {
+                let lower = value.to_ascii_lowercase();
+                if lower == "random" {
+                    color = [0, 0, 0, 255];
+                    for c in &mut color[..3] {
+                        *c = rand.irand(0, 255) as u8;
+                    }
+                } else if let Some((_, set)) = PALETTES.iter().find(|(name, _)| *name == lower) {
+                    let [r, g, b] = set[rand.irand(0, set.len() as i32 - 1) as usize];
+                    color = [r, g, b, 255];
+                } else {
+                    // COM_ParseInt: each further number on the line, or the rest
+                    // stay as they were.
+                    color[0] = atoi(&value) as u8;
+                    for c in &mut color[1..] {
+                        let n = p.token(false);
+                        if n.is_empty() {
+                            break;
+                        }
+                        *c = atoi(&String::from_utf8_lossy(n)) as u8;
+                    }
+                }
+            }
+            _ if saber_color_key(&key) && !value.is_empty() => {
+                if value.eq_ignore_ascii_case("random") {
+                    rand.irand(1, 5);
+                }
+            }
             // Values on the line after the key, unread: the rest of the line.
             _ if value.is_empty() => {}
             _ => p.skip_rest_of_line(),
@@ -462,6 +696,9 @@ pub fn npc_look(parms: &[u8], npc_type: &str, message: bool) -> Option<NpcLook> 
     let player = model.eq_ignore_ascii_case("player");
     if player {
         (off, on) = (String::new(), String::new());
+        // G_InitPlayerFromCvars: the player's saber, and colour.
+        draw_saber_colors(sabers_text, PLAYER_SABER, rand);
+        color = [255; 4];
     }
     let (model, skin) = if player {
         (PLAYER_MODEL.to_owned(), PLAYER_SKIN.to_owned())
@@ -508,6 +745,16 @@ pub fn npc_look(parms: &[u8], npc_type: &str, message: bool) -> Option<NpcLook> 
         rank,
         weapon,
         sabers,
+        color,
+    })
+}
+
+/// Whether `key` (lowercase) sets a saber's blade colours in an NPC's block:
+/// "saberColor" or "saber2Color", alone or with a blade number from 2 to 8.
+fn saber_color_key(key: &str) -> bool {
+    ["sabercolor", "saber2color"].iter().any(|k| {
+        key.strip_prefix(k)
+            .is_some_and(|n| n.is_empty() || matches!(n.as_bytes(), [b'2'..=b'8']))
     })
 }
 
@@ -661,6 +908,10 @@ pub struct SaberLook {
     pub two_handed: bool,
     /// "boltToWrist": bolted to the forearm's cap, not the hand.
     pub to_wrist: bool,
+    /// How many of its colours ("saberColor", "saberColor2" to "saberColor7") it
+    /// picks at random ("random"): each a draw as the block is read
+    /// (`TranslateSaberColor`).
+    pub random_colors: usize,
 }
 
 /// `WP_SaberParseParms` for saber `name` in the `.sab` files' text `sabers` (all
@@ -672,21 +923,11 @@ pub fn saber_look(sabers: &[u8], name: &str) -> SaberLook {
         skin: None,
         two_handed: false,
         to_wrist: false,
+        random_colors: 0,
     };
-    let mut p = Cursor::new(sabers);
-    loop {
-        let token = p.token(true);
-        if token.is_empty() {
-            return look;
-        }
-        if token.eq_ignore_ascii_case(name.as_bytes()) {
-            break;
-        }
-        p.skip_braced_section(0);
-    }
-    if p.token(true) != b"{" {
+    let Some(mut p) = block(sabers, name) else {
         return look;
-    }
+    };
     loop {
         let token = p.token(true);
         if token.is_empty() || token == b"}" {
@@ -705,6 +946,12 @@ pub fn saber_look(sabers: &[u8], name: &str) -> SaberLook {
             "customskin" if !value.is_empty() => look.skin = Some(value),
             "twohanded" if !value.is_empty() => look.two_handed = atoi(&value) != 0,
             "bolttowrist" if !value.is_empty() => look.to_wrist = atoi(&value) != 0,
+            "sabercolor" | "sabercolor2" | "sabercolor3" | "sabercolor4" | "sabercolor5"
+            | "sabercolor6" | "sabercolor7"
+                if value.eq_ignore_ascii_case("random") =>
+            {
+                look.random_colors += 1
+            }
             _ => {}
         }
     }
@@ -898,10 +1145,19 @@ pub fn npc_models(
     world: &Collision,
     scripts: &dyn Fn(&str) -> Option<Vec<Node>>,
 ) -> Vec<StaticModel> {
-    npc_spawns(entities, rules)
+    // The spawn functions draw as the map spawns, then each NPC's block is read in
+    // turn as it spawns (NPC_Spawn_Go, the frame after 1350 ms), drawn here or not.
+    let mut rand = Rand::default();
+    let spawns = npc_spawns(entities, rules, sabers, &mut rand);
+    let looks: Vec<_> = spawns
+        .iter()
+        .map(|n| npc_look(parms, sabers, &n.npc_type, n.message, &mut rand))
+        .collect();
+    spawns
         .into_iter()
-        .filter_map(|n| {
-            let look = npc_look(parms, &n.npc_type, n.message)?;
+        .zip(looks)
+        .filter_map(|(n, look)| {
+            let look = look?;
             let (mut pose, mut attached) = npc_gear(&look, &n.npc_type, n.flags, sabers);
             let script = n.spawnscript.as_deref().and_then(scripts).map(Arc::new);
             let first = script
@@ -951,6 +1207,7 @@ pub fn npc_models(
                     radius: look.radius,
                     pose: Some(pose),
                     attached,
+                    color: look.color,
                 }),
             })
         })

@@ -742,3 +742,37 @@ equals the same frame rendered alone (it fails if the frames share one slot).
 - **Moves are left out**: `SET_ORIGIN`, `SET_ANGLES` and the like complete without
   moving the NPC (the academies' views reach none before their time).
 
+
+## 2026-10-16: The game's random numbers replayed while a map spawns (chosen by the owner)
+
+- **The question**: the academies' random Jedi (`NPC_Jedi` spawn flag 4) and their
+  tints ("customRGBA jedi_hf" and the like) differed from every capture. Take the
+  low end, seed a capture, or log the original's picks?
+- **Found**: single player never seeds the game module's generator (`Rand_Init` has
+  no caller; `holdrand` starts at `0x89abcdef`), so the picks are the same every
+  run: a capture patch addition (`g_swjkjaRand`) logged every draw with its caller,
+  and the four academies' random Jedi come out kdm2, hm1, hf2, (tf1 drawn again: the
+  player's character's), hf2, zf1, rm2, zf1, as replaying the generator gives.
+- **Chosen: replay the generator** (`swjkja_world::rand::Rand`) through the spawn:
+  the spawn functions' random types and coin flips (Jedi, prisoners, stormtroopers,
+  ugnaughts, grans, weequays, Bespin cops, shadowtroopers, random saber cultists)
+  and each player start's saber precache, in entity order, then each NPC's
+  `NPC_ParseParms` as it spawns (its "customRGBA", its sabers' and its own random
+  saber colours, the player's character's saber). A retail test checks the
+  academies' random Jedi and tints against the logged draws; the views' tinted
+  NPCs now match the captures.
+- **NPCs draw with their colour** (`shaderRGBA` = `customRGBA`, white by default),
+  as cgame does; other models keep it zeroed.
+
+## 2026-10-16: What the replay leaves out (decided by Claude, pending review)
+
+- **Other entities' spawn draws** (ammo racks' spread, effects, breakables and
+  the like) are left out: none of the academies' entities draw before their NPCs,
+  but a map whose do would shift every NPC pick after them.
+- **Draws after the spawn stay at their range's low end** (scripts' random waits):
+  once the client runs, cgame draws from the same generator every frame it draws,
+  so what a script draws depends on frame timing. That, not the looks, is why
+  captures of academy2's students differ between runs.
+- **A spawner's misnumbered "saberColor" key** (a blade number outside 2 to 8), which
+  the original reads past without its value, draws nothing here (no retail block
+  has one).
