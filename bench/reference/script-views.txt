@@ -6,9 +6,9 @@
 # on academy2). academy1_class looks over the teachers at the seated
 # students (academy1/studentSpawn: BOTH_SIT2 held for good, weapons put away);
 # academy2_class at the standing students in their BOTH_CIN stances, three of whom
-# (academy2/studentSpawn5) wait a random time between animations; academy4_class and
-# academy6_class at the same classroom, whose students run academy2's scripts on
-# their own maps' cinematic skeletons. yavin1's capture
+# (academy2/studentSpawn5) wait a random time between animations (the capture pins
+# it at its low end); academy4_class and academy6_class at the same classroom, whose
+# students run academy2's scripts on their own maps' cinematic skeletons. yavin1's capture
 # never reaches the view (its intro), and t1_fatal's corpses die (SET_HEALTH 0).
 # vjun2_imp_stance looks at vjun2's imperial (entity 34) at 3000 ms, before its
 # idle: legs in BOTH_STAND3, torso in TORSO_WEAPONIDLE2, its spine turned against its

@@ -381,6 +381,31 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Single-player script waits pinned in the captures, 2026-10-16
+
+A script's random numbers (`wait( random( a, b ) )`, random loop counts) come from
+`CQuake3GameInterface::Random`, which calls the C library's `rand()`, seeded from
+the clock in `InitGame` (`srand( randomSeed )`, `com_frameTime`): every run of the
+original waits differently, so three of academy2's students (`studentSpawn5`, also
+run on academy4 and 6) stood in different animations from capture to capture. The
+capture patch now holds them at their range's low end (`g_swjkjaScriptRand`, set
+with `SCRIPTS=1`), as the new renderer takes them. academy2, 4 and 6 captured again,
+twice; renders unchanged (the change is the reference's):
+
+| View | Before (mean, > 16 off) | Pinned, run 1 | Pinned, run 2 |
+|------|------|------|------|
+| academy2_class | 1.61, 3.3% | 1.27, 2.8% | 1.27, 2.8% |
+| academy4_class | 2.23, 4.4% | 1.40, 3.0% | 1.39, 3.0% |
+| academy6_class | 2.45, 5.5% | 1.98, 4.9% | 1.99, 4.9% |
+
+- The two pinned runs log the same animations for every NPC; their start times differ
+  by 2 to 13 ms (the client's clock, a frame either way), and their screenshots by
+  0.02-0.03 mean (0.02-0.03% of pixels by more than 8).
+- What is left on the classroom views is mostly the students' shading (several drawn
+  darker or tinted differently), not their poses.
+- The other single-player views were not captured again (unchecked whether any of
+  their scripts draws a random number before its time).
+
 ## Single-player NPCs' spines turned against their "Motion" bone, 2026-10-16
 
 cgame turns the lumbar and thoracic bones of an NPC whose legs and torso play

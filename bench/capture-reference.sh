@@ -10,6 +10,8 @@
 # that time: a map's views then share one time. The player then enters the world
 # at 2000 ms exactly (sv_swjkjaBegin, a patch addition), so scripts it starts (the
 # academies' intros) start then, and a cutscene runs on instead of being skipped.
+# A script's random numbers (waits, loop counts) are their range's low end
+# (g_swjkjaScriptRand, a patch addition): the game seeds them from the clock.
 # CAPTURE_ARGS adds engine arguments (e.g. "+set g_ICARUSDebug 4" traces scripts;
 # "+set g_swjkjaRand 2000" logs every draw from the game's random numbers up to
 # that time, with its caller, to <map>-npcs.txt: a debugging run only, as the lines
@@ -86,10 +88,11 @@ for map in $maps; do
 	esac
 	# Scripts that start when the player spawns (the academies' intros) start at
 	# 2000 ms, the first frame a fast load gives: the patched server holds its time
-	# there until the client enters the world (sv_swjkjaBegin).
+	# there until the client enters the world (sv_swjkjaBegin). Script random
+	# numbers are pinned from the map's first frame (spawnscripts draw as it loads).
 	case $map in
 	mp/*) ;;
-	*) [ "$scripts" = 1 ] && game+=(+set sv_swjkjaBegin 2000) ;;
+	*) [ "$scripts" = 1 ] && game+=(+set sv_swjkjaBegin 2000 +set g_swjkjaScriptRand 1) ;;
 	esac
 	# Extra engine arguments for a debugging run (e.g. "+set g_ICARUSDebug 3").
 	read -ra extra <<<"${CAPTURE_ARGS:-}"

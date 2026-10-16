@@ -205,6 +205,23 @@ index d1c794e..0cb9b9e 100644
  		return;
  	}
  
+diff --git a/code/game/Q3_Interface.cpp b/code/game/Q3_Interface.cpp
+index eb344d2..b2f6336 100644
+--- a/code/game/Q3_Interface.cpp
++++ b/code/game/Q3_Interface.cpp
+@@ -9754,6 +9754,12 @@ void	CQuake3GameInterface::Remove( int entID, const char *name )
+ // Get a random (float) number.
+ float	CQuake3GameInterface::Random( float min, float max )
+ {
++	// swjkja reference capture: with g_swjkjaScriptRand set, a script's random
++	// number is its range's low end (rand() is seeded from the clock each run).
++	static cvar_t *swjkjaScriptRand = gi.cvar( "g_swjkjaScriptRand", "", 0 );
++	if ( swjkjaScriptRand->string[0] ) {
++		return min;
++	}
+ 	return ((rand() * (max - min)) / (float)RAND_MAX) + min;
+ }
+ 
 diff --git a/code/game/g_main.cpp b/code/game/g_main.cpp
 index a349d4f..730edc8 100644
 --- a/code/game/g_main.cpp
