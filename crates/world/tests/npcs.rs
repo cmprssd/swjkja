@@ -384,6 +384,7 @@ fn pose(legs: &'static str, torso: &'static str) -> Pose {
         still_since: 0,
         script: None,
         name: None,
+        bad_bones: false,
     }
 }
 

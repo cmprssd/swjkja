@@ -118,6 +118,9 @@ pub struct Pose {
     pub script: Option<std::sync::Arc<Vec<swjkja_icarus::Node>>>,
     /// The name scripts find it by (its `targetname`), if any.
     pub name: Option<String>,
+    /// Whether its class's bones are too odd for cgame to turn its spine against
+    /// its "Motion" bone (`G_ClassHasBadBones`).
+    pub bad_bones: bool,
 }
 
 /// A Ghoul2 model bolted to another (`G_CreateG2AttachedWeaponModel`), posed at

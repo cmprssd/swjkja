@@ -381,6 +381,37 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Single-player NPCs' spines turned against their "Motion" bone, 2026-10-16
+
+cgame turns the lumbar and thoracic bones of an NPC whose legs and torso play
+different animations back against the angles of its "Motion" bone
+(`cg_motionBoneComp` 2, `CG_G2ClientSpineAngles`). A new view,
+`vjun2_imp_stance` in `bench/reference/script-views.txt`, looks at vjun2's imperial
+at 3000 ms, captured with `SCRIPTS=1` so the game stops before its idle (from 4990
+ms, on both parts). He stands with his legs in `BOTH_STAND3` and his torso in
+`TORSO_WEAPONIDLE2`, and main drew him twisted about 30 degrees, pistol to the side:
+
+| | Mean difference | Pixels off by > 16 | His box (x380-880 y150-720) | Box pixels off by > 32 |
+|------|------|------|------|------|
+| main | 1.86 | 3.6% | 4.88 | 6.3% |
+| spine turned | 0.82 | 0.7% | 1.51 | 0.7% |
+
+- Which pairs turn: on the humanoid skeleton "Motion" hangs off the pelvis, so its
+  angles are the legs' pelvis with the torso's own "Motion" frames. A part's
+  animation over its own legs leaves it within 0.06 degrees for every standing
+  animation a retail script splits (`TORSO_RAISEWEAP4`, `BOTH_CONSOLE1`,
+  `BOTH_TALKCOMM1`, ...), and the rifle stance (`BOTH_STAND3` with
+  `TORSO_WEAPONIDLE3`) within 0.02. Mixed pairs turn it: the pistol stance up to 30
+  degrees of yaw, those scripted splits over a stance up to 42.
+- The 39 other reference views render pixel for pixel as on main: none of their
+  NPCs plays a pair that turns at their time (the troopers hold rifles; the
+  academies play the same animation on both parts).
+- `bench_world` (300 frames, alternating with main, three runs each, with the new
+  view): vjun2_imp_stance 6.7-6.8 ms (main 6.8-7.6), the other NPC views within
+  main's spread (academy2 7.8-8.4 against 7.4-8.0, dpred_troopers 7.1-7.3 against
+  7.0-7.2; one kor2 run each way was an outlier, 11.5 and 19.6). `load_profile` of
+  vjun2 and academy2: within main's spread (vjun2 1739-1896 ms, main 1738-1850).
+
 ## Single-player NPCs' blob shadows, 2026-10-16
 
 NPCs now cast the original's blob shadow (`cg_shadows 1`, the captures' setting):
