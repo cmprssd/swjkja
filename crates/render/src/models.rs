@@ -390,8 +390,12 @@ impl StaticModels {
                         let timeline = timelines.next().expect("an NPC's timeline");
                         Rig::new(m, pose, files, timeline)
                     });
+                    // Baked with its spine turned, as drawn; its look is resolved later.
                     let pose = match &rig {
-                        Some(rig) => rig.body_pose(time, &[]),
+                        Some(rig) => {
+                            let spine = rig.spine_turn(time);
+                            rig.body_pose(time, &rig.overrides(time, spine.as_ref(), None))
+                        }
                         None => m.gla.pose(0),
                     };
                     let body = Part::new(m, pose, skin(&g.skin), &g.switches);
