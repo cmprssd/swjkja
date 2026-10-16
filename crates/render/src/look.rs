@@ -11,6 +11,11 @@
 //! bones' shares add up to the whole turn. That settled look is what is drawn here,
 //! from the moment the script sets the target (the original takes about a second
 //! to get there, at a speed that depends on its frame rate).
+//!
+//! Before the look, cgame turns the spine of an NPC whose legs and torso play
+//! different animations back against its "Motion" bone ([`Spine`]:
+//! `CG_G2ClientSpineAngles`, `cg_motionBoneComp` 2): a torso animation is made to
+//! face where its own legs' pelvis would, not where another's does.
 
 use swjkja_model::gla::{Gla, Mat34};
 use swjkja_world::static_model::angles_to_axis;
@@ -24,10 +29,16 @@ const LOOK_MAX: Vec3 = [50.0, 70.0, 30.0];
 const HEAD_MIN: Vec3 = [-25.0, -55.0, -10.0];
 const HEAD_MAX: Vec3 = [50.0, 50.0, 10.0];
 /// Each bone's share of the look (pitch, yaw, roll), `CG_G2ClientNeckAngles` for a
-/// humanoid whose spine is not turned.
+/// humanoid; the thoracic's is averaged with the spine's turn where that has one.
 const THORACIC_SHARE: Vec3 = [0.4, 0.1, 0.1];
 const CERVICAL_SHARE: Vec3 = [0.2, 0.3, 0.3];
 const CRANIUM_SHARE: Vec3 = [0.4, 0.6, 0.6];
+
+/// Each spine bone's share of the spine's turn (pitch, yaw, roll),
+/// `CG_G2ClientSpineAngles` for a humanoid.
+const SPINE_THORACIC_SHARE: Vec3 = [0.2, 0.2, 0.2];
+const UPPER_LUMBAR_SHARE: Vec3 = [0.4, 0.35, 0.35];
+const LOWER_LUMBAR_SHARE: Vec3 = [0.4, 0.45, 0.45];
 
 /// How many steps toward the settled look at most, and the change (degrees) small
 /// enough to stop at.
@@ -111,18 +122,67 @@ impl Head {
     }
 
     /// The bones' overrides for look `look` (pitch, yaw, roll, relative to where
-    /// the eyes face unturned): clamped, then shared out among the bones.
-    pub fn overrides(&self, gla: &Gla, look: Vec3) -> [(usize, Mat34); 3] {
+    /// the eyes face unturned): clamped, then shared out among the bones, the
+    /// thoracic's averaged with `thoracic`, the spine's turn of it
+    /// ([`Spine::turn`]), in each angle the spine turns it by.
+    pub fn overrides(&self, gla: &Gla, look: Vec3, thoracic: Vec3) -> [(usize, Mat34); 3] {
         let look = clamp(look, HEAD_MIN, HEAD_MAX);
+        let shared = |share: Vec3| [0, 1, 2].map(|i| look[i] * share[i]);
+        let mut chest = shared(THORACIC_SHARE);
+        for i in 0..3 {
+            if thoracic[i] != 0.0 {
+                chest[i] = (thoracic[i] + chest[i]) * 0.5;
+            }
+        }
         [
-            (self.thoracic, THORACIC_SHARE),
-            (self.cervical, CERVICAL_SHARE),
-            (self.cranium, CRANIUM_SHARE),
+            (self.thoracic, chest),
+            (self.cervical, shared(CERVICAL_SHARE)),
+            (self.cranium, shared(CRANIUM_SHARE)),
+        ]
+        .map(|(bone, angles)| (bone, gla.angles_override(bone, &bone_rotation(angles))))
+    }
+}
+
+/// The bones of a humanoid's spine that cgame turns against its "Motion" bone:
+/// "lower_lumbar" and "upper_lumbar" (and "thoracic", shared with the look).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Spine {
+    pub lower_lumbar: usize,
+    pub upper_lumbar: usize,
+    pub motion: usize,
+}
+
+impl Spine {
+    /// The bones of `gla`, if it has them all.
+    pub fn find(gla: &Gla) -> Option<Self> {
+        Some(Self {
+            lower_lumbar: gla.find_bone("lower_lumbar")?,
+            upper_lumbar: gla.find_bone("upper_lumbar")?,
+            motion: gla.find_bone("Motion")?,
+        })
+    }
+
+    /// The spine's turn for a "Motion" bolt matrix `motion` (its columns the bone's
+    /// axes, in the entity's space): the lumbar bones' overrides and the thoracic's
+    /// angles (for [`Head::overrides`]). The turn is minus the angles the bolt's -y
+    /// faces, its roll from its -x (`cg_motionBoneComp` 2), shared out among the
+    /// three bones (`CG_G2ClientSpineAngles`).
+    pub fn turn(&self, gla: &Gla, motion: &Mat34) -> ([(usize, Mat34); 2], Vec3) {
+        let mut angles = eye_angles(motion);
+        angles[2] = -vectoangles([0, 1, 2].map(|r| -motion[r][0]))[0];
+        let view = angles.map(|a| normalize180(-normalize180(a)));
+        let shared = |share: Vec3| [0, 1, 2].map(|i| view[i] * share[i]);
+        let lumbar = [
+            (self.upper_lumbar, UPPER_LUMBAR_SHARE),
+            (self.lower_lumbar, LOWER_LUMBAR_SHARE),
         ]
         .map(|(bone, share)| {
-            let angles = [0, 1, 2].map(|i| look[i] * share[i]);
-            (bone, gla.angles_override(bone, &bone_rotation(angles)))
-        })
+            (
+                bone,
+                gla.angles_override(bone, &bone_rotation(shared(share))),
+            )
+        });
+        (lumbar, shared(SPINE_THORACIC_SHARE))
     }
 }
 
@@ -150,8 +210,8 @@ pub fn settle(target: Vec3, eyes: impl Fn(Vec3) -> (Vec3, Vec3)) -> Vec3 {
     look
 }
 
-/// The angles an entity's eyes face from a bolt matrix (its columns the tag's axes,
-/// in world space): along the tag's -y (`G2API_GiveMeVectorFromMatrix`'s
+/// The angles an entity's eyes face from a bolt matrix (its columns the tag's axes):
+/// along the tag's -y (`G2API_GiveMeVectorFromMatrix`'s
 /// `NEGATIVE_Y`).
 pub fn eye_angles(bolt: &Mat34) -> Vec3 {
     vectoangles([0, 1, 2].map(|r| -bolt[r][1]))
@@ -206,6 +266,53 @@ mod tests {
         // Above: pitch is negative up.
         let look = settle([1.0, 0.0, 1.0], |l| ([0.0; 3], l));
         assert!(close(look, [-22.5, 0.0, 0.0]), "{look:?}");
+    }
+
+    /// A bolt matrix turned by `yaw` (degrees) from one facing +x upright: its -y
+    /// along the facing, its -x to the right.
+    fn yawed(yaw: f32) -> Mat34 {
+        let (s, c) = yaw.to_radians().sin_cos();
+        [[-s, -c, 0.0, 0.0], [c, -s, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
+    }
+
+    #[test]
+    fn the_spine_turns_back_against_its_motion_bone() {
+        let gla = Gla::default_skeleton();
+        let spine = Spine {
+            lower_lumbar: 0,
+            upper_lumbar: 0,
+            motion: 0,
+        };
+        // Motion facing 30 degrees left: the spine turns 30 right, 45% on the
+        // lower lumbar, 35% on the upper, 20% on the thoracic.
+        let ([(_, upper), (_, lower)], thoracic) = spine.turn(&gla, &yawed(30.0));
+        assert!(close(thoracic, [0.0, -6.0, 0.0]), "{thoracic:?}");
+        let turned = |m: &Mat34, yaw: f32| {
+            let r = bone_rotation([0.0, yaw, 0.0]);
+            (0..3).all(|i| (0..4).all(|j| (m[i][j] - r[i][j]).abs() < 1e-4))
+        };
+        assert!(turned(&upper, -10.5), "{upper:?}");
+        assert!(turned(&lower, -13.5), "{lower:?}");
+        // Facing straight ahead: nothing to turn.
+        let (_, thoracic) = spine.turn(&gla, &yawed(0.0));
+        assert!(close(thoracic, [0.0; 3]), "{thoracic:?}");
+    }
+
+    #[test]
+    fn a_turned_spine_halves_the_thoracic_with_the_look() {
+        let gla = Gla::default_skeleton();
+        let head = Head {
+            thoracic: 0,
+            cervical: 0,
+            cranium: 0,
+        };
+        let yaw_of = |m: &Mat34| (m[2][1]).atan2(m[1][1]).to_degrees();
+        // The spine's -6 yaw and the look's 10% of 40, averaged.
+        let [(_, chest), ..] = head.overrides(&gla, [0.0, 40.0, 0.0], [0.0, -6.0, 0.0]);
+        assert!((yaw_of(&chest) - -1.0).abs() < 1e-3, "{chest:?}");
+        // No look: half the spine's turn.
+        let [(_, chest), ..] = head.overrides(&gla, [0.0; 3], [0.0, -6.0, 0.0]);
+        assert!((yaw_of(&chest) - -3.0).abs() < 1e-3, "{chest:?}");
     }
 
     #[test]

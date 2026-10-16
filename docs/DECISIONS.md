@@ -807,3 +807,31 @@ equals the same frame rendered alone (it fails if the frames share one slot).
 - **Left out**: the rancor's and the AT-ST's larger shadows (64 units, and the
   AT-ST's feet), cloaked NPCs and sand creatures (none), the player's own shadow.
 
+
+## 2026-10-16: The spine turned against the "Motion" bone, checked on a new pistol-stance view (chosen by the owner)
+
+- **The question**: `cg_motionBoneComp` 2 changes only NPCs whose legs and torso play
+  different animations, which none of the academy views has, and the trooper views'
+  rifle stance turns by under 0.02 degrees. Check it on a new capture at a time an
+  NPC stands in a pair that turns, or on the existing views only?
+- **Chosen: a new capture.** vjun2's imperial at 3000 ms (`vjun2_imp_stance`,
+  `SCRIPTS=1` to stop the game before his idle), whose pistol stance (`BOTH_STAND3`
+  legs, `TORSO_WEAPONIDLE2` torso) turns about 30 degrees: 1.86 -> 0.82.
+
+## 2026-10-16: How the spine turns (decided by Claude, pending review)
+
+- **The original's rule, as at `cg_motionBoneComp` 2**: when the legs' and the
+  torso's animations differ (by name), the angles the "Motion" bolt faces (its -y,
+  roll from its -x) are turned back, shared 45/35/20% in yaw and roll (40/40/20% in
+  pitch) among "lower_lumbar", "upper_lumbar" and "thoracic"; the thoracic's share
+  is then averaged with the look's in each angle the spine turns it by, also when
+  the NPC looks at nothing (`CG_G2ClientNeckAngles` runs either way, with no look).
+- **Classes**: `G_ClassHasBadBones`' (wampa, rocket trooper, saber droid, hazard
+  trooper, assassin droid, rancor) are left unturned; other skeletons without the
+  three bones are too.
+- **Lookers' eyes and look targets' eyes** are where the spine's turn leaves them.
+- **Left out**: the flipping and spinning-saber animations that skip the turn
+  (`PM_FlippingAnim`, `PM_SpinningSaberAnim`; no NPC plays one here), the legs' yaw
+  lagging behind the torso (`CG_PlayerLegsYawFromMovement`; NPCs stand still), and
+  pitch from `lerpAngles` (0 for a standing NPC). An NPC on the cinematic skeleton
+  reads "Motion" by the same bone number, as the rest of its rig does.

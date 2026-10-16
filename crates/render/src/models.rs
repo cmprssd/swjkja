@@ -32,8 +32,8 @@
 //! sees (`R_SetupEntityLighting` turns the light into the model's scaled axes). An
 //! NPC's pose changes as time passes: its [`Rig`] gives its bones at a time, in
 //! world space, for the renderer to skin its surfaces by
-//! ([`StaticModels::bones`]), its head turned toward what it looks at
-//! ([`crate::look`]).
+//! ([`StaticModels::bones`]), its spine turned against its "Motion" bone and its
+//! head toward what it looks at ([`crate::look`]).
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -54,7 +54,7 @@ use swjkja_world::static_model::{Pose, Rules, StaticModel};
 
 use crate::camera::Camera;
 use crate::fog::FogVolume;
-use crate::look::{self, Head};
+use crate::look::{self, Head, Spine};
 use crate::vis::{EntityLink, Frustum, WorldVis};
 
 pub type Vec3 = [f32; 3];
@@ -390,8 +390,12 @@ impl StaticModels {
                         let timeline = timelines.next().expect("an NPC's timeline");
                         Rig::new(m, pose, files, timeline)
                     });
+                    // Baked with its spine turned, as drawn; its look is resolved later.
                     let pose = match &rig {
-                        Some(rig) => rig.body_pose(time, &[]),
+                        Some(rig) => {
+                            let spine = rig.spine_turn(time);
+                            rig.body_pose(time, &rig.overrides(time, spine.as_ref(), None))
+                        }
                         None => m.gla.pose(0),
                     };
                     let body = Part::new(m, pose, skin(&g.skin), &g.switches);
@@ -523,7 +527,7 @@ impl StaticModels {
         let Some(rig) = &m.rig else {
             return Vec::new();
         };
-        let poses = rig.poses(time, &self.look_overrides(n, time));
+        let poses = rig.poses(time, &self.bone_overrides(n, time));
         poses.iter().flatten().map(|b| place(m, b)).collect()
     }
 
@@ -547,40 +551,45 @@ impl StaticModels {
 
     /// What instance `n` looks at at `time` and its settled look ([`look::settle`]:
     /// pitch, yaw, roll, `renderInfo.lastHeadAngles`) toward the target's eyes as
-    /// the target stands (its own look left out); `None` when it looks at nothing or
-    /// has no bones to turn.
+    /// the target stands (its spine turned, its own look left out); `None` when it
+    /// looks at nothing or has no bones to turn.
     pub fn look(&self, n: usize, time: i32) -> Option<(usize, look::Vec3)> {
         let target = self.instances[n].rig.as_ref()?.looking_at(time)?;
         let goal = match &self.instances[target].rig {
-            Some(t) => self.eyes(target, &t.body_pose(time, &[])).0,
+            Some(t) => {
+                let overrides = t.overrides(time, t.spine_turn(time).as_ref(), None);
+                self.eyes(target, &t.body_pose(time, &overrides)).0
+            }
             None => self.instances[target].origin,
         };
         Some((target, self.look_toward(n, time, goal)?))
     }
 
     /// Instance `n`'s settled look at `time` toward `goal` ([`StaticModels::look`]),
-    /// whatever it looks at; `None` when it has no bones to turn.
+    /// whatever it looks at, from its eyes as its spine's turn leaves them; `None`
+    /// when it has no bones to turn.
     pub fn look_toward(&self, n: usize, time: i32, goal: Vec3) -> Option<look::Vec3> {
         let rig = self.instances[n].rig.as_ref()?;
-        let head = rig.head?;
+        rig.head?;
         let gla = rig.gla(time);
         let locals = gla.locals(&rig.body_frames(time));
+        let spine = rig.spine_turn(time);
         let settled = look::settle(goal, |l| {
-            let overrides = head.overrides(gla, l);
+            let overrides = rig.overrides(time, spine.as_ref(), Some(l));
             let body = gla.pose_chain(&gla::ROOT, &locals, &overrides, &rig.eye_chain);
             self.eyes(n, &body)
         });
         Some(settled)
     }
 
-    /// The overrides that turn instance `n`'s head by its look at `time`
-    /// ([`StaticModels::look`]); none when it looks at nothing.
-    fn look_overrides(&self, n: usize, time: i32) -> Vec<(usize, Mat34)> {
-        let (Some(rig), Some((_, settled))) = (&self.instances[n].rig, self.look(n, time)) else {
+    /// The overrides that turn instance `n`'s bones at `time`: its spine's turn
+    /// ([`Rig::spine_turn`]) and its head's by its look ([`StaticModels::look`]).
+    fn bone_overrides(&self, n: usize, time: i32) -> Vec<(usize, Mat34)> {
+        let Some(rig) = &self.instances[n].rig else {
             return Vec::new();
         };
-        let head = rig.head.expect("a look turns a head");
-        head.overrides(rig.gla(time), settled).to_vec()
+        let look = self.look(n, time).map(|(_, settled)| settled);
+        rig.overrides(time, rig.spine_turn(time).as_ref(), look)
     }
 
     /// Where instance `n`, an NPC, casts its shadow from at game time `time` (ms),
@@ -894,6 +903,10 @@ pub struct Rig {
     attached: Vec<(Arc<Ghoul2Model>, usize)>,
     /// The bones its look turns, if its skeleton has them.
     head: Option<Head>,
+    /// The bones its spine's turn reads and turns, if its skeleton has them and its
+    /// class lets cgame turn them ([`Pose::bad_bones`]), and the bones that place
+    /// "Motion".
+    spine: Option<(Spine, Vec<usize>)>,
     /// Its eyes' tag ("*head_eyes"), if its mesh has one.
     eyes: Option<usize>,
     /// The bones that place the eyes' tag ([`gla::Gla::chain`]), all a look
@@ -939,6 +952,9 @@ impl Rig {
             bones: ["model_root", "lower_lumbar", "Motion"].map(|b| gla.find_bone(b)),
             attached: Vec::new(),
             head: Head::find(gla),
+            spine: Spine::find(gla)
+                .filter(|_| !pose.bad_bones)
+                .map(|s| (s, gla.chain(&[s.motion]))),
             eyes,
             eye_chain,
             name: pose.name.clone(),
@@ -1019,6 +1035,47 @@ impl Rig {
             anims.push((bone, blend));
         }
         self.body.gla.frames(&anims)
+    }
+
+    /// Its spine's turn at game time `time` ([`Spine::turn`]), from its "Motion"
+    /// bone as the body plays (`motionBolt`), when its legs and torso play
+    /// different animations (`CG_G2ClientSpineAngles`); `None` otherwise or without
+    /// the bones.
+    fn spine_turn(&self, time: i32) -> Option<([(usize, Mat34); 2], look::Vec3)> {
+        let (spine, chain) = self.spine.as_ref()?;
+        if self.timeline.at(0, time).anim == self.timeline.at(1, time).anim {
+            return None;
+        }
+        let gla = self.gla(time);
+        let locals = gla.locals(&self.body_frames(time));
+        let pose = gla.pose_chain(&gla::ROOT, &locals, &[], chain);
+        let bolt = gla::multiply(&pose[spine.motion], &gla.bones[spine.motion].base_pose);
+        Some(spine.turn(gla, &bolt))
+    }
+
+    /// The overrides that turn its bones at game time `time` by its spine's turn
+    /// `spine` ([`Rig::spine_turn`]) and its look `look`: its head's turned too
+    /// whenever its spine is, by no look when it looks at nothing
+    /// (`CG_G2ClientNeckAngles` runs either way).
+    fn overrides(
+        &self,
+        time: i32,
+        spine: Option<&([(usize, Mat34); 2], look::Vec3)>,
+        look: Option<look::Vec3>,
+    ) -> Vec<(usize, Mat34)> {
+        let mut overrides = Vec::new();
+        let mut thoracic = [0.0; 3];
+        if let Some((lumbar, chest)) = spine {
+            overrides.extend_from_slice(lumbar);
+            thoracic = *chest;
+        }
+        if let Some(head) = self.head
+            && (spine.is_some() || look.is_some())
+        {
+            let look = look.unwrap_or_default();
+            overrides.extend(head.overrides(self.gla(time), look, thoracic));
+        }
+        overrides
     }
 
     /// The body's pose at game time `time` ([`Rig::body_frames`]), its bones turned

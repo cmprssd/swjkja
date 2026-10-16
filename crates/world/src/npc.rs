@@ -1074,8 +1074,23 @@ pub fn npc_gear(
             still_since: 0,
             script: None,
             name: None,
+            bad_bones: bad_bones(class),
         },
         attached,
+    )
+}
+
+/// `G_ClassHasBadBones`: whether class `class`'s bones are too odd for cgame to
+/// turn its spine against its "Motion" bone.
+fn bad_bones(class: &str) -> bool {
+    matches!(
+        class,
+        "class_wampa"
+            | "class_rockettrooper"
+            | "class_saber_droid"
+            | "class_hazard_trooper"
+            | "class_assassin_droid"
+            | "class_rancor"
     )
 }
 
