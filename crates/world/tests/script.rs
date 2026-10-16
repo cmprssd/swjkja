@@ -1,5 +1,9 @@
+use std::sync::Arc;
 use swjkja_icarus::{Block, Member, Node, id};
-use swjkja_world::script::{Change, FirstPass, first_pass, script_path, timeline};
+
+use swjkja_world::script::{
+    Change, FirstPass, Level, Npc, Runner, first_pass, script_path, timeline, timelines,
+};
 use swjkja_world::static_model::Pose;
 
 fn text(t: &str) -> Member {
@@ -330,4 +334,191 @@ fn scripts_are_read_from_the_scripts_folder() {
         Some("scripts/kor2/immortal.IBI")
     );
     assert_eq!(script_path("NULL"), None);
+}
+
+fn named(name: &str) -> Pose {
+    Pose {
+        name: Some(name.to_owned()),
+        ..stance("BOTH_STAND1", "BOTH_STAND1")
+    }
+}
+
+/// `affect(name, FLUSH)` (56) or `INSERT` (55) with `nodes`.
+fn affect(name: &str, insert: bool, nodes: Vec<Node>) -> Node {
+    body(
+        id::AFFECT,
+        vec![text(name), float(if insert { 55.0 } else { 56.0 })],
+        nodes,
+    )
+}
+
+fn wait(ms: f32) -> Node {
+    command(id::WAIT, vec![float(ms)])
+}
+
+/// A map whose player's spawn point uses one runner, named "intro", running `script`.
+fn intro(script: Vec<Node>) -> Level {
+    Level {
+        runners: vec![Runner {
+            targetname: Some("intro".to_owned()),
+            script: Arc::new(script),
+            delay: 0,
+        }],
+        begin: vec!["intro".to_owned()],
+    }
+}
+
+/// The legs' animations before 7000 ms of the NPC named "luke", running
+/// `spawnscript`, on a map running `level`, voice lines lasting 1234 ms.
+fn luke(spawnscript: Vec<Node>, level: &Level) -> Vec<(String, i32)> {
+    let pose = named("luke");
+    let npc = Npc {
+        stance: &pose,
+        script: Some(&spawnscript),
+        holds: &holds,
+    };
+    let t = timelines(&[npc], level, &|_| Some(1234)).remove(0);
+    let early = t.legs.iter().filter(|c| c.start < 7000);
+    early.map(|c| (c.anim.clone(), c.start)).collect()
+}
+
+fn owned(list: &[(&str, i32)]) -> Vec<(String, i32)> {
+    list.iter().map(|&(a, t)| (a.to_owned(), t)).collect()
+}
+
+#[test]
+fn an_intro_takes_over_an_npc_when_the_player_begins() {
+    // The player begins after the 2000 ms frame; the intro runs from the next, its
+    // affect running Luke's block at once (animations start a frame earlier for the
+    // client). Its 1000 ms wait ends on the first frame past 3050; Luke, updated
+    // after the runner, gets the signal in that frame.
+    let level = intro(vec![
+        affect(
+            "LUKE",
+            false,
+            vec![
+                set("SET_ANIM_BOTH", "BOTH_CIN_1"),
+                command(id::WAITSIGNAL, vec![text("go")]),
+                set("SET_ANIM_BOTH", "BOTH_SIT5"),
+            ],
+        ),
+        wait(1000.0),
+        command(id::SIGNAL, vec![text("go")]),
+    ]);
+    // The flush drops the rest of Luke's spawnscript. Each animation gives way to
+    // the stance when its 1000 ms hold runs out; the one the affect set in the
+    // runner's turn is counted down by Luke's movement later in the same frame, so
+    // it gives way a frame sooner.
+    let spawnscript = vec![
+        hold_forever(),
+        wait(5000.0),
+        set("SET_ANIM_BOTH", "BOTH_STAND3"),
+    ];
+    assert_eq!(
+        luke(spawnscript.clone(), &level),
+        owned(&[
+            ("BOTH_STAND1", 1550),
+            ("BOTH_CIN_1", 2000),
+            ("BOTH_STAND1", 2950),
+            ("BOTH_SIT5", 3050),
+            ("BOTH_STAND1", 4050)
+        ])
+    );
+    // Without the intro, the spawnscript runs on.
+    assert_eq!(
+        luke(spawnscript, &Level::default()),
+        owned(&[("BOTH_STAND1", 1550), ("BOTH_STAND3", 6550)])
+    );
+}
+
+#[test]
+fn an_inserted_block_runs_first_and_a_wait_it_cut_starts_over() {
+    let level = intro(vec![affect(
+        "luke",
+        true,
+        vec![set("SET_ANIM_BOTH", "BOTH_SIT5")],
+    )]);
+    // The spawnscript's 3000 ms wait from 1550 starts over after the block, at 2050:
+    // it ends on the first frame past 5050.
+    let spawnscript = vec![wait(3000.0), set("SET_ANIM_BOTH", "BOTH_STAND3")];
+    assert_eq!(
+        luke(spawnscript, &level),
+        owned(&[
+            ("BOTH_STAND1", 1550),
+            ("BOTH_SIT5", 2000),
+            ("BOTH_STAND1", 2950),
+            ("BOTH_STAND3", 5050),
+            ("BOTH_STAND1", 6050)
+        ])
+    );
+}
+
+#[test]
+fn a_voice_line_holds_its_task_group_until_it_has_played() {
+    // The line starts at 2050 and plays 1234 ms: its task completes on the first
+    // frame from 3284 (3300), before Luke's script runs.
+    let line = body(
+        id::TASK,
+        vec![text("line")],
+        vec![command(
+            id::SOUND,
+            vec![text("CHAN_VOICE"), text("sound/luke.mp3")],
+        )],
+    );
+    let level = intro(vec![affect(
+        "luke",
+        false,
+        vec![
+            line,
+            command(id::DO, vec![text("line")]),
+            command(id::WAIT, vec![text("line")]),
+            set("SET_ANIM_BOTH", "BOTH_SIT5"),
+        ],
+    )]);
+    assert_eq!(
+        luke(vec![hold_forever()], &level),
+        owned(&[
+            ("BOTH_STAND1", 1550),
+            ("BOTH_SIT5", 3250),
+            ("BOTH_STAND1", 4250)
+        ])
+    );
+}
+
+#[test]
+fn a_signal_waits_for_its_receiver_and_a_runner_needs_its_user() {
+    // Luke waits for a signal the intro sends when it starts: sent before Luke's
+    // update in that frame, received in it.
+    let spawnscript = vec![
+        hold_forever(),
+        command(id::WAITSIGNAL, vec![text("go")]),
+        set("SET_ANIM_BOTH", "BOTH_SIT5"),
+    ];
+    let level = intro(vec![command(id::SIGNAL, vec![text("go")])]);
+    assert_eq!(
+        luke(spawnscript.clone(), &level),
+        owned(&[
+            ("BOTH_STAND1", 1550),
+            ("BOTH_SIT5", 2000),
+            ("BOTH_STAND1", 3000)
+        ])
+    );
+    // A runner nothing uses never runs; a delayed one starts on the first frame
+    // from its use plus its delay.
+    let mut unused = intro(vec![command(id::SIGNAL, vec![text("go")])]);
+    unused.begin.clear();
+    assert_eq!(
+        luke(spawnscript.clone(), &unused),
+        owned(&[("BOTH_STAND1", 1550)])
+    );
+    let mut delayed = intro(vec![command(id::SIGNAL, vec![text("go")])]);
+    delayed.runners[0].delay = 520;
+    assert_eq!(
+        luke(spawnscript, &delayed),
+        owned(&[
+            ("BOTH_STAND1", 1550),
+            ("BOTH_SIT5", 2500),
+            ("BOTH_STAND1", 3500)
+        ])
+    );
 }

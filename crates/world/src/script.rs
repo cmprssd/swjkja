@@ -1,23 +1,28 @@
-//! What a single-player NPC does as time passes while it stands with no enemy: its
-//! movement frames (the stance it returns to, the idle it plays after standing still)
-//! and the spawnscript it runs (`NPC_Begin` runs the script's first pass, `NPC_Think`
-//! the rest, once a server frame; `code/icarus/TaskManager.cpp`, `Sequencer.cpp`;
-//! the game's side in `Q3_Interface.cpp`).
+//! What single-player NPCs do as time passes while they stand with no enemy: their
+//! movement frames (the stance they return to, the idle they play after standing
+//! still), the spawnscripts they run (`NPC_Begin` runs a script's first pass,
+//! `NPC_Think` the rest, once a server frame), and the map's scripts that run with
+//! them (`target_scriptrunner`, such as the academies' intros, which their player
+//! starts as it enters the world); `code/icarus/TaskManager.cpp`, `Sequencer.cpp`;
+//! the game's side in `Q3_Interface.cpp`.
 //!
 //! The game is stepped a server frame at a time in the original's order: in each
-//! frame the NPC's movement frame (`Pmove`: its animation timers count down, then its
-//! stance returns to the parts whose timers ran out; then `G_CheckClientIdle`), then
-//! its script, which runs command after command until one waits. Frames in which
-//! nothing can change are skipped.
+//! frame each script runner's script, then each NPC's movement frame (`Pmove`: its
+//! animation timers count down, then its stance returns to the parts whose timers ran
+//! out; then `G_CheckClientIdle`) and script; a script runs command after command
+//! until one waits. Frames in which nothing can change are skipped.
 //!
-//! Only what a script does to the NPC itself is modelled: its animations and their
-//! hold times, what it looks at (`SET_LOOK_TARGET`), the tasks a script waits for (an animation's completes when its timer
-//! runs out), timed waits, loops, conditions and task groups. Commands that move it
-//! (`SET_NAVGOAL`, ...) never complete, as with the AI frozen; `affect` (another
-//! entity), `run` (no spawnscript of a map-spawned NPC runs another) and the other
-//! commands do nothing here. A random number is its range's low end, as other random
-//! choices here take their first branch; a `get` reads nothing (a condition with one
-//! is false).
+//! What scripts do to NPCs is modelled: their animations and hold times, what they
+//! look at (`SET_LOOK_TARGET`), the tasks scripts wait for (an animation's completes
+//! when its timer runs out, a voice line's when it has played), timed waits, loops,
+//! conditions, task groups, signals, `use` of other script runners, and `affect`,
+//! which hands a block to an NPC (`FLUSH` drops the rest of its script, `INSERT`
+//! runs the block first) and runs it at once. Commands that move an NPC
+//! (`SET_NAVGOAL`, `SET_ORIGIN`, ...) are left out (those that complete later never
+//! do, as with the AI frozen), and so are cameras, `run` (no script reached here
+//! runs another) and the other commands. A random number is its range's low end, as
+//! other random choices here take their first branch; a `get` reads nothing (a
+//! condition with one is false).
 
 use std::collections::HashMap;
 
@@ -237,7 +242,7 @@ struct Part {
     timer: i32,
 }
 
-/// Where the script is: a body being run, how far, and what it is.
+/// Where a script is: a body being run, how far, and what it is.
 struct Cursor<'a> {
     nodes: &'a [Node],
     at: usize,
@@ -260,7 +265,9 @@ struct Group<'a> {
     tasks: Vec<(u32, bool)>,
 }
 
-struct Npc<'a> {
+/// What an NPC's body does: its animations, what it looks at, its idle clock and
+/// the animation tasks it holds.
+struct Body<'a> {
     stance: &'a Pose,
     holds: Holds<'a>,
     parts: [Part; 2],
@@ -270,27 +277,37 @@ struct Npc<'a> {
     idle_time: i32,
     /// The task each animation slot waits on, if any.
     slots: [Option<u32>; 3],
+}
+
+/// An entity that runs scripts (its `CSequencer` and `CTaskManager`): an NPC, with
+/// a body, or a script runner.
+struct Actor<'a> {
+    /// The name scripts find it by (`script_targetname`).
+    name: Option<&'a str>,
+    body: Option<Body<'a>>,
     groups: Vec<Group<'a>>,
     stack: Vec<Cursor<'a>>,
     /// When the current timed wait started (`CTask` time stamp).
     wait_since: Option<i32>,
-    next_task: u32,
+    /// The voice line playing (`TID_CHAN_VOICE`): its task and the level time it
+    /// has played out by.
+    voice: Option<(u32, i32)>,
 }
 
-impl<'a> Npc<'a> {
-    /// When an animation started in level frame `level` starts for the client: one
-    /// frame earlier, except on the first frame (the client's clock still at 0, the
-    /// level's time is taken).
-    fn client_time(level: i32) -> i32 {
-        if level == FIRST_FRAME {
-            level
-        } else {
-            level - FRAME_MS
-        }
+/// When an animation started in level frame `level` starts for the client: one
+/// frame earlier, except on the first frame (the client's clock still at 0, the
+/// level's time is taken).
+fn client_time(level: i32) -> i32 {
+    if level == FIRST_FRAME {
+        level
+    } else {
+        level - FRAME_MS
     }
+}
 
+impl<'a> Body<'a> {
     fn play(&mut self, part: usize, anim: &str, level: i32) {
-        let start = Self::client_time(level);
+        let start = client_time(level);
         let p = &mut self.parts[part];
         let from = (level != FIRST_FRAME).then(|| (p.anim.clone(), p.start));
         p.anim = anim.to_owned();
@@ -300,6 +317,50 @@ impl<'a> Npc<'a> {
             anim: anim.to_owned(),
             from,
         });
+    }
+}
+
+impl<'a> Actor<'a> {
+    fn new(name: Option<&'a str>, body: Option<Body<'a>>, script: Option<&'a [Node]>) -> Self {
+        let mut actor = Self {
+            name,
+            body,
+            groups: Vec::new(),
+            stack: Vec::new(),
+            wait_since: None,
+            voice: None,
+        };
+        if let Some(nodes) = script {
+            actor.run(nodes);
+        }
+        actor
+    }
+
+    /// Starts `nodes` as its script, registering their task groups.
+    fn run(&mut self, nodes: &'a [Node]) {
+        groups(nodes, &mut self.groups);
+        self.stack = vec![Cursor {
+            nodes,
+            at: 0,
+            kind: Kind::Plain,
+        }];
+        self.wait_since = None;
+    }
+
+    /// `CSequencer::Affect` with `body`: `TYPE_FLUSH` drops the rest of its script
+    /// for it, `TYPE_INSERT` runs it first and then goes on with the script (a wait
+    /// it was in starts over).
+    fn affect(&mut self, body: &'a [Node], insert: bool) {
+        groups(body, &mut self.groups);
+        if !insert {
+            self.stack.clear();
+        }
+        self.stack.push(Cursor {
+            nodes: body,
+            at: 0,
+            kind: Kind::Plain,
+        });
+        self.wait_since = None;
     }
 
     /// `Q3_TaskIDComplete` for the task `id`: it completes, and every slot waiting on
@@ -312,25 +373,29 @@ impl<'a> Npc<'a> {
                 }
             }
         }
-        for s in &mut self.slots {
-            if *s == Some(id) {
-                *s = None;
+        if let Some(body) = &mut self.body {
+            for s in &mut body.slots {
+                if *s == Some(id) {
+                    *s = None;
+                }
             }
         }
     }
 
     /// `Q3_TaskIDSet`: a task stomped by another completes.
     fn slot(&mut self, slot: usize, id: u32) {
-        if let Some(old) = self.slots[slot] {
+        let Some(body) = &mut self.body else { return };
+        if let Some(old) = body.slots[slot].replace(id) {
             self.complete(old);
+            self.body.as_mut().unwrap().slots[slot] = Some(id);
         }
-        self.slots[slot] = Some(id);
     }
 
     /// `PM_SetLegsAnimTimer` / `PM_SetTorsoAnimTimer`: a timer that runs out
     /// completes the animation task waiting on its part (both parts' when both wait).
     fn set_timer(&mut self, part: usize, time: i32) {
-        let t = &mut self.parts[part].timer;
+        let body = self.body.as_mut().unwrap();
+        let t = &mut body.parts[part].timer;
         *t = if time < 0 && time != -1 { 0 } else { time };
         let (mine, other) = if part == 0 {
             (LOWER, UPPER)
@@ -340,12 +405,12 @@ impl<'a> Npc<'a> {
         if *t != 0 {
             return;
         }
-        let Some(task) = self.slots[mine] else { return };
-        match self.slots[BOTH] {
+        let Some(task) = body.slots[mine] else { return };
+        match body.slots[BOTH] {
             None => self.complete(task),
             Some(both) => {
-                self.slots[mine] = None;
-                if self.slots[other].is_none() {
+                body.slots[mine] = None;
+                if body.slots[other].is_none() {
                     self.complete(both);
                 }
             }
@@ -357,18 +422,23 @@ impl<'a> Npc<'a> {
     /// part plays `anim` (unless it already does, without `restart`), held for the
     /// animation's hold. False when the skeleton lacks it.
     fn set_held(&mut self, parts: &[usize], anim: &str, restart: bool, level: i32) -> bool {
-        let Some((hold, _)) = (self.holds)(anim) else {
+        let body = self.body.as_ref().unwrap();
+        let Some((hold, _)) = (body.holds)(anim) else {
             return false;
         };
-        for &p in parts {
-            if restart || self.parts[p].anim != anim {
+        let differs: Vec<bool> = parts
+            .iter()
+            .map(|&p| restart || body.parts[p].anim != anim)
+            .collect();
+        for (&p, &d) in parts.iter().zip(&differs) {
+            if d {
                 self.set_timer(p, 0);
             }
         }
-        for &p in parts {
+        for (&p, &d) in parts.iter().zip(&differs) {
             // An animation already playing is not played again, nor held anew.
-            if restart || self.parts[p].anim != anim {
-                self.play(p, anim, level);
+            if d {
+                self.body.as_mut().unwrap().play(p, anim, level);
                 self.set_timer(p, hold);
             }
         }
@@ -378,34 +448,47 @@ impl<'a> Npc<'a> {
     /// The movement frame of level frame `level`, `msec` after the last: the timers
     /// count down (`PM_DropTimers`), the stance returns to parts no longer held
     /// (`PM_Footsteps`, `PM_TorsoAnimation`, which play an animation the skeleton
-    /// has, without restarting it), then `G_CheckClientIdle`.
+    /// has, without restarting it), then `G_CheckClientIdle`. Nothing for an actor
+    /// without a body.
     fn movement(&mut self, level: i32, msec: i32) {
+        if self.body.is_none() {
+            return;
+        }
         for p in 0..2 {
-            if self.parts[p].timer > 0 {
-                let left = (self.parts[p].timer - msec).max(0);
-                self.set_timer(p, left);
+            let timer = self.body.as_ref().unwrap().parts[p].timer;
+            if timer > 0 {
+                self.set_timer(p, (timer - msec).max(0));
             }
         }
-        for (p, anim) in [(0, self.stance.legs), (1, self.stance.torso)] {
-            let has = (self.holds)(anim).is_some();
-            if self.parts[p].timer == 0 && has && self.parts[p].anim != anim {
-                self.play(p, anim, level);
+        let body = self.body.as_mut().unwrap();
+        for (p, anim) in [(0, body.stance.legs), (1, body.stance.torso)] {
+            let has = (body.holds)(anim).is_some();
+            if body.parts[p].timer == 0 && has && body.parts[p].anim != anim {
+                body.play(p, anim, level);
             }
         }
-        let [legs, torso] = &self.parts;
+        let [legs, torso] = &body.parts;
+        let mut idle = None;
         if !standing(&legs.anim) || legs.timer != 0 || torso.timer != 0 {
-            self.idle_time = self.idle_time.max(level);
-        } else if level - self.idle_time > 5000
-            && let Some(idle) = idle_for(&legs.anim)
-            && let Some((_, length)) = (self.holds)(idle)
+            body.idle_time = body.idle_time.max(level);
+        } else if level - body.idle_time > 5000
+            && let Some(anim) = idle_for(&legs.anim)
+            && let Some((_, length)) = (body.holds)(anim)
         {
-            self.set_held(&[0, 1], idle, false, level);
-            self.idle_time = level + length;
+            idle = Some((anim, length));
+        }
+        if let Some((anim, length)) = idle {
+            self.set_held(&[0, 1], anim, false, level);
+            self.body.as_mut().unwrap().idle_time = level + length;
         }
     }
 
-    /// One `set` command, as task `task`: whether its task stays pending.
+    /// One `set` command, as task `task`: whether its task stays pending. An actor
+    /// without a body completes every one.
     fn set(&mut self, name: &str, value: Option<&Value>, task: u32, level: i32) -> bool {
+        if self.body.is_none() {
+            return false;
+        }
         let text = value.map(Value::text).unwrap_or_default();
         match name {
             "SET_ANIM_BOTH" => {
@@ -431,7 +514,7 @@ impl<'a> Npc<'a> {
                 };
                 let set = self.set_held(&[part], &text, true, level);
                 if set {
-                    self.slots[BOTH] = None;
+                    self.body.as_mut().unwrap().slots[BOTH] = None;
                     self.slot(slot, task);
                 }
                 set
@@ -452,7 +535,7 @@ impl<'a> Npc<'a> {
                     (0, LOWER)
                 };
                 self.set_timer(part, atoi(&text));
-                self.slots[BOTH] = None;
+                self.body.as_mut().unwrap().slots[BOTH] = None;
                 self.slot(slot, task);
                 true
             }
@@ -461,8 +544,9 @@ impl<'a> Npc<'a> {
                 let cleared =
                     text.eq_ignore_ascii_case("none") || text.eq_ignore_ascii_case("NULL");
                 let target = (!cleared).then_some(text);
-                if self.look.last().map(|(_, t)| t) != Some(&target) {
-                    self.look.push((Self::client_time(level), target));
+                let body = self.body.as_mut().unwrap();
+                if body.look.last().map(|(_, t)| t) != Some(&target) {
+                    body.look.push((client_time(level), target));
                 }
                 false
             }
@@ -478,165 +562,51 @@ impl<'a> Npc<'a> {
         })
     }
 
-    /// The script's turn in level frame `level` (`CTaskManager::Update`): commands run
-    /// one after another until one waits. Returns whether it still has commands.
-    fn script(&mut self, level: i32) -> bool {
-        // RUNAWAY_LIMIT, per update.
-        for _ in 0..10_000 {
-            let Some(top) = self.stack.last_mut() else {
-                return false;
-            };
-            let Some(node) = top.nodes.get(top.at) else {
-                match &mut top.kind {
-                    Kind::Loop(n) if *n == -1 || *n > 1 => {
-                        if *n > 1 {
-                            *n -= 1;
-                        }
-                        top.at = 0;
-                    }
-                    _ => {
-                        self.stack.pop();
-                    }
-                }
-                continue;
-            };
-            let nodes = top.nodes;
-            match node {
-                Node::Command(b) => match b.id {
-                    id::WAIT => {
-                        let mut at = 0;
-                        let done = match value(&b.members, &mut at) {
-                            Some(Value::Text(name)) => self
-                                .groups
-                                .iter()
-                                .find(|g| g.name.eq_ignore_ascii_case(&name))
-                                .is_some_and(|g| g.tasks.iter().all(|t| t.1)),
-                            Some(Value::Float(ms)) => {
-                                let since = *self.wait_since.get_or_insert(level);
-                                (since as f32 + ms) < level as f32
-                            }
-                            None => false,
-                        };
-                        if !done {
-                            return true;
-                        }
-                        self.wait_since = None;
-                    }
-                    id::WAITSIGNAL => return true,
-                    id::SET => {
-                        let task = self.next_task;
-                        self.next_task += 1;
-                        let group = self.current_group();
-                        if let Some(g) = group {
-                            self.groups[g].tasks.push((task, false));
-                        }
-                        let mut at = 1;
-                        let name = b.members.first().and_then(Member::text).unwrap_or("");
-                        let v = value(&b.members, &mut at);
-                        let name = name.to_owned();
-                        if !self.set(&name, v.as_ref(), task, level) {
-                            self.complete(task);
-                        }
-                    }
-                    id::DO => {
-                        let name = b.members.first().and_then(Member::text).unwrap_or("");
-                        let found = self
-                            .groups
-                            .iter()
-                            .position(|g| g.name.eq_ignore_ascii_case(name));
-                        self.stack.last_mut().unwrap().at += 1;
-                        if let Some(g) = found {
-                            self.groups[g].tasks.clear();
-                            self.stack.push(Cursor {
-                                nodes: self.groups[g].body,
-                                at: 0,
-                                kind: Kind::Group(g),
-                            });
-                        }
-                        continue;
-                    }
-                    _ => {}
-                },
-                Node::Body(b, body) => match b.id {
-                    id::LOOP => {
-                        let mut at = 0;
-                        let n = value(&b.members, &mut at).and_then(|v| v.float());
-                        self.stack.last_mut().unwrap().at += 1;
-                        let n = n.map_or(0, |n| n as i32);
-                        if n != 0 {
-                            self.stack.push(Cursor {
-                                nodes: body,
-                                at: 0,
-                                kind: Kind::Loop(n),
-                            });
-                        }
-                        continue;
-                    }
-                    id::IF => {
-                        let top = self.stack.last_mut().unwrap();
-                        top.at += 1;
-                        let otherwise = match nodes.get(top.at) {
-                            Some(Node::Body(e, body)) if e.id == id::ELSE => {
-                                top.at += 1;
-                                Some(body)
-                            }
-                            _ => None,
-                        };
-                        let chosen = if condition(b) { Some(body) } else { otherwise };
-                        if let Some(nodes) = chosen {
-                            self.stack.push(Cursor {
-                                nodes,
-                                at: 0,
-                                kind: Kind::Plain,
-                            });
-                        }
-                        continue;
-                    }
-                    // Task bodies run by `do`; `affect` runs on another entity.
-                    _ => {}
-                },
-            }
-            self.stack.last_mut().unwrap().at += 1;
-        }
-        true
-    }
-
-    /// The first level frame after `level` at which something can change, if any:
-    /// a timer running out, a timed wait ending, or the idle starting.
-    fn next_event(&self, level: i32, script_waits: bool) -> Option<i32> {
+    /// The first level frame after `level` at which something of its own can
+    /// change, if any: a timer running out, a timed wait ending, a voice line
+    /// playing out, or the idle starting.
+    fn next_event(&self, level: i32) -> Option<i32> {
         let frame_from = |t: i32| level + ((t - level).max(1) + FRAME_MS - 1) / FRAME_MS * FRAME_MS;
         let mut next: Option<i32> = None;
         let mut at = |t: i32| next = Some(next.map_or(t, |n| n.min(t)));
-        for p in &self.parts {
+        if let Some(since) = self.wait_since
+            && let Some(top) = self.stack.last()
+            && let Some(Node::Command(b)) = top.nodes.get(top.at)
+        {
+            let mut i = 0;
+            if let Some(Value::Float(ms)) = value(&b.members, &mut i) {
+                // The first frame later than since + ms.
+                let end = (since as f32 + ms).floor() as i32 + 1;
+                at(frame_from(end));
+            }
+        }
+        if let Some((_, end)) = self.voice {
+            at(frame_from(end));
+        }
+        let Some(body) = &self.body else { return next };
+        for p in &body.parts {
             if p.timer > 0 {
                 at(frame_from(level + p.timer));
             }
         }
-        if script_waits && let Some(since) = self.wait_since {
-            let top = self.stack.last().unwrap();
-            if let Some(Node::Command(b)) = top.nodes.get(top.at) {
-                let mut i = 0;
-                if let Some(Value::Float(ms)) = value(&b.members, &mut i) {
-                    // The first frame later than since + ms.
-                    let end = (since as f32 + ms).floor() as i32 + 1;
-                    at(frame_from(end));
-                }
-            }
-        }
-        let [legs, torso] = &self.parts;
-        let idle = idle_for(&legs.anim).and_then(|a| (self.holds)(a));
+        let [legs, torso] = &body.parts;
+        let idle = idle_for(&legs.anim).and_then(|a| (body.holds)(a));
         if standing(&legs.anim) && legs.timer == 0 && torso.timer == 0 && idle.is_some() {
-            at(frame_from(self.idle_time + 5001));
+            at(frame_from(body.idle_time + 5001));
         }
         next
     }
 }
 
 /// Every `task` block in `nodes` and the bodies under them (`ParseTask` registers
-/// each as the script is routed, before it runs), the first of a name kept.
+/// each as the script is routed, before it runs), the first of a name kept; not
+/// those under `affect`, which go to the entity it affects.
 fn groups<'a>(nodes: &'a [Node], out: &mut Vec<Group<'a>>) {
     for n in nodes {
         if let Node::Body(b, body) = n {
+            if b.id == id::AFFECT {
+                continue;
+            }
             if b.id == id::TASK
                 && let Some(name) = b.members.first().and_then(Member::text)
                 && !out.iter().any(|g| g.name.eq_ignore_ascii_case(name))
@@ -652,63 +622,474 @@ fn groups<'a>(nodes: &'a [Node], out: &mut Vec<Group<'a>>) {
     }
 }
 
-/// What an NPC standing in `stance` does up to [`HORIZON`], running `script` (its
-/// spawnscript, if any), with `holds` its skeleton's animations' holds and lengths.
-///
-/// It starts in `BOTH_STAND1` (`NPC_Begin`). On the first frame its script runs its
-/// first pass, then its first movement frame (counting no time down) puts it in its
-/// stance; each later frame runs its movement frame, then its script.
-pub fn timeline(stance: &Pose, script: Option<&[Node]>, holds: Holds<'_>) -> Timeline {
-    let mut all = Vec::new();
-    if let Some(nodes) = script {
-        groups(nodes, &mut all);
+/// Member `n` of `b` as text ("" if it is not).
+fn text(b: &Block, n: usize) -> &str {
+    b.members.get(n).and_then(Member::text).unwrap_or("")
+}
+
+/// `affect`'s type that runs the block before the rest of the entity's script
+/// (`TYPE_INSERT`); the other (`TYPE_FLUSH`, 56) drops the rest.
+const AFFECT_INSERT: f32 = 55.0;
+
+/// Whether a `sound` command's channel is a voice's, whose task completes when the
+/// line has played (`PlayIcarusSound`).
+fn voice_channel(channel: &str) -> bool {
+    ["CHAN_VOICE", "CHAN_VOICE_ATTEN", "CHAN_VOICE_GLOBAL"]
+        .iter()
+        .any(|c| c.eq_ignore_ascii_case(channel))
+}
+
+/// The level time (ms) the player enters the world on a map: the first frame
+/// after the NPCs have begun that a fast load gives (the reference captures hold
+/// the server there until the client enters, `sv_swjkjaBegin`). The spawn point's
+/// targets are used then (`ClientSpawn`).
+pub const PLAYER_BEGIN: i32 = 2000;
+
+/// A map's `target_scriptrunner`: the name it is used by, its script (`usescript`)
+/// and how long after it is used the script starts (`delay`, ms).
+#[derive(Debug, Clone)]
+pub struct Runner {
+    pub targetname: Option<String>,
+    pub script: std::sync::Arc<Vec<Node>>,
+    pub delay: i32,
+}
+
+/// The scripts a map runs besides its NPCs' spawnscripts: its script runners, and
+/// the names its player's spawn point uses as the player begins.
+#[derive(Debug, Clone, Default)]
+pub struct Level {
+    pub runners: Vec<Runner>,
+    pub begin: Vec<String>,
+}
+
+impl Level {
+    /// The level scripts of map `bsp`, `scripts` reading a script by name: its
+    /// script runners (`SP_target_scriptrunner`) but those that start inactive or
+    /// run on what uses them (spawnflags 128 and 1; the player is not run here) or
+    /// whose script does not load; and what the player uses as it begins: the
+    /// targets of its first player start (`SelectSpawnPoint` picks one at random:
+    /// the first; `ClientSpawn` uses its `target` and `target2`), then those of the
+    /// triggers its box stands in there (`trigger_once`, `trigger_multiple`; its
+    /// first move touches them), but those that need a button, a facing or an NPC,
+    /// or start inactive (spawnflags 2, 4, 8, 16, 128).
+    pub fn of(bsp: &swjkja_bsp::Bsp, scripts: &dyn Fn(&str) -> Option<Vec<Node>>) -> Self {
+        let entities = &bsp.entities;
+        let class = |e: &swjkja_bsp::Entity, c: &str| {
+            e.get("classname")
+                .is_some_and(|v| v.eq_ignore_ascii_case(c))
+        };
+        let runners = entities
+            .iter()
+            .filter(|e| class(e, "target_scriptrunner"))
+            .filter(|e| e.get("spawnflags").map_or(0, crate::style::atoi) & (1 | 128) == 0)
+            .filter_map(|e| {
+                let script = scripts(e.get("usescript")?)?;
+                let delay: f32 = e.get("delay").map_or(0.0, |d| {
+                    d.split_ascii_whitespace()
+                        .next()
+                        .and_then(|d| d.parse().ok())
+                        .unwrap_or(0.0)
+                });
+                Some(Runner {
+                    targetname: e.get("targetname").map(str::to_owned),
+                    script: std::sync::Arc::new(script),
+                    delay: (delay * 1000.0) as i32,
+                })
+            })
+            .collect();
+        let start = entities
+            .iter()
+            .find(|e| class(e, "info_player_start") || class(e, "info_player_deathmatch"));
+        let mut begin: Vec<String> = start
+            .into_iter()
+            .flat_map(|e| [e.get("target"), e.get("target2")])
+            .flatten()
+            .map(str::to_owned)
+            .collect();
+        if let Some(start) = start {
+            // The player's box (playerMins, playerMaxs) at the spawn point.
+            let (origin, _) = crate::static_model::origin_and_angles(start);
+            let mins = [origin[0] - 15.0, origin[1] - 15.0, origin[2] - 24.0];
+            let maxs = [origin[0] + 15.0, origin[1] + 15.0, origin[2] + 40.0];
+            for e in entities {
+                if !(class(e, "trigger_once") || class(e, "trigger_multiple"))
+                    || e.get("spawnflags").map_or(0, crate::style::atoi) & (2 | 4 | 8 | 16 | 128)
+                        != 0
+                {
+                    continue;
+                }
+                let model = e
+                    .get("model")
+                    .and_then(|m| m.strip_prefix('*')?.parse::<usize>().ok());
+                let Some(m) = model.and_then(|m| bsp.models.get(m)) else {
+                    continue;
+                };
+                let touches = (0..3).all(|k| mins[k] <= m.maxs[k] && maxs[k] >= m.mins[k]);
+                if touches {
+                    begin.extend(
+                        [e.get("target"), e.get("target2")]
+                            .into_iter()
+                            .flatten()
+                            .map(str::to_owned),
+                    );
+                }
+            }
+        }
+        Self { runners, begin }
     }
+}
+
+/// An NPC as its scripts see it: how it stands, its spawnscript, and its
+/// skeleton's animations' holds and lengths.
+pub struct Npc<'a> {
+    pub stance: &'a Pose,
+    pub script: Option<&'a [Node]>,
+    pub holds: Holds<'a>,
+}
+
+/// Every actor's scripts stepped together: the map's script runners, then its
+/// NPCs, in each frame (the original's entity order puts most runners first).
+struct World<'a> {
+    actors: Vec<Actor<'a>>,
+    /// How many of the actors are runners (they come first).
+    runners: usize,
+    level: &'a Level,
+    /// When each runner's script starts (level time), if it has been used.
+    starts: Vec<Option<i32>>,
+    /// Signals sent and not yet received (`CIcarus::m_signals`).
+    signals: Vec<String>,
+    voice: &'a dyn Fn(&str) -> Option<i32>,
+    next_task: u32,
+}
+
+impl<'a> World<'a> {
+    /// `target_scriptrunner_use` of the runners named `name` at `level`: each
+    /// starts its script `delay` later, on its first think from then (`G_RunThink`
+    /// runs its scripts right after), or with no delay at its next update.
+    fn use_targets(&mut self, name: &str, level: i32) {
+        for (r, runner) in self.level.runners.iter().enumerate() {
+            if runner
+                .targetname
+                .as_deref()
+                .is_some_and(|t| t.eq_ignore_ascii_case(name))
+                && self.starts[r].is_none()
+            {
+                let start = if runner.delay > 0 {
+                    level + runner.delay
+                } else {
+                    level + 1
+                };
+                self.starts[r] = Some(start);
+            }
+        }
+    }
+
+    /// The script's turn of actor `i` in level frame `level` (`CTaskManager::Update`):
+    /// commands run one after another until one waits. Returns whether it still has
+    /// commands. An `affect` runs the entity it affects right away (`CheckAffect`),
+    /// `depth` deep.
+    fn script(&mut self, i: usize, level: i32, depth: usize) -> bool {
+        // RUNAWAY_LIMIT, per update.
+        for _ in 0..10_000 {
+            let a = &mut self.actors[i];
+            let Some(top) = a.stack.last_mut() else {
+                return false;
+            };
+            let Some(node) = top.nodes.get(top.at) else {
+                match &mut top.kind {
+                    Kind::Loop(n) if *n == -1 || *n > 1 => {
+                        if *n > 1 {
+                            *n -= 1;
+                        }
+                        top.at = 0;
+                    }
+                    _ => {
+                        a.stack.pop();
+                    }
+                }
+                continue;
+            };
+            let nodes = top.nodes;
+            match node {
+                Node::Command(b) => match b.id {
+                    id::WAIT => {
+                        let mut at = 0;
+                        let done = match value(&b.members, &mut at) {
+                            Some(Value::Text(name)) => a
+                                .groups
+                                .iter()
+                                .find(|g| g.name.eq_ignore_ascii_case(&name))
+                                .is_some_and(|g| g.tasks.iter().all(|t| t.1)),
+                            Some(Value::Float(ms)) => {
+                                let since = *a.wait_since.get_or_insert(level);
+                                (since as f32 + ms) < level as f32
+                            }
+                            None => false,
+                        };
+                        if !done {
+                            return true;
+                        }
+                        a.wait_since = None;
+                    }
+                    id::WAITSIGNAL => {
+                        let name = text(b, 0);
+                        let Some(s) = self.signals.iter().position(|s| s == name) else {
+                            return true;
+                        };
+                        self.signals.remove(s);
+                    }
+                    id::SIGNAL => {
+                        let name = text(b, 0);
+                        if !self.signals.iter().any(|s| s == name) {
+                            self.signals.push(name.to_owned());
+                        }
+                    }
+                    id::USE => {
+                        let name = text(b, 0).to_owned();
+                        self.use_targets(&name, level);
+                    }
+                    id::SET | id::SOUND => {
+                        let task = self.next_task;
+                        self.next_task += 1;
+                        let a = &mut self.actors[i];
+                        if let Some(g) = a.current_group() {
+                            a.groups[g].tasks.push((task, false));
+                        }
+                        let pending = if b.id == id::SOUND {
+                            let (channel, name) = (text(b, 0), text(b, 1));
+                            voice_channel(channel) && {
+                                let length = (self.voice)(name).unwrap_or(0);
+                                let a = &mut self.actors[i];
+                                if let Some((old, _)) = a.voice.replace((task, level + length)) {
+                                    a.complete(old);
+                                }
+                                true
+                            }
+                        } else {
+                            let mut at = 1;
+                            let v = value(&b.members, &mut at);
+                            a.set(text(b, 0), v.as_ref(), task, level)
+                        };
+                        if !pending {
+                            self.actors[i].complete(task);
+                        }
+                    }
+                    id::DO => {
+                        let name = text(b, 0);
+                        let found = a
+                            .groups
+                            .iter()
+                            .position(|g| g.name.eq_ignore_ascii_case(name));
+                        top.at += 1;
+                        if let Some(g) = found {
+                            a.groups[g].tasks.clear();
+                            a.stack.push(Cursor {
+                                nodes: a.groups[g].body,
+                                at: 0,
+                                kind: Kind::Group(g),
+                            });
+                        }
+                        continue;
+                    }
+                    _ => {}
+                },
+                Node::Body(b, body) => match b.id {
+                    id::LOOP => {
+                        let mut at = 0;
+                        let n = value(&b.members, &mut at).and_then(|v| v.float());
+                        top.at += 1;
+                        let n = n.map_or(0, |n| n as i32);
+                        if n != 0 {
+                            a.stack.push(Cursor {
+                                nodes: body,
+                                at: 0,
+                                kind: Kind::Loop(n),
+                            });
+                        }
+                        continue;
+                    }
+                    id::IF => {
+                        top.at += 1;
+                        let otherwise = match nodes.get(top.at) {
+                            Some(Node::Body(e, body)) if e.id == id::ELSE => {
+                                top.at += 1;
+                                Some(body)
+                            }
+                            _ => None,
+                        };
+                        let chosen = if condition(b) { Some(body) } else { otherwise };
+                        if let Some(nodes) = chosen {
+                            a.stack.push(Cursor {
+                                nodes,
+                                at: 0,
+                                kind: Kind::Plain,
+                            });
+                        }
+                        continue;
+                    }
+                    id::AFFECT => {
+                        top.at += 1;
+                        let name = text(b, 0);
+                        let insert =
+                            b.members.get(1).and_then(Member::float) == Some(AFFECT_INSERT);
+                        let target = self.actors.iter().position(|t| {
+                            t.body.is_some() && t.name.is_some_and(|n| n.eq_ignore_ascii_case(name))
+                        });
+                        if let Some(t) = target {
+                            self.actors[t].affect(body, insert);
+                            if depth < 8 {
+                                self.script(t, level, depth + 1);
+                            }
+                        }
+                        continue;
+                    }
+                    // Task bodies are run by `do`.
+                    _ => {}
+                },
+            }
+            let a = &mut self.actors[i];
+            a.stack.last_mut().unwrap().at += 1;
+        }
+        true
+    }
+
+    /// `G_CheckTasksCompleted` for actor `i` at `level`: a voice line played out
+    /// completes its task.
+    fn check_voice(&mut self, i: usize, level: i32) {
+        let a = &mut self.actors[i];
+        if let Some((task, end)) = a.voice
+            && end <= level
+        {
+            a.voice = None;
+            a.complete(task);
+        }
+    }
+
+    /// One level frame: each runner's script, starting those due; then each NPC's
+    /// movement frame (`msec` after the last) and script.
+    fn frame(&mut self, level: i32, msec: i32) {
+        for r in 0..self.runners {
+            if self.starts[r].is_some_and(|s| s <= level) && self.actors[r].stack.is_empty() {
+                self.starts[r] = Some(i32::MAX);
+                let script = self.level.runners[r].script.as_slice();
+                self.actors[r].run(script);
+            }
+            self.check_voice(r, level);
+            self.script(r, level, 0);
+        }
+        for i in self.runners..self.actors.len() {
+            self.check_voice(i, level);
+            self.actors[i].movement(level, msec);
+            self.script(i, level, 0);
+        }
+    }
+
+    /// The first level frame after `level` at which something can change.
+    fn next_event(&self, level: i32) -> Option<i32> {
+        let mut next = self.actors.iter().filter_map(|a| a.next_event(level)).min();
+        let mut at = |t: i32| next = Some(next.map_or(t, |n: i32| n.min(t)));
+        for s in self.starts.iter().flatten() {
+            if *s != i32::MAX {
+                at(level + ((*s - level).max(1) + FRAME_MS - 1) / FRAME_MS * FRAME_MS);
+            }
+        }
+        // A signal someone waits for is received on its next update.
+        let waiting = self.actors.iter().any(|a| {
+            a.stack
+                .last()
+                .and_then(|c| c.nodes.get(c.at))
+                .is_some_and(|n| {
+                    matches!(n, Node::Command(b) if b.id == id::WAITSIGNAL
+                    && self.signals.iter().any(|s| s == text(b, 0)))
+                })
+        });
+        if waiting {
+            at(level + FRAME_MS);
+        }
+        next
+    }
+}
+
+/// What NPCs standing in their stances do up to [`HORIZON`], each running its
+/// spawnscript, and the map's `level` scripts with them; `voice` gives how long a
+/// voice line plays (ms; `None` for one that does not load, which plays out at
+/// once). One timeline per NPC, in order.
+///
+/// Each NPC starts in `BOTH_STAND1` (`NPC_Begin`). On the first frame its script
+/// runs its first pass, then its first movement frame (counting no time down) puts
+/// it in its stance; each later frame runs the runners' scripts, then each NPC's
+/// movement frame and script. The player begins at [`PLAYER_BEGIN`], using its
+/// spawn point's targets.
+pub fn timelines(
+    npcs: &[Npc<'_>],
+    level: &Level,
+    voice: &dyn Fn(&str) -> Option<i32>,
+) -> Vec<Timeline> {
     let part = || Part {
         anim: STAND.to_owned(),
         start: FIRST_FRAME,
         timer: 0,
     };
-    let mut npc = Npc {
-        stance,
-        holds,
-        parts: [part(), part()],
-        changes: [Vec::new(), Vec::new()],
-        look: Vec::new(),
-        idle_time: stance.still_since,
-        slots: [None; 3],
-        groups: all,
-        stack: script
-            .map(|nodes| Cursor {
-                nodes,
-                at: 0,
-                kind: Kind::Plain,
-            })
-            .into_iter()
-            .collect(),
-        wait_since: None,
+    let mut actors: Vec<Actor> = level
+        .runners
+        .iter()
+        .map(|r| Actor::new(r.targetname.as_deref(), None, None))
+        .collect();
+    for n in npcs {
+        let body = Body {
+            stance: n.stance,
+            holds: n.holds,
+            parts: [part(), part()],
+            changes: [Vec::new(), Vec::new()],
+            look: Vec::new(),
+            idle_time: n.stance.still_since,
+            slots: [None; 3],
+        };
+        actors.push(Actor::new(n.stance.name.as_deref(), Some(body), n.script));
+    }
+    let mut world = World {
+        actors,
+        runners: level.runners.len(),
+        level,
+        starts: vec![None; level.runners.len()],
+        signals: Vec::new(),
+        voice,
         next_task: 0,
     };
-    let mut level = FIRST_FRAME;
-    let mut running = npc.script(level);
-    npc.movement(level, 0);
-    while let Some(next) = npc.next_event(level, running) {
+    let mut level_time = FIRST_FRAME;
+    for i in world.runners..world.actors.len() {
+        world.script(i, level_time, 0);
+        world.actors[i].movement(level_time, 0);
+    }
+    let mut begun = false;
+    loop {
+        let mut next = world.next_event(level_time);
+        if !begun && !level.begin.is_empty() {
+            let begin_frame = PLAYER_BEGIN + FRAME_MS;
+            if next.is_none_or(|n| n >= begin_frame) && level_time < begin_frame {
+                // The player enters the world after frame PLAYER_BEGIN.
+                for name in &level.begin {
+                    world.use_targets(name, PLAYER_BEGIN);
+                }
+                begun = true;
+                next = world.next_event(level_time);
+            }
+        }
+        let Some(next) = next else { break };
         if next > HORIZON {
             break;
         }
         // The frames in between count the timers down and keep the idle clock as
         // the frame before the event would leave them.
-        let skipped = (next - level) / FRAME_MS - 1;
+        let skipped = (next - level_time) / FRAME_MS - 1;
         if skipped > 0 {
-            npc.movement(next - FRAME_MS, skipped * FRAME_MS);
+            for a in &mut world.actors {
+                a.movement(next - FRAME_MS, skipped * FRAME_MS);
+            }
         }
-        level = next;
-        npc.movement(level, FRAME_MS);
-        if running {
-            running = npc.script(level);
-        }
+        level_time = next;
+        world.frame(level_time, FRAME_MS);
     }
-    let [legs, torso] = npc.changes;
-    let look = npc.look;
     let first = |anim: &str| Change {
         start: FIRST_FRAME,
         anim: anim.to_owned(),
@@ -720,11 +1101,31 @@ pub fn timeline(stance: &Pose, script: Option<&[Node]>, holds: Holds<'_>) -> Tim
         }
         c
     };
-    Timeline {
-        legs: start(legs),
-        torso: start(torso),
-        look,
-    }
+    world
+        .actors
+        .into_iter()
+        .filter_map(|a| a.body)
+        .map(|b| {
+            let [legs, torso] = b.changes;
+            Timeline {
+                legs: start(legs),
+                torso: start(torso),
+                look: b.look,
+            }
+        })
+        .collect()
+}
+
+/// What an NPC standing in `stance` does up to [`HORIZON`], running `script` (its
+/// spawnscript, if any), with `holds` its skeleton's animations' holds and lengths
+/// ([`timelines`] for it alone).
+pub fn timeline(stance: &Pose, script: Option<&[Node]>, holds: Holds<'_>) -> Timeline {
+    let npc = Npc {
+        stance,
+        script,
+        holds,
+    };
+    timelines(&[npc], &Level::default(), &|_| None).remove(0)
 }
 
 /// What a spawnscript's first pass leaves before its first command that may wait

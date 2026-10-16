@@ -370,3 +370,136 @@ fn every_retail_map_places_its_brush_entities() {
     assert_eq!(count("maps/t3_hevil.bsp", [0.0, 300.0, 0.0]), 4);
     assert_eq!(count("maps/t3_hevil.bsp", [850.0, 0.0, 0.0]), 4);
 }
+
+/// Reads script `name` from `vfs`, as the game finds it.
+fn read_script(vfs: &swjkja_fs::Vfs, name: &str) -> Option<Vec<swjkja_icarus::Node>> {
+    let bytes = vfs.read(&script::script_path(name)?).ok()?;
+    Some(swjkja_icarus::parse(&bytes).unwrap())
+}
+
+/// The maps whose player's spawn point (or a trigger it stands in) uses a script
+/// runner as the player begins, and its name.
+#[test]
+fn intros_start_as_the_player_begins() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let mut maps: Vec<&str> = vfs
+        .files()
+        .filter(|f| f.ends_with(".bsp") && !f.starts_with("maps/mp/"))
+        .collect();
+    maps.sort_unstable();
+    let mut begun = Vec::new();
+    for name in &maps {
+        let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
+        let level = script::Level::of(&bsp, &|s| read_script(&vfs, s));
+        for b in &level.begin {
+            let runs = level.runners.iter().filter(|r| {
+                r.targetname
+                    .as_deref()
+                    .is_some_and(|t| t.eq_ignore_ascii_case(b))
+            });
+            if runs.count() > 0 {
+                begun.push(format!("{} {b}", name.trim_start_matches("maps/")));
+            }
+        }
+    }
+    // Counted from the scan: the academies' intros and most single-player maps'
+    // opening scripts.
+    let want = [
+        "academy1.bsp t397",
+        "academy2.bsp t397",
+        "academy3.bsp t399",
+        "academy4.bsp t397",
+        "academy5.bsp t397",
+        "academy6.bsp t404",
+        "hoth2.bsp set",
+        "hoth3.bsp t472",
+        "kor2.bsp set",
+        "t1_danger.bsp set",
+        "t1_fatal.bsp level_start",
+        "t1_inter.bsp t4",
+        "t1_rail.bsp t1051",
+        "t1_sour.bsp set",
+        "t1_surprise.bsp set",
+        "t2_dpred.bsp intro_script1",
+        "t2_rogue.bsp t430",
+        "t2_wedge.bsp set",
+        "t3_bounty.bsp t43131140",
+        "t3_hevil.bsp t1111118269",
+        "t3_rift.bsp set",
+        "t3_stamp.bsp set_cranes",
+        "taspir1.bsp t271",
+        "taspir2.bsp set",
+        "vjun1.bsp introRunner",
+        "yavin1.bsp start_level",
+        "yavin1b.bsp start_level",
+        "yavin2.bsp set",
+    ];
+    assert_eq!(begun, want);
+}
+
+/// Every voice line a retail script plays (`CHAN_VOICE*`) loads as a WAV or an MP3
+/// with a length, but four the game lacks too.
+#[test]
+fn every_scripted_voice_line_has_a_length() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    fn sounds(nodes: &[swjkja_icarus::Node], out: &mut Vec<String>) {
+        for n in nodes {
+            match n {
+                swjkja_icarus::Node::Command(b) if b.id == swjkja_icarus::id::SOUND => {
+                    let text = |i: usize| b.members.get(i).and_then(|m| m.text()).unwrap_or("");
+                    if text(0).to_ascii_uppercase().starts_with("CHAN_VOICE") {
+                        out.push(text(1).to_owned());
+                    }
+                }
+                swjkja_icarus::Node::Body(_, body) => sounds(body, out),
+                _ => {}
+            }
+        }
+    }
+    let mut lines = Vec::new();
+    for f in vfs
+        .files()
+        .filter(|f| f.to_ascii_lowercase().ends_with(".ibi"))
+    {
+        sounds(
+            &swjkja_icarus::parse(&vfs.read(f).unwrap()).unwrap(),
+            &mut lines,
+        );
+    }
+    lines.sort_unstable();
+    lines.dedup();
+    let (mut missing, mut unread, mut total) = (Vec::new(), Vec::new(), 0.0);
+    for l in &lines {
+        let files = swjkja_world::sound::files(l);
+        match files.iter().find_map(|f| vfs.read(f).ok()) {
+            None => missing.push(l.clone()),
+            Some(bytes) => match swjkja_world::sound::length_ms(&bytes) {
+                Some(ms) => total += ms,
+                None => unread.push(l.clone()),
+            },
+        }
+    }
+    // Counted from the scan; the missing four are missing from the game too (it
+    // plays nothing and goes on).
+    assert_eq!(lines.len(), 766);
+    assert_eq!(
+        missing,
+        [
+            "sound/chars/jaden_male/28jak006.mp3",
+            "sound/chars/jaden_male/28jak007.mp3",
+            "sound/chars/sab1/08is3002.mp3",
+            "sound/chars/stofficer2/misc/anger1"
+        ]
+    );
+    assert!(unread.is_empty(), "{unread:?}");
+    // 45 minutes and 46 seconds of lines.
+    assert_eq!((total / 1000.0).round(), 2746.0);
+}

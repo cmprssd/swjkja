@@ -256,6 +256,7 @@ impl StaticModels {
         let sp = matches!(rules, Rules::SinglePlayer { .. });
         let cinematic = sp.then(|| Cinematic::load(vfs, map)).flatten();
         let mut world = Collision::at_spawn(bsp, rules);
+        let mut level = script::Level::default();
         let mut placements =
             swjkja_world::static_model::entity_models(&bsp.entities, rules, &mut world);
         placements.extend(
@@ -290,6 +291,7 @@ impl StaticModels {
                 &world,
                 &scripts,
             ));
+            level = script::Level::of(bsp, &scripts);
         }
         placements.extend(swjkja_world::static_model::static_models(
             &bsp.entities,
@@ -315,6 +317,51 @@ impl StaticModels {
                     }
                 }
             }
+        }
+        // What the NPCs do, all together: each one's animations, then the map's
+        // scripts and theirs, voice lines lasting their sounds.
+        let files: Vec<Option<AnimFiles>> = placements
+            .iter()
+            .map(|p| {
+                p.ghoul2.as_ref()?.pose.as_ref()?;
+                match &models[&p.model.to_ascii_lowercase()] {
+                    Some(Model::Ghoul2(m)) => Some(AnimFiles::new(vfs, m, cinematic.as_ref())),
+                    _ => None,
+                }
+            })
+            .collect();
+        let holds: Vec<_> = files
+            .iter()
+            .flatten()
+            .map(|f| move |name: &str| f.holds(name))
+            .collect();
+        let npcs: Vec<script::Npc> = placements
+            .iter()
+            .zip(&files)
+            .filter(|(_, f)| f.is_some())
+            .zip(&holds)
+            .map(|((p, _), holds)| {
+                let pose = p.ghoul2.as_ref().unwrap().pose.as_ref().unwrap();
+                script::Npc {
+                    stance: pose,
+                    script: pose.script.as_deref().map(Vec::as_slice),
+                    holds,
+                }
+            })
+            .collect();
+        let voices = std::cell::RefCell::new(HashMap::new());
+        let voice = |name: &str| {
+            *voices
+                .borrow_mut()
+                .entry(name.to_owned())
+                .or_insert_with(|| {
+                    let file = swjkja_world::sound::files(name);
+                    let bytes = file.iter().find_map(|f| vfs.read(f).ok())?;
+                    swjkja_world::sound::length_ms(&bytes).map(|ms| ms.ceil() as i32)
+                })
+        };
+        let mut timelines = script::timelines(&npcs, &level, &voice).into_iter();
+        for (n, p) in placements.iter().enumerate() {
             let skin = |name: &Option<String>| {
                 name.as_ref()
                     .and_then(|n| skins[&n.to_ascii_lowercase()].as_ref())
@@ -326,10 +373,11 @@ impl StaticModels {
                         eprintln!("warning: model {}: a Ghoul2 mesh placed as an MD3", p.model);
                         continue;
                     };
-                    let rig = g
-                        .pose
-                        .as_ref()
-                        .map(|pose| Rig::new(vfs, m, pose, cinematic.as_ref()));
+                    let rig = g.pose.as_ref().map(|pose| {
+                        let files = files[n].as_ref().expect("an NPC's animations");
+                        let timeline = timelines.next().expect("an NPC's timeline");
+                        Rig::new(m, pose, files, timeline)
+                    });
                     let pose = match &rig {
                         Some(rig) => rig.body_pose(time, &[]),
                         None => m.gla.pose(0),
@@ -714,6 +762,75 @@ impl Cinematic {
     }
 }
 
+/// The animations a Ghoul2 model can play: its skeleton's animation file and, for
+/// a humanoid, the map's cinematic one, whose animations replace those of the same
+/// name and play on the cinematic skeleton (`G_ParseAnimFileSet`). A cinematic
+/// skeleton whose bones are not the body's is left out.
+struct AnimFiles {
+    text: String,
+    frames: usize,
+    cinematic: Option<Arc<Gla>>,
+    cinematic_text: String,
+    /// Each animation once: finding one reads the whole file.
+    found: std::cell::RefCell<HashMap<String, Option<(animation::Animation, usize)>>>,
+}
+
+impl AnimFiles {
+    fn new(vfs: &Vfs, model: &Ghoul2Model, cinematic: Option<&Cinematic>) -> Self {
+        let cinematic = cinematic.filter(|c| {
+            model
+                .glm
+                .anim_name
+                .eq_ignore_ascii_case(animation::HUMANOID)
+                && c.gla.bones.len() == model.gla.bones.len()
+        });
+        let text = animation::config_file(vfs, &model.glm.anim_name)
+            .and_then(|file| vfs.read(&file).ok())
+            .map(|text| String::from_utf8_lossy(&text).into_owned())
+            .unwrap_or_default();
+        Self {
+            text,
+            frames: model.gla.frame_count,
+            cinematic: cinematic.map(|c| c.gla.clone()),
+            cinematic_text: cinematic.map_or_else(String::new, |c| c.text.clone()),
+            found: Default::default(),
+        }
+    }
+
+    /// Animation `name` and the skeleton it plays on (0 the body's, 1 the
+    /// cinematic one), if a file names it with frames its skeleton has.
+    fn find(&self, name: &str) -> Option<(animation::Animation, usize)> {
+        if let Some(found) = self.found.borrow().get(name) {
+            return *found;
+        }
+        *self
+            .found
+            .borrow_mut()
+            .entry(name.to_owned())
+            .or_insert_with(|| {
+                let fits =
+                    |frames: usize| move |a: &animation::Animation| a.first + a.count <= frames;
+                let cine = self.cinematic.as_ref().and_then(|c| {
+                    animation::find(&self.cinematic_text, name).filter(fits(c.frame_count))
+                });
+                let cine = cine.map(|a| (a, 1));
+                cine.or_else(|| {
+                    animation::find(&self.text, name)
+                        .filter(fits(self.frames))
+                        .map(|a| (a, 0))
+                })
+            })
+    }
+
+    /// An animation's hold and full length (ms) as the game times it.
+    fn holds(&self, name: &str) -> Option<(i32, i32)> {
+        self.find(name).map(|(a, _)| {
+            let lerp = a.frame_lerp.abs();
+            ((a.count as i32 - 1) * lerp, a.count as i32 * lerp)
+        })
+    }
+}
+
 /// An NPC's skeleton, the models bolted to it, and what it plays over time.
 pub struct Rig {
     body: Arc<Ghoul2Model>,
@@ -747,50 +864,11 @@ pub struct Rig {
 }
 
 impl Rig {
-    /// `model` standing in `pose` and running its script, its animations from its
-    /// animation file and, for a humanoid, `cinematic`'s, which replace those of the
-    /// same name (`G_ParseAnimFileSet`). A cinematic skeleton whose bones are not
-    /// the body's is left out.
-    fn new(
-        vfs: &Vfs,
-        model: &Arc<Ghoul2Model>,
-        pose: &Pose,
-        cinematic: Option<&Cinematic>,
-    ) -> Self {
+    /// `model` standing in `pose` as `timeline` has it ([`script::timelines`]), its
+    /// animations found by `files`.
+    fn new(model: &Arc<Ghoul2Model>, pose: &Pose, files: &AnimFiles, timeline: Timeline) -> Self {
         let gla = &model.gla;
-        let cinematic = cinematic.filter(|c| {
-            model
-                .glm
-                .anim_name
-                .eq_ignore_ascii_case(animation::HUMANOID)
-                && c.gla.bones.len() == gla.bones.len()
-        });
-        let text = animation::config_file(vfs, &model.glm.anim_name)
-            .and_then(|file| vfs.read(&file).ok())
-            .map(|text| String::from_utf8_lossy(&text).into_owned())
-            .unwrap_or_default();
-        let find_in = |text: &str, gla: &Gla, name: &str| {
-            animation::find(text, name).filter(|a| a.first + a.count <= gla.frame_count)
-        };
-        // Each animation once: finding one reads the whole file.
-        let found = std::cell::RefCell::new(HashMap::new());
-        let find = |name: &str| {
-            *found
-                .borrow_mut()
-                .entry(name.to_owned())
-                .or_insert_with(|| {
-                    let cine =
-                        cinematic.and_then(|c| find_in(&c.text, &c.gla, name).map(|a| (a, 1)));
-                    cine.or_else(|| find_in(&text, gla, name).map(|a| (a, 0)))
-                })
-        };
-        let holds = |name: &str| {
-            find(name).map(|(a, _): (animation::Animation, usize)| {
-                let lerp = a.frame_lerp.abs();
-                ((a.count as i32 - 1) * lerp, a.count as i32 * lerp)
-            })
-        };
-        let timeline = script::timeline(pose, pose.script.as_deref().map(Vec::as_slice), &holds);
+        let find = |name: &str| files.find(name);
         let mut anims: Vec<(String, animation::Animation, usize)> = Vec::new();
         let changes = timeline.legs.iter().chain(&timeline.torso);
         let names =
@@ -811,7 +889,7 @@ impl Rig {
         });
         Self {
             body: model.clone(),
-            cinematic: cinematic.map(|c| c.gla.clone()),
+            cinematic: files.cinematic.clone(),
             timeline,
             anims,
             switches,

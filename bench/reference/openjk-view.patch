@@ -65,7 +65,7 @@ index db6f7dc..6c6aa0d 100644
  	{ &cg_shadows, "cg_shadows", "1", CVAR_ARCHIVE  },
  	{ &cg_renderToTextureFX, "cg_renderToTextureFX", "1", CVAR_ARCHIVE  },
 diff --git a/code/cgame/cg_view.cpp b/code/cgame/cg_view.cpp
-index c5a8fd0..4afe019 100644
+index c5a8fd0..2082f3f 100644
 --- a/code/cgame/cg_view.cpp
 +++ b/code/cgame/cg_view.cpp
 @@ -1988,10 +1988,66 @@ extern void CG_BuildSolidList( void );
@@ -135,7 +135,7 @@ index c5a8fd0..4afe019 100644
  
  	// update cvars
  	CG_UpdateCvars();
-@@ -2112,6 +2150,17 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
+@@ -2112,6 +2168,17 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
  		// build cg.refdef
  		inwater = CG_CalcViewValues();
  	}
@@ -153,7 +153,7 @@ index c5a8fd0..4afe019 100644
  
  	if (cg.zoomMode)
  	{ //zooming with binoculars or sniper, set the fog range based on the zoom level -rww
-@@ -2126,6 +2175,11 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
+@@ -2126,6 +2193,11 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
  	}
  
  	cg.refdef.time = cg.time;
@@ -222,6 +222,50 @@ index a349d4f..18b99d0 100644
  #if	AI_TIMERS
  	AITime = 0;
  	navTime = 0;
+diff --git a/code/server/sv_client.cpp b/code/server/sv_client.cpp
+index 8e948c0..a93c333 100644
+--- a/code/server/sv_client.cpp
++++ b/code/server/sv_client.cpp
+@@ -461,9 +461,20 @@ static void SV_UserMove( client_t *cl, msg_t *msg ) {
+ 		return;
+ 	}
+ 
++	// swjkja reference capture: with sv_swjkjaBegin set, the client enters the
++	// world at that server time (ms) exactly: not before (its moves are ignored
++	// until then), and SV_Frame holds the time there until it does.
++	static cvar_t *swjkjaBegin = Cvar_Get( "sv_swjkjaBegin", "", 0 );
++	if ( cl->state == CS_PRIMED && swjkjaBegin->string[0] && sv.time < swjkjaBegin->integer ) {
++		return;
++	}
++
+ 	// if this is the first usercmd we have received
+ 	// this gamestate, put the client into the world
+ 	if ( cl->state == CS_PRIMED ) {
++		if ( swjkjaBegin->string[0] ) {
++			Com_Printf( "swjkja begin %d\n", sv.time );
++		}
+ 
+ 		SV_ClientEnterWorld( cl, &cmds[0], eSavedGameJustLoaded );
+ 		if ( sv_mapname->string[0]!='_' )
+diff --git a/code/server/sv_main.cpp b/code/server/sv_main.cpp
+index 88d41de..fea2397 100644
+--- a/code/server/sv_main.cpp
++++ b/code/server/sv_main.cpp
+@@ -505,6 +505,14 @@ void SV_Frame( int msec,float fractionMsec ) {
+ 
+ 	// run the game simulation in chunks
+ 	while ( sv.timeResidual >= frameMsec ) {
++		// swjkja reference capture: hold the time at sv_swjkjaBegin until the
++		// client has entered the world (SV_UserMove).
++		static cvar_t *swjkjaBegin = Cvar_Get( "sv_swjkjaBegin", "", 0 );
++		if ( swjkjaBegin->string[0] && sv.time >= swjkjaBegin->integer
++			&& svs.clients[0].state != CS_ACTIVE ) {
++			sv.timeResidual = 0;
++			break;
++		}
+ 		sv.timeResidual -= frameMsec;
+ 		sv.time += frameMsec;
+ 		re.G2API_SetTime(sv.time,G2T_SV_TIME);
 diff --git a/codemp/cgame/cg_light.c b/codemp/cgame/cg_light.c
 index 976ae03..fd4daed 100644
 --- a/codemp/cgame/cg_light.c

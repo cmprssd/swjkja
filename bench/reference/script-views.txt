@@ -1,7 +1,9 @@
 # Views of NPCs that run a spawnscript, in the format of views.txt. Captured with
 # entities drawn and scripts running (SCRIPTS=1 ENTITIES=1
 # bench/capture-reference.sh reference/script-views.txt): the AI frozen, the game
-# stopped at the view's time. academy1_class looks over the teachers at the seated
+# stopped at the view's time, the player entering the world at 2000 ms and the
+# maps' intro cutscenes running (Luke in BOTH_STAND4 on academy1, 4 and 6; talking
+# on academy2). academy1_class looks over the teachers at the seated
 # students (academy1/studentSpawn: BOTH_SIT2 held for good, weapons put away);
 # academy2_class at the standing students in their BOTH_CIN stances, three of whom
 # (academy2/studentSpawn5) wait a random time between animations; academy4_class and
