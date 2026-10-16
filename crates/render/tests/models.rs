@@ -437,7 +437,7 @@ fn t2_dpred_stormtroopers_move_as_time_passes() {
 /// academy1's seated students look at Luke (their spawnscript's `SET_LOOK_TARGET`):
 /// each settled look (pitch, yaw) as the original's capture logged it
 /// (`renderInfo.lastHeadAngles`, `SCRIPTS=1` at 12345 ms), within a tenth of a
-/// degree, given its point for Luke's eyes.
+/// degree. Luke stands in BOTH_STAND4 from the map's intro (2050 ms).
 #[test]
 fn academy1_students_look_at_luke_as_the_original() {
     let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
@@ -450,34 +450,30 @@ fn academy1_students_look_at_luke_as_the_original() {
     let models = StaticModels::load(&vfs, &bsp, &[], "maps/academy1.bsp", time);
     // Where each student spawned, and its look.
     let logged = [
-        ([-1312.0, -976.0], [-7.136, -8.547]),
-        ([-1360.0, -976.0], [-7.432, -4.471]),
-        ([-1600.0, -928.0], [-9.426, 14.453]),
-        ([-1488.0, -936.0], [-6.471, 6.026]),
-        ([-1568.0, -992.0], [-2.834, 13.282]),
-        ([-1536.0, -952.0], [-6.482, 9.965]),
-        ([-1448.0, -880.0], [-1.099, 2.999]),
-        ([-1336.0, -904.0], [-5.883, -5.427]),
-        ([-1240.0, -984.0], [-10.486, -13.123]),
-        ([-1288.0, -928.0], [-1.324, -8.036]),
-        ([-1416.0, -928.0], [-10.333, 1.445]),
+        ([-1312.0, -976.0], [-7.119, -8.564]),
+        ([-1360.0, -976.0], [-7.421, -4.477]),
+        ([-1600.0, -928.0], [-9.415, 14.458]),
+        ([-1488.0, -936.0], [-6.460, 6.026]),
+        ([-1568.0, -992.0], [-2.829, 13.288]),
+        ([-1536.0, -952.0], [-6.471, 9.965]),
+        ([-1448.0, -880.0], [-1.082, 2.999]),
+        ([-1336.0, -904.0], [-5.872, -5.438]),
+        ([-1240.0, -984.0], [-10.475, -13.134]),
+        ([-1288.0, -928.0], [-1.313, -8.053]),
+        ([-1416.0, -928.0], [-10.316, 1.445]),
     ];
     let luke = models
         .instances
         .iter()
         .position(|m| m.origin[0] == -1408.0 && m.origin[1] == -1304.0)
         .unwrap();
-    // The original's point for Luke's eyes: another script (`affect`, not run here)
-    // has him stand in BOTH_STAND4 from 1950 ms, not his spawnscript's BOTH_CIN_4.
-    let luke_eyes = [-1407.97, -1300.67, 779.98];
     let mut looking = 0;
     for n in 0..models.instances.len() {
-        let Some((target, _)) = models.look(n, time) else {
+        let Some((target, look)) = models.look(n, time) else {
             continue;
         };
         looking += 1;
         assert_eq!(target, luke);
-        let look = models.look_toward(n, time, luke_eyes).unwrap();
         let o = models.instances[n].origin;
         let (_, want) = logged
             .iter()
@@ -495,8 +491,8 @@ fn academy1_students_look_at_luke_as_the_original() {
 
 /// academy2's students look at Luke as the original's capture log has them, those
 /// in the map's cinematic stances (`BOTH_CIN_*`, on its cinematic skeleton) too.
-/// Left out: those whose scripts wait a random time and the one whose look target
-/// the intro sets (`affect`, not run here).
+/// Left out: those whose scripts wait a random time, and the three the intro has
+/// look from student to student after random waits.
 #[test]
 fn academy2_students_look_at_luke_as_the_original() {
     let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
@@ -514,18 +510,16 @@ fn academy2_students_look_at_luke_as_the_original() {
         .unwrap();
     // Where each student spawned, and its logged look (pitch, yaw).
     let logged = [
-        ([-1402.0, -992.0], [-7.004, -0.483]),
-        ([-1516.0, -960.0], [-6.537, -11.508]),
-        ([-1482.0, -928.0], [-5.284, -6.317]),
-        ([-1336.0, -924.0], [-6.356, 2.807]),
-        ([-1382.0, -912.0], [-5.169, -1.840]),
-        ([-1268.0, -982.0], [-7.103, 12.887]),
-        ([-1530.0, -996.0], [-6.103, -4.010]),
-        ([-1308.0, -994.0], [-6.356, 13.535]),
-        ([-1348.0, -960.0], [-10.245, 1.950]),
-        ([-1428.0, -954.0], [-10.212, 1.593]),
-        ([-1438.0, -1008.0], [-6.790, -1.983]),
-        ([-1364.0, -1000.0], [-7.679, 1.538]),
+        ([-1402.0, -992.0], [-6.998, -0.461]),
+        ([-1516.0, -960.0], [-6.526, -11.503]),
+        ([-1482.0, -928.0], [-5.273, -6.290]),
+        ([-1382.0, -912.0], [-5.164, -1.818]),
+        ([-1530.0, -996.0], [-6.092, -3.988]),
+        ([-1308.0, -994.0], [-6.356, 13.552]),
+        ([-1348.0, -960.0], [-10.239, 1.967]),
+        ([-1428.0, -954.0], [-10.206, 1.609]),
+        ([-1438.0, -1008.0], [-6.784, -1.956]),
+        ([-1364.0, -1000.0], [-7.663, 1.544]),
     ];
     for (at, want) in logged {
         let n = models
@@ -534,7 +528,7 @@ fn academy2_students_look_at_luke_as_the_original() {
             .position(|m| m.origin[0] == at[0] && m.origin[1] == at[1])
             .unwrap();
         let (target, look) = models.look(n, time).unwrap();
-        assert_eq!(target, luke);
+        assert_eq!(target, luke, "{at:?}");
         assert!(
             (look[0] - want[0]).abs() < 0.05 && (look[1] - want[1]).abs() < 0.05,
             "{at:?}: {look:?}, logged {want:?}"

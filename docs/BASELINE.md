@@ -381,6 +381,35 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Single-player level scripts and their cutscenes, 2026-10-16
+
+A map's script runners now run with its NPCs: the academies' intros start as the
+player enters the world (2000 ms) and run as cutscenes, handing blocks to NPCs
+(`affect`), signalling, and waiting on voice lines that last their sound files.
+academy1's, 4's and 6's Luke stand in BOTH_STAND4 from 2050 ms, Kyle in his
+cinematic stance; academy2's Luke talks from 10600 ms and stands again from 12050,
+as the patched game's script trace (`g_ICARUSDebug 4`) has it. The captures now
+pin the player's entry (`sv_swjkjaBegin`) and let the cutscene run, and wait until
+the game reaches the view's time; the four academy views were captured again.
+
+| View | Mean difference | main | Pixels off by > 16 | main |
+|------|------|------|------|------|
+| academy1_class | 0.95 | 0.99 | 1.6% | 1.7% |
+| academy2_class | 2.65 | 4.02 | 5.9% | 7.6% |
+| academy4_class | 3.26 | 5.26 | 6.9% | 9.3% |
+| academy6_class | 4.28 | 6.38 | 9.2% | 12.0% |
+
+- academy1's 11 students look as logged at our own Luke, within a tenth of a
+  degree (a retail test); academy2's 10 that do not wait at random, within 0.05.
+- 28 single-player maps start a script runner as the player begins (a retail test
+  lists them); every voice line in the retail scripts loads with a length but four
+  the game lacks too (766 lines, 45 minutes 46 seconds).
+- The 39 other reference views render pixel for pixel as on main. `bench_world`
+  (three runs of 600 frames) on the academy views is within main's spread (6.9 to
+  8.4 ms on both); loading academy2 takes about 25 ms more (985 ms against 960,
+  the scripts run together for the timeline's hour, 55 ms), academy6 within main's
+  spread.
+
 ## Captures that no longer kill Luke, 2026-10-16
 
 The capture script stands the player 128 units behind each view's eye, and

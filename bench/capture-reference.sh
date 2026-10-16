@@ -7,7 +7,10 @@
 # reference/model-views.txt; those views keep items and movers out of sight).
 # With SCRIPTS=1, single player's NPCs run their scripts (only their AI is frozen)
 # and the game stops at the map's first view's time, so scripted NPCs stand as of
-# that time: a map's views then share one time.
+# that time: a map's views then share one time. The player then enters the world
+# at 2000 ms exactly (sv_swjkjaBegin, a patch addition), so scripts it starts (the
+# academies' intros) start then, and a cutscene runs on instead of being skipped.
+# CAPTURE_ARGS adds engine arguments (e.g. "+set g_ICARUSDebug 4" traces scripts).
 # Multiplayer maps (mp/...) run in holocron mode (g_gametype 1) because free-for-all
 # opens the force-power menu on joining, over the view. Other maps run in the
 # single-player executable at the easiest skill (g_spskill 0, the cvar's default, as
@@ -52,7 +55,15 @@ for map in $maps; do
 		# a saber, single player draws the player's body in third person, around
 		# the eye. setviewpos kills whatever the player's box lands on (G_KillBox),
 		# so a view with an NPC there moves the player closer.
-		if [ "$sp" = 1 ]; then echo "exitview"; echo "wait 300"; echo "noclip"; fi
+		# With SCRIPTS=1 the cutscene runs on (the view is pinned anyway): skipping
+		# it would leave its actors as of whenever the skip came.
+		if [ "$sp" = 1 ] && [ "$scripts" != 1 ]; then echo "exitview"; echo "wait 300"; fi
+		# With SCRIPTS=1 the views must not come before the game reaches their
+		# time: wait that long at 60 frames a second (com_maxfps), at least.
+		if [ "$sp" = 1 ] && [ "$scripts" = 1 ]; then
+			grep -v '^#' "$views" | awk -v m="$map" '$1 == m {print "wait " int($9 * 60 / 1000) + 60; exit}'
+		fi
+		if [ "$sp" = 1 ]; then echo "noclip"; fi
 		# No console notify lines (the patched cgame logs NPC timing to the console).
 		echo "set cg_draw2D 0; set r_drawentities $entities; set cg_drawGun 0; set con_notifytime 0"
 		echo "wait 300"
@@ -70,6 +81,16 @@ for map in $maps; do
 	mp/*) game=(openjk.x86_64.exe +set g_gametype 1 +set sv_pure 0) ;;
 	*) game=(openjk_sp.x86_64.exe +set g_spskill 0 +set cg_thirdPerson 0) ;;
 	esac
+	# Scripts that start when the player spawns (the academies' intros) start at
+	# 2000 ms, the first frame a fast load gives: the patched server holds its time
+	# there until the client enters the world (sv_swjkjaBegin).
+	case $map in
+	mp/*) ;;
+	*) [ "$scripts" = 1 ] && game+=(+set sv_swjkjaBegin 2000) ;;
+	esac
+	# Extra engine arguments for a debugging run (e.g. "+set g_ICARUSDebug 3").
+	read -ra extra <<<"${CAPTURE_ARGS:-}"
+	game+=("${extra[@]}")
 	run_timed 300 "${game[0]}" "${OPENJK_SETTINGS[@]}" +set com_maxfps 60 \
 		+set r_picmip 0 +set r_ext_compress_textures 0 +set r_DynamicGlow 0 \
 		+set cg_fov 80 +set r_textureMode GL_LINEAR_MIPMAP_NEAREST \
@@ -78,7 +99,7 @@ for map in $maps; do
 	# The patched cgame logs each NPC's animation timing once per view time, and
 	# its look ("swjkja look") once the view's time is pinned.
 	if [ "$sp" = 1 ]; then
-		get qconsole.log | grep -a "swjkja npc\|swjkja look" >"$out/$map-npcs.txt" || true
+		get qconsole.log | grep -a "swjkja npc\|swjkja look\|swjkja begin" >"$out/$map-npcs.txt" || true
 	fi
 done
 ls -l "$out"

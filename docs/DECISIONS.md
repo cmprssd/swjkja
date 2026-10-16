@@ -709,3 +709,36 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   academy2's: his spawnscript's `BOTH_CIN_4` now plays (before, missing, he stood
   in `BOTH_STAND1`), while another script (`affect`, not run here) has him stand in
   `BOTH_STAND4` from 1950 ms in the original.
+
+## 2026-10-16: Level scripts and their cutscenes run, the player beginning at 2000 ms (chosen by the owner)
+
+- **The intros run as cutscenes** (not only their first pass): the map's script
+  runners with the NPCs, `affect` blocks over time, signals, task waits, and voice
+  lines lasting their sound files (WAV or MP3); cameras and subtitles left out, and
+  walking (navgoals) not done, as with the AI frozen.
+- **The player enters the world at 2000 ms**, the first frame a fast load gives
+  (academy1's first capture). In the original it is whenever the client has loaded,
+  so the captures pin it: the patched server holds its time there until the client
+  enters (`sv_swjkjaBegin`), and captures with `SCRIPTS=1` let the cutscene run
+  instead of skipping it (skipping froze the actors at whenever the skip came).
+- **Captures stand the player off NPCs** (a views file's tenth column): the old
+  placement killed academy2's, 4's and 6's Luke.
+
+## 2026-10-16: How level scripts run (decided by Claude, pending review)
+
+- **Script runners update before NPCs in each frame.** The original updates
+  entities by number, which is not the map's entity order (academy2's intro runner
+  is entity 3, between Rosh and the other students); runners first matches the
+  logged trace for every actor the academies' intros touch but Rosh, whose intro
+  block only waits for a signal.
+- **What the player begins with**: the targets of the first player start
+  (`SelectSpawnPoint` picks one at random) and of the `trigger_once` and
+  `trigger_multiple` boxes its box stands in at the spawn point (academy4's intro);
+  triggers that need a button, a facing or an NPC, or start inactive, are left out,
+  as are runners that run on their activator (the player is not run here).
+- **A voice line plays out on the first frame from its start plus its length**
+  (the client's mixer, in real time, decides in the original); a line whose file
+  is missing (four retail ones, missing from the game too) plays out at once.
+- **Moves are left out**: `SET_ORIGIN`, `SET_ANGLES` and the like complete without
+  moving the NPC (the academies' views reach none before their time).
+
