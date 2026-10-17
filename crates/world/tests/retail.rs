@@ -87,7 +87,7 @@ fn every_retail_map_has_a_light_grid_and_spawns_its_static_models() {
             assert_eq!(models.len(), 84);
         }
         for m in &models {
-            let light = grid.entity_light(m.origin, &styles, [0.0; 3]);
+            let light = grid.entity_light(m.origin, &styles, [0.0; 3], false);
             lit += usize::from(light.ambient.iter().any(|&a| a > 32.0));
         }
         total += models.len();

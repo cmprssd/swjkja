@@ -13,7 +13,8 @@
 //! until one waits. Frames in which nothing can change are skipped.
 //!
 //! What scripts do to NPCs is modelled: their animations and hold times, what they
-//! look at (`SET_LOOK_TARGET`), the tasks scripts wait for (an animation's completes
+//! look at (`SET_LOOK_TARGET`), whether they are drawn with more light
+//! (`SET_MORELIGHT`), the tasks scripts wait for (an animation's completes
 //! when its timer runs out, a voice line's when it has played), timed waits, loops,
 //! conditions, task groups, signals, `use` of other script runners, and `affect`,
 //! which hands a block to an NPC (`FLUSH` drops the rest of its script, `INSERT`
@@ -70,9 +71,18 @@ pub struct Timeline {
     /// client's clock, as an animation set in the same frame) and the name of the
     /// entity it looks at, or `None` once cleared ("none", "NULL").
     pub look: Vec<(i32, Option<String>)>,
+    /// Each change of `SCF_MORELIGHT` (`SET_MORELIGHT`), which cgame reads as it
+    /// draws: from when (ms, on the client's clock) and whether it is set.
+    pub more_light: Vec<(i32, bool)>,
 }
 
 impl Timeline {
+    /// Whether the NPC is drawn with more light (`RF_MORELIGHT`) at `time`.
+    pub fn more_light_at(&self, time: i32) -> bool {
+        let after = self.more_light.partition_point(|(start, _)| *start <= time);
+        after.checked_sub(1).is_some_and(|i| self.more_light[i].1)
+    }
+
     /// The name of what the NPC looks at at `time`, if anything.
     pub fn look_at(&self, time: i32) -> Option<&str> {
         let after = self.look.partition_point(|(start, _)| *start <= time);
@@ -273,6 +283,7 @@ struct Body<'a> {
     parts: [Part; 2],
     changes: [Vec<Change>; 2],
     look: Vec<(i32, Option<String>)>,
+    more_light: Vec<(i32, bool)>,
     /// `client->idleTime`.
     idle_time: i32,
     /// The task each animation slot waits on, if any.
@@ -547,6 +558,15 @@ impl<'a> Actor<'a> {
                 let body = self.body.as_mut().unwrap();
                 if body.look.last().map(|(_, t)| t) != Some(&target) {
                     body.look.push((client_time(level), target));
+                }
+                false
+            }
+            "SET_MORELIGHT" => {
+                // Q3_SetMoreLight: anything but "true" clears it.
+                let on = text.eq_ignore_ascii_case("true");
+                let body = self.body.as_mut().unwrap();
+                if body.more_light.last().map(|(_, m)| *m).unwrap_or(false) != on {
+                    body.more_light.push((client_time(level), on));
                 }
                 false
             }
@@ -1042,6 +1062,7 @@ pub fn timelines(
             parts: [part(), part()],
             changes: [Vec::new(), Vec::new()],
             look: Vec::new(),
+            more_light: Vec::new(),
             idle_time: n.stance.still_since,
             slots: [None; 3],
         };
@@ -1111,6 +1132,7 @@ pub fn timelines(
                 legs: start(legs),
                 torso: start(torso),
                 look: b.look,
+                more_light: b.more_light,
             }
         })
         .collect()

@@ -522,6 +522,15 @@ impl StaticModels {
     /// instance's origin and axes, so a vertex skinned by them (as
     /// [`glm::skin`] does) lands where [`Piece::geometry`] has it. None for a model
     /// without a rig.
+    /// Whether instance `n` is drawn with more light at `time` (an NPC whose script
+    /// set `SET_MORELIGHT`: `CG_Player`'s `RF_MORELIGHT`).
+    pub fn more_light(&self, n: usize, time: i32) -> bool {
+        self.instances[n]
+            .rig
+            .as_ref()
+            .is_some_and(|rig| rig.timeline.more_light_at(time))
+    }
+
     pub fn bones(&self, n: usize, time: i32) -> Vec<Mat34> {
         let m = &self.instances[n];
         let Some(rig) = &m.rig else {
@@ -1443,6 +1452,7 @@ mod tests {
                 ("BOTH_STAND1", 9000),
             ]),
             look: Vec::new(),
+            more_light: Vec::new(),
         };
         let (at, stopped) = switches(&timeline, skeleton);
         assert_eq!(at, [(1550, 1), (9000, 0)]);
@@ -1460,6 +1470,7 @@ mod tests {
                 ("MISSING", 4000),
             ]),
             look: Vec::new(),
+            more_light: Vec::new(),
         };
         let (at, stopped) = switches(&timeline, skeleton);
         assert_eq!(at, [(1550, 1)]);
@@ -1473,6 +1484,7 @@ mod tests {
             legs: changes(&[("BOTH_CIN_2", 0)]),
             torso: changes(&[("BOTH_STAND1", 0)]),
             look: Vec::new(),
+            more_light: Vec::new(),
         };
         let (at, stopped) = switches(&timeline, skeleton);
         assert_eq!(at, [(0, 1)]);

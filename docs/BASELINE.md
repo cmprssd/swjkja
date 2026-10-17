@@ -381,6 +381,32 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Single-player NPCs drawn with more light, 2026-10-17
+
+The academies' students stood darker than the original's, every one of them, by
+1.15-1.76 times, the most where they stood darkest: the shape of light added to the
+ambient, not of a tint. Their spawnscripts (academy2's `studentspawn` to
+`studentspawn5`, which academy4 and 6 run too) and the intros' teachers start with
+`SET_MORELIGHT true`; cgame then draws the NPC with `RF_MORELIGHT`
+(`SCF_MORELIGHT`, read as it draws), and `R_SetupEntityLighting` adds 96 to its
+ambient light instead of 32. academy1's seated students (`academy1/studentspawn`)
+do not set it; its intro's teachers do. Rendered against the same captures:
+
+| View | Mean difference (main) | Pixels off by > 16 (main) |
+|------|------|------|
+| academy1_class | 0.36 (0.46) | 0.0% (0.3%) |
+| academy2_class | 0.45 (1.27) | 0.0% (2.8%) |
+| academy4_class | 0.56 (1.39) | 0.2% (3.0%) |
+| academy6_class | 0.90 (1.99) | 0.8% (4.9%) |
+
+- What is left on academy6 is at the students' edges (poses), not their shading: the
+  three groups of pixels still off by more than 12 are within 0.91-1.04 of the
+  original's brightness.
+- The 40 other reference views render pixel for pixel as on main.
+- `bench_world` (300 frames, alternating with main, three runs each, the four
+  academy views): within main's spread (academy2 7.31-7.73 ms against 7.30-7.45,
+  academy6 8.35-8.36 against 7.15-8.48, academy1 7.10-8.37 against 7.33-8.37).
+
 ## Single-player script waits pinned in the captures, 2026-10-16
 
 A script's random numbers (`wait( random( a, b ) )`, random loop counts) come from
@@ -402,7 +428,8 @@ twice; renders unchanged (the change is the reference's):
   by 2 to 13 ms (the client's clock, a frame either way), and their screenshots by
   0.02-0.03 mean (0.02-0.03% of pixels by more than 8).
 - What is left on the classroom views is mostly the students' shading (several drawn
-  darker or tinted differently), not their poses.
+  darker or tinted differently), not their poses: their scripts' `SET_MORELIGHT`
+  (see "Single-player NPCs drawn with more light").
 - The other single-player views were not captured again (unchecked whether any of
   their scripts draws a random number before its time).
 
