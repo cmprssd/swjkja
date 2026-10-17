@@ -859,3 +859,21 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   the original has it: the flag's changes are kept on the NPC's timeline (on the
   client's clock, as its look target's), and an NPC drawn while it is set gets 96
   of minimum ambient light instead of 32 (`RF_MORELIGHT`), clamped as before.
+
+## 2026-10-17: `run` and saber items modelled; kor1 kept out of the script views (decided by Claude, pending review)
+
+- **`run` runs the named script in place**, in the same update, then the rest of
+  the script that ran it (`CSequencer::ParseRun` routes it as a nested sequence;
+  `CheckRun` switches to it). The scripts a map's runners reach through `run` are
+  read with the map; their task groups join the running entity's as the `run`
+  runs (the original routes them when the outer script loads: only the order of
+  two groups of the same name could differ). yavin1's opening runs its intro.
+- **Saber items draw before the NPCs spawn**: each `weapon_saber` not waiting to be
+  used reads its saber's block on the 1300 ms frame (`FinishSpawningItem`; "player"
+  is the player's saber, `g_saber`), after the spawn functions' draws and before
+  the NPCs' blocks. Other entities' draws stay left out until a map needs them.
+- **kor1's statue views are not reference views**: with the AI frozen its intro's
+  camera never ends (its encounter waits on a navgoal), and while a camera runs the
+  original sends only the entities visible from it. A kor1 view of the encounter's
+  own room would need the runners that run on the player (spawnflags 1).
+

@@ -8,8 +8,12 @@
 # academy2_class at the standing students in their BOTH_CIN stances, three of whom
 # (academy2/studentSpawn5) wait a random time between animations (the capture pins
 # it at its low end); academy4_class and academy6_class at the same classroom, whose
-# students run academy2's scripts on their own maps' cinematic skeletons. yavin1's capture
-# never reaches the view (its intro), and t1_fatal's corpses die (SET_HEALTH 0).
+# students run academy2's scripts on their own maps' cinematic skeletons.
+# yavin1_students looks down the shuttle at its seated students during the intro
+# (yavin1/intro, run by its opening): Rosh in the front seat in BOTH_CIN_11, the
+# students' colours drawn after the player's saber on a seat draws its own.
+# t1_fatal's corpses die (SET_HEALTH 0); kor1's intro camera never ends with the
+# AI frozen (it waits on a navgoal), so the server sends only what it sees.
 # vjun2_imp_stance looks at vjun2's imperial (entity 34) at 3000 ms, before its
 # idle: legs in BOTH_STAND3, torso in TORSO_WEAPONIDLE2, its spine turned against its
 # "Motion" bone (cg_motionBoneComp); stopping the game there keeps the idle (from
@@ -21,4 +25,5 @@ academy1  academy1_class   -1400 -1260 790   15 90 0   12345
 academy2  academy2_class   -1400 -1200 780   15 90 0   12345   64
 academy4  academy4_class   -1400 -1200 780   15 90 0   12345   64
 academy6  academy6_class   -1400 -1200 780   15 90 0   12345   64
+yavin1    yavin1_students  3990 -120 30   15 90 0   12345
 vjun2     vjun2_imp_stance 626 1654 3095   20 135 0   3000

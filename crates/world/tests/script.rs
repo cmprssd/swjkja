@@ -388,6 +388,7 @@ fn intro(script: Vec<Node>) -> Level {
             delay: 0,
         }],
         begin: vec!["intro".to_owned()],
+        runs: Default::default(),
     }
 }
 
@@ -451,6 +452,38 @@ fn an_intro_takes_over_an_npc_when_the_player_begins() {
     assert_eq!(
         luke(spawnscript, &Level::default()),
         owned(&[("BOTH_STAND1", 1550), ("BOTH_STAND3", 6550)])
+    );
+}
+
+#[test]
+fn a_run_script_runs_in_place_then_the_rest() {
+    // As yavin1's opening: the intro waits 150 ms (from 2050, ending on the first
+    // frame past 2200), then runs another script, whose affect sets Luke's
+    // animation in that frame; the runner's own last affect comes after it.
+    let mut level = intro(vec![
+        wait(150.0),
+        command(id::RUN, vec![text("Yavin1/Intro.ibi")]),
+        affect("luke", false, vec![set("SET_ANIM_BOTH", "BOTH_SIT5")]),
+    ]);
+    level.runs.insert(
+        "yavin1/intro".to_owned(),
+        Arc::new(vec![
+            affect("luke", false, vec![set("SET_ANIM_BOTH", "BOTH_CIN_1")]),
+            wait(1000.0),
+        ]),
+    );
+    // BOTH_CIN_1 from the 2250 frame (2200 for the client), then the run script's
+    // 1000 ms wait (ending on the first frame past 3250) before the runner's own;
+    // each 1000 ms hold, set in the runner's turn, gives way a frame sooner.
+    assert_eq!(
+        luke(vec![hold_forever()], &level),
+        owned(&[
+            ("BOTH_STAND1", 1550),
+            ("BOTH_CIN_1", 2200),
+            ("BOTH_STAND1", 3150),
+            ("BOTH_SIT5", 3250),
+            ("BOTH_STAND1", 4200)
+        ])
     );
 }
 

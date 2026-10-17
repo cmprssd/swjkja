@@ -112,6 +112,34 @@ fn random_choices_draw_in_spawn_order() {
 }
 
 #[test]
+fn saber_items_draw_before_the_npcs_spawn() {
+    // As yavin1: the player's saber lying on a seat reads the player's saber's
+    // block as it finishes spawning, before the NPC's block is read (one waiting
+    // to be used does not).
+    let parms = b"any { playerModel kyle customRGBA random }";
+    let sabers = b"single_1 { saberColor random }";
+    let saber = |extra: &[(&str, &str)]| {
+        let mut pairs = vec![("classname", "weapon_saber"), ("saberType", "player")];
+        pairs.extend_from_slice(extra);
+        entity(&pairs)
+    };
+    let color = |entities: &[Entity]| {
+        let models = npc_models(entities, SP, parms, sabers, &Collision::default(), &|_| {
+            None
+        });
+        models[0].ghoul2.as_ref().unwrap().color
+    };
+    let any = npc("NPC_spawner", &[("NPC_type", "any")]);
+    assert_eq!(color(std::slice::from_ref(&any)), [111, 63, 34, 255]);
+    // Its draw comes first though it comes later in entity order: one draw on.
+    assert_eq!(color(&[any.clone(), saber(&[])]), [63, 34, 189, 255]);
+    assert_eq!(
+        color(&[any, saber(&[("targetname", "later")])]),
+        [111, 63, 34, 255]
+    );
+}
+
+#[test]
 fn an_npc_s_block_sets_its_colour() {
     let parms = b"
     plain { playerModel kyle }

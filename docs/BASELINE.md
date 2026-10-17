@@ -381,6 +381,41 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## yavin1's intro and the saber on its seat, 2026-10-17
+
+A new view, `yavin1_students` in `bench/reference/script-views.txt`, looks down
+the shuttle's aisle at the seated students at 12345 ms, captured with `SCRIPTS=1`
+(the intro's camera running: the forced view is drawn over it). Two things differed:
+
+- **Rosh stood behind the students** instead of sitting in the front seat, hands
+  behind his head. yavin1's opening script (`yavin1/opening`, which its player
+  start uses) plays a video and then `run`s `yavin1/intro`, which this renderer
+  left out; the intro gives Rosh `BOTH_CIN_11` (its root motion carries him into
+  the seat) when the pilot's block signals, about 7.7 s in (the capture logs 7693
+  ms). `run` now runs the named script in place (`CSequencer::CheckRun`), in the
+  same update.
+- **Five students wore other colours.** The original draws one more random number
+  before the NPCs spawn: the player's saber lying on a seat (a `weapon_saber`,
+  saberType "player") reads its block as it finishes spawning (1300 ms,
+  `FinishSpawningItem`), drawing its random colour, so every NPC's
+  `customRGBA` and saber draw came one later in the original. The capture's draw
+  log (`g_swjkjaRand`) and the new renderer's now match draw for draw.
+
+| View | Mean difference (main) | Pixels off by > 16 (main) |
+|------|------|------|
+| yavin1_students | 1.19 (2.09) | 1.2% (3.9%) |
+
+- What is left is the far door: the original's stands open (an unnamed `func_door`
+  opens when something touches its trigger; two students sit in it), this
+  renderer's closed (movers' motion is left out).
+- kor1's statue views (`kor1_statue`, `kor1_statue2`) were captured at 12345 and
+  at 60000 ms; neither shows the func_statics there (the three statues, the coffin
+  slab). kor1's encounter keeps the intro's camera on until `npc_fakePlayer1`
+  reaches a navgoal, which it never does with the AI frozen, and while a camera
+  runs the server sends the entities visible from the camera, not from the player
+  (`SV_BuildClientSnapshot`), a room above. They are not reference views.
+- The 40 other reference views render pixel for pixel as on main.
+
 ## Single-player NPCs drawn with more light, 2026-10-17
 
 The academies' students stood darker than the original's, every one of them, by

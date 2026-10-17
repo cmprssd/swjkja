@@ -16,12 +16,12 @@
 //! look at (`SET_LOOK_TARGET`), whether they are drawn with more light
 //! (`SET_MORELIGHT`), the tasks scripts wait for (an animation's completes
 //! when its timer runs out, a voice line's when it has played), timed waits, loops,
-//! conditions, task groups, signals, `use` of other script runners, and `affect`,
+//! conditions, task groups, signals, `use` of other script runners, `affect`,
 //! which hands a block to an NPC (`FLUSH` drops the rest of its script, `INSERT`
-//! runs the block first) and runs it at once. Commands that move an NPC
+//! runs the block first) and runs it at once, and `run`, which runs another script
+//! in place (yavin1's opening runs its intro). Commands that move an NPC
 //! (`SET_NAVGOAL`, `SET_ORIGIN`, ...) are left out (those that complete later never
-//! do, as with the AI frozen), and so are cameras, `run` (no script reached here
-//! runs another) and the other commands. A random number is its range's low end
+//! do, as with the AI frozen), and so are cameras and the other commands. A random number is its range's low end
 //! (once the client runs, what the shared generator draws depends on frame timing:
 //! [`crate::rand`]); a `get` reads nothing (a condition with one is false).
 
@@ -674,12 +674,14 @@ pub struct Runner {
     pub delay: i32,
 }
 
-/// The scripts a map runs besides its NPCs' spawnscripts: its script runners, and
-/// the names its player's spawn point uses as the player begins.
+/// The scripts a map runs besides its NPCs' spawnscripts: its script runners, the
+/// names its player's spawn point uses as the player begins, and the scripts the
+/// runners' scripts `run` (by name, in lower case; those runs reach too).
 #[derive(Debug, Clone, Default)]
 pub struct Level {
     pub runners: Vec<Runner>,
     pub begin: Vec<String>,
+    pub runs: HashMap<String, std::sync::Arc<Vec<Node>>>,
 }
 
 impl Level {
@@ -716,7 +718,21 @@ impl Level {
                     delay: (delay * 1000.0) as i32,
                 })
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let mut runs = HashMap::new();
+        let mut todo: Vec<String> = Vec::new();
+        for r in &runners {
+            run_names(&r.script, &mut todo);
+        }
+        while let Some(name) = todo.pop() {
+            if runs.contains_key(&name) {
+                continue;
+            }
+            if let Some(script) = scripts(&name) {
+                run_names(&script, &mut todo);
+                runs.insert(name, std::sync::Arc::new(script));
+            }
+        }
         let start = entities
             .iter()
             .find(|e| class(e, "info_player_start") || class(e, "info_player_deathmatch"));
@@ -755,7 +771,32 @@ impl Level {
                 }
             }
         }
-        Self { runners, begin }
+        Self {
+            runners,
+            begin,
+            runs,
+        }
+    }
+
+    /// The script `run` names (`CSequencer::ParseRun` strips its extension).
+    fn run(&self, name: &str) -> Option<&[Node]> {
+        let name = name.to_ascii_lowercase();
+        let name = name.strip_suffix(".ibi").unwrap_or(&name);
+        self.runs.get(name).map(|s| s.as_slice())
+    }
+}
+
+/// The scripts `nodes` `run`, anywhere in them, in lower case without extension.
+fn run_names(nodes: &[Node], out: &mut Vec<String>) {
+    for n in nodes {
+        match n {
+            Node::Command(b) if b.id == id::RUN => {
+                let name = text(b, 0).to_ascii_lowercase();
+                out.push(name.strip_suffix(".ibi").unwrap_or(&name).to_owned());
+            }
+            Node::Body(_, body) => run_names(body, out),
+            _ => {}
+        }
     }
 }
 
@@ -893,6 +934,22 @@ impl<'a> World<'a> {
                         if !pending {
                             self.actors[i].complete(task);
                         }
+                    }
+                    // `CSequencer::CheckRun`: the script runs in place, in this
+                    // update, then the rest of this one (its task groups were
+                    // routed with it; registered here).
+                    id::RUN => {
+                        top.at += 1;
+                        let level_scripts: &'a Level = self.level;
+                        if let Some(nodes) = level_scripts.run(text(b, 0)) {
+                            groups(nodes, &mut a.groups);
+                            a.stack.push(Cursor {
+                                nodes,
+                                at: 0,
+                                kind: Kind::Plain,
+                            });
+                        }
+                        continue;
                     }
                     id::DO => {
                         let name = text(b, 0);
