@@ -60,6 +60,16 @@ fn samples_in_walls_are_skipped_and_the_rest_renormalized() {
 }
 
 #[test]
+fn single_player_scales_ambient_by_half() {
+    let sp = swjkja_world::static_model::Rules::SinglePlayer { skill: 0 };
+    let g = grid(&[point(100, 50), point(200, 150)]).with_rules(sp);
+    let l = g.sample([0.0; 3], &WHITE);
+    // r_ambientScale 0.5 in single player's renderer; directed light unscaled.
+    assert!(close(l.ambient, [50.0; 3]), "{l:?}");
+    assert!(close(l.directed, [50.0; 3]), "{l:?}");
+}
+
+#[test]
 fn styles_colour_the_light() {
     let mut p = point(100, 100);
     p.styles = [5, 0xff, 0xff, 0xff];
