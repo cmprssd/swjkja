@@ -1,0 +1,14 @@
+# Views of NPCs that spawn with their maps, in the format of views.txt. Captured
+# with entities drawn and scripts running (SCRIPTS=1 ENTITIES=1
+# bench/capture-reference.sh reference/npc-views.txt), as the new renderer draws
+# them: the AI frozen, the game stopped at the view's time. dpred_troopers looks
+# at two stormtroopers from behind, vjun2_officer at an alternate officer (its
+# pauldron shown by stofficeralt.npc, the second block of that name),
+# kor2_troopers at two stormtroopers by a landed shuttle. stamp_barrels looks at
+# t3_stamp's breakables (barrels and crates) 350 units away and an ammo rack, with
+# two NPCs behind the wall. They were first captured with every NPC frozen from
+# the first frame (d_npcfreeze 1, no scripts; in model-views.txt until 2026-10-17).
+t3_stamp  stamp_barrels  352 342 124       10 90 0   12345
+t2_dpred  dpred_troopers -900 -4300 90     5 180 0   12345
+vjun2     vjun2_officer  1264 1800 3300    5 90 0    12345
+kor2      kor2_troopers  8208 1500 -3740   5 90 0    12345
