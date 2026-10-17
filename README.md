@@ -9,7 +9,8 @@ GPUs and handhelds.
 It ships no game data. It reads the assets (`GameData/base/*.pk3`) from your own
 copy of the game.
 
-Status: early. See [docs/ROADMAP.md](docs/ROADMAP.md) for the milestones and
+Status: early. [docs/OVERVIEW.md](docs/OVERVIEW.md) explains how the project and its
+process work, with diagrams and statistics. See [docs/ROADMAP.md](docs/ROADMAP.md) for the milestones and
 [docs/DECISIONS.md](docs/DECISIONS.md) for why things are the way they are.
 
 ## Building
