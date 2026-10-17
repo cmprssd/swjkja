@@ -381,6 +381,29 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## ffa3_spawn3's lift: missing from the world-only reference, 2026-10-17
+
+The lift that #69 found standing lower in the original than here is `*4` (lift2:
+`func_door`, start open, angle -2, lip 42, sunk to a top at z -55 in its pit), not
+`*5`-`*8`, which are 3400 units to the left of the view. Its place is the original's:
+`SP_func_door` and `InitMover` (codemp) give the same spawn position, over the same
+bounds spread by a unit. The server would also send it to every view in ffa3. All
+spawn points, the view and the lift's box are in area 0. The box touches 17
+clusters, so the overflow slip sends it to any view that can't see cluster 85. It is
+1300-3500 units inside the default `distanceCull` of 6000 (ffa3 sets none).
+
+The difference is the reference: ffa3_spawn3 is one of the 19 world views, captured
+with `r_drawentities 0` (see "Static models compared with the reference"), so the
+original draws no lift there. On the 1556 pixels the lift covers here, the reference
+differs by 0.07 from this renderer with the lift left out, and by 14.3 with it drawn.
+With the lift lowered for a test, the difference falls with every 2 units (1.79 at 2
+lower, 0.45 at 10) and reaches the left-out figure at 16 lower, when the pit's rim
+hides the lift. That is why #69's 2 units read as "lower still". Leaving every brush
+entity out of the 19 world views changes ffa3_spawn3 alone (0.34 -> 0.32 mean, 0.13%
+-> 0.05% off by > 16); the other 18 render pixel for pixel the same. Nothing changes
+in the renderer: its world views keep drawing entities, and this view keeps the lift
+as a known difference.
+
 ## dpred's grass: surface sprites, 2026-10-17
 
 `textures/imperial/dp_ground`'s second stage is `surfaceSprites flattened 48 24 45
@@ -459,9 +482,9 @@ so are the door triggers spawned around them.
 
 - At yavin1's doorway the 163 pixels that changed now differ by 0.1 on average
   (37.4 before).
-- ffa3_spawn3's lift (`func_door`s `*5`-`*8`, start open, moving down with lip
-  -264) now stands 2 units lower; the changed pixels differ by 12.1 instead of
-  16.1. The original's stands lower still; not explained yet.
+- ffa3_spawn3's lift now stands 2 units lower; the changed pixels differ by 12.1
+  instead of 16.1. The reference has no lift at all (a world-only capture): see
+  "ffa3_spawn3's lift: missing from the world-only reference".
 - The 43 other reference views render pixel for pixel as on main.
 - `bench_world` was not run: the change moves entities by 2 units and adds nothing
   to draw.
