@@ -576,3 +576,73 @@ fn every_scripted_voice_line_has_a_length() {
     // 45 minutes and 46 seconds of lines.
     assert_eq!((total / 1000.0).round(), 2746.0);
 }
+
+#[test]
+fn npcs_open_the_doors_they_stand_in() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let text = |folder: &str, ext: &str| {
+        let files: Vec<Vec<u8>> = vfs
+            .list(folder, ext)
+            .iter()
+            .map(|f| vfs.read(&format!("{folder}/{f}")).unwrap())
+            .collect();
+        npc::join_parms(files.iter().map(Vec::as_slice))
+    };
+    let (parms, sabers) = (
+        text("ext_data/npcs", ".npc"),
+        text("ext_data/sabers", ".sab"),
+    );
+    let mut maps: Vec<&str> = vfs
+        .files()
+        .filter(|f| f.ends_with(".bsp") && !f.starts_with("maps/mp/"))
+        .collect();
+    maps.sort_unstable();
+    let (mut doors, mut touchable) = (0, 0);
+    let mut opened = Vec::new();
+    for name in &maps {
+        let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
+        let rules = Rules::for_map(name);
+        let bodies: Vec<_> = npc::npc_models(
+            &bsp.entities,
+            rules,
+            &parms,
+            &sabers,
+            &Collision::at_spawn(&bsp, rules),
+            &|s: &str| read_script(&vfs, s),
+        )
+        .iter()
+        .filter_map(|m| m.entity_box)
+        .map(|[mins, maxs]| [mins.map(|x| x + 1.0), maxs.map(|x| x - 1.0)])
+        .collect();
+        let mut brushes =
+            swjkja_world::brush_entity::brush_entities(&bsp.entities, &bsp.models, rules);
+        swjkja_world::brush_entity::touch_doors(&mut brushes, &bodies, script::FIRST_FRAME);
+        for b in &brushes {
+            let Some(d) = &b.door else { continue };
+            doors += 1;
+            touchable += usize::from(d.touched);
+            if b.slide.is_some() {
+                opened.push(format!("{name} *{}", b.model));
+            }
+        }
+    }
+    // Counted independently with Python from the entity text: the func_doors with a
+    // model that spawn at the easiest skill, and those without a "targetname",
+    // "health" or a flag that keeps a touch from opening them.
+    assert_eq!((doors, touchable), (458, 280));
+    // yavin1's near aisle door, open in the original's yavin1_students view (its far
+    // one, *2, has no NPC in its trigger).
+    assert_eq!(
+        opened,
+        [
+            "maps/t1_danger.bsp *67",
+            "maps/t1_sour.bsp *74",
+            "maps/t2_wedge.bsp *156",
+            "maps/yavin1.bsp *3"
+        ]
+    );
+}

@@ -13,6 +13,9 @@
 //!
 //! An entity with a "model2" key also draws that model where it stands (`InitMover`,
 //! `InitBBrush`; cgame's `CG_Mover` adds it after the brushes).
+//!
+//! In single player a door that spawns a trigger opens when an NPC stands in it
+//! ([`touch_doors`]), and stays open while the NPC does.
 
 use swjkja_bsp::{Entity, Model};
 
@@ -45,10 +48,57 @@ pub struct BrushEntity {
     /// yaw, roll), from zero at time 0 (`TR_LINEAR` with `trTime` 0). It is drawn at
     /// [`BrushEntity::angles_at`], not at `axes`.
     pub spin: Option<Vec3>,
+    /// A single-player door: how it opens.
+    pub door: Option<Door>,
+    /// A door opening: it is drawn from [`BrushEntity::origin_at`], not `origin`.
+    pub slide: Option<Slide>,
+}
+
+/// How a single-player door opens (`SP_func_door`, `InitMoverTrData`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Door {
+    /// Where it opens to (`pos2`; for one that starts open, where it was placed).
+    pub pos2: Vec3,
+    /// Its travel time, ms (`trDuration`: its distance at "speed", 400 when 0, in
+    /// whole ms; at least 1).
+    pub duration: i32,
+    /// "linear": it moves at one speed (`TR_LINEAR_STOP`), not slowing at the end
+    /// (`TR_NONLINEAR_STOP`).
+    pub linear: bool,
+    /// "delay" (whole seconds), in ms between being used and starting.
+    pub delay: i32,
+    /// "team": the doors that open with it, the first in spawn order leading
+    /// (`G_FindTeams`).
+    pub team: Option<String>,
+    /// It spawns a trigger an NPC opens by standing in it (`Think_SpawnNewDoorTrigger`,
+    /// `Touch_DoorTrigger`): no "targetname" or "health", not locked (16), and not
+    /// force-activated (2), used by the player (64), inactive (128), opened by a key
+    /// NPCs lack (32) or a toggle (8: touched on, it would close again a frame after
+    /// opening).
+    pub touched: bool,
+}
+
+/// A door moving from `from` to `to` over `duration` ms from game time `start`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Slide {
+    pub start: i32,
+    pub from: Vec3,
+    pub to: Vec3,
+    pub duration: i32,
+    pub linear: bool,
 }
 
 /// `MOVER_LOCKED`: a door locked until used, its shader animation frame-controlled.
 const MOVER_LOCKED: i64 = 16;
+/// The door flags that keep a touch from opening it: `MOVER_FORCE_ACTIVATE`,
+/// `MOVER_TOGGLE`, `MOVER_LOCKED`, `MOVER_GOODIE`, `MOVER_PLAYER_USE`,
+/// `MOVER_INACTIVE`.
+const UNTOUCHED: i64 = 2 | 8 | MOVER_LOCKED | 32 | 64 | 128;
+/// How far a door's trigger reaches past it along its thinnest axis
+/// (`Think_SpawnNewDoorTrigger`).
+const TRIGGER_REACH: f32 = 120.0;
+/// A door used starts moving 50 ms later (`Use_BinaryMover_Go`).
+const USE_LAG: i32 = 50;
 
 /// The brush entities `entities` spawn under `rules` and cgame draws, in spawn order,
 /// with the map's `models`. Left out: those spawned hidden (a `func_wall` or `func_usable` started off,
@@ -85,18 +135,39 @@ fn spawn(models: &[Model], e: &Entity, rules: Rules) -> Option<BrushEntity> {
     // through walls).
     let force_visible = e.get("forcevisible").map_or(0, atoi) != 0 && origin == [0.0; 3];
     let (mut drawn_angles, mut broadcast, mut shader_anim) = ([0.0; 3], false, false);
-    let mut spin = None;
+    let (mut spin, mut door) = (None, None);
     match class.as_str() {
         "func_door" => {
             // pos2 = pos1 moved along movedir by the model's size there, less the
             // lip; "start_open" (spawnflag 1) starts at pos2.
+            let dir = movedir(angles);
+            let size = [0, 1, 2].map(|i| maxs[i] - mins[i]);
+            let distance = (0..3).map(|i| dir[i].abs() * size[i]).sum::<f32>() - lip();
+            let mut pos2 = [0, 1, 2].map(|i| origin[i] + distance * dir[i]);
             if spawnflags & 1 != 0 {
-                let dir = movedir(angles);
-                let size = [0, 1, 2].map(|i| maxs[i] - mins[i]);
-                let distance = (0..3).map(|i| dir[i].abs() * size[i]).sum::<f32>() - lip();
-                origin = [0, 1, 2].map(|i| origin[i] + distance * dir[i]);
+                (origin, pos2) = (pos2, origin);
             }
             shader_anim = spawnflags & MOVER_LOCKED != 0;
+            if let Rules::SinglePlayer { .. } = rules {
+                let speed = match e.get("speed").map_or(0.0, atof) {
+                    0.0 => 400.0,
+                    s => s,
+                };
+                let length = (0..3)
+                    .map(|i| (pos2[i] - origin[i]) * (pos2[i] - origin[i]))
+                    .sum::<f32>()
+                    .sqrt();
+                door = Some(Door {
+                    pos2,
+                    duration: ((length * 1000.0 / speed) as i32).max(1),
+                    linear: e.get("linear").map_or(0, atoi) != 0,
+                    delay: e.get("delay").map_or(0, atoi).saturating_mul(1000) as i32,
+                    team: e.get("team").map(str::to_owned),
+                    touched: spawnflags & UNTOUCHED == 0
+                        && e.get("targetname").is_none()
+                        && e.get("health").map_or(0, atoi) == 0,
+                });
+            }
         }
         // pos1, where it starts, is the bottom: "height" below the origin, or the
         // model's height less the lip.
@@ -150,7 +221,71 @@ fn spawn(models: &[Model], e: &Entity, rules: Rules) -> Option<BrushEntity> {
         shader_anim,
         model2,
         spin,
+        door,
+        slide: None,
     })
+}
+
+/// Opens the single-player doors `entities` holds whose trigger one of `bodies` (an
+/// NPC's box where it stands) touches at game time `at`, its first think; they stay
+/// open while it does.
+///
+/// A team's first door spawns the trigger, around the whole team's linked boxes
+/// and reaching [`TRIGGER_REACH`] further each way along their thinnest axis
+/// (`Think_SpawnNewDoorTrigger`); a touch (`G_TouchTriggersLerped`,
+/// `SV_EntityContact`) uses its leader ("delay" later), and the team moves together,
+/// each door over its own time, from 50 ms later (`Use_BinaryMover_Go`,
+/// `MatchTeam`). Each touch of an open door puts off its closing, so it stays
+/// open. Moving, a door is linked over its whole way.
+pub fn touch_doors(entities: &mut [BrushEntity], bodies: &[[Vec3; 2]], at: i32) {
+    for lead in 0..entities.len() {
+        let Some(door) = &entities[lead].door else {
+            continue;
+        };
+        let in_team = |e: &BrushEntity| {
+            door.team.is_some() && e.door.as_ref().is_some_and(|d| d.team == door.team)
+        };
+        if entities[..lead].iter().any(in_team) || !door.touched {
+            continue;
+        }
+        let team: Vec<usize> = (lead..entities.len())
+            .filter(|&i| i == lead || in_team(&entities[i]))
+            .collect();
+        let start = at + door.delay + USE_LAG;
+        let mut trigger = entities[lead].entity_box;
+        for &i in &team {
+            for k in 0..3 {
+                trigger[0][k] = trigger[0][k].min(entities[i].entity_box[0][k]);
+                trigger[1][k] = trigger[1][k].max(entities[i].entity_box[1][k]);
+            }
+        }
+        let size = |k: usize| trigger[1][k] - trigger[0][k];
+        let thinnest = (1..3).fold(0, |best, k| if size(k) < size(best) { k } else { best });
+        trigger[0][thinnest] -= TRIGGER_REACH;
+        trigger[1][thinnest] += TRIGGER_REACH;
+        let touches = |[mins, maxs]: &[Vec3; 2]| {
+            (0..3).all(|k| mins[k] <= trigger[1][k] && maxs[k] >= trigger[0][k])
+        };
+        if !bodies.iter().any(touches) {
+            continue;
+        }
+        for i in team {
+            let e = &mut entities[i];
+            let Some(door) = &e.door else { continue };
+            let moved = [0, 1, 2].map(|k| door.pos2[k] - e.origin[k]);
+            for k in 0..3 {
+                e.entity_box[0][k] += moved[k].min(0.0);
+                e.entity_box[1][k] += moved[k].max(0.0);
+            }
+            e.slide = Some(Slide {
+                start,
+                from: e.origin,
+                to: door.pos2,
+                duration: door.duration,
+                linear: door.linear,
+            });
+        }
+    }
 }
 
 /// `SP_func_rotating`: "speed" degrees a second (100 when 0) about yaw, or roll
@@ -255,6 +390,32 @@ impl BrushEntity {
     pub fn angles_at(&self, ms: i32) -> Option<Vec3> {
         let seconds = ms as f32 * 0.001;
         self.spin.map(|d| d.map(|x| seconds * x))
+    }
+
+    /// Where it is drawn from at game time `ms` (`EvaluateTrajectory`'s
+    /// `TR_NONLINEAR_STOP` or `TR_LINEAR_STOP`, in floats as the original); once
+    /// there, it stands at its end (`Reached_BinaryMover`).
+    pub fn origin_at(&self, ms: i32) -> Vec3 {
+        let Some(s) = &self.slide else {
+            return self.origin;
+        };
+        if ms >= s.start + s.duration {
+            return s.to;
+        }
+        let elapsed = ms - s.start;
+        if elapsed <= 0 {
+            return s.from;
+        }
+        let duration = s.duration as f32;
+        let seconds = if s.linear {
+            elapsed as f32 * 0.001
+        } else {
+            let degrees = 90.0 - 90.0 * elapsed as f32 / duration;
+            duration * 0.001 * (degrees * (std::f32::consts::PI / 180.0)).cos()
+        };
+        // trDelta: the way, a second (SetMoverState).
+        let per_second = (1000.0 / f64::from(s.duration)) as f32;
+        [0, 1, 2].map(|k| s.from[k] + seconds * ((s.to[k] - s.from[k]) * per_second))
     }
 
     /// A point of the model's space in the world.

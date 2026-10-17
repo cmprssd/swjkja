@@ -268,15 +268,15 @@ struct BrushDraw {
     /// Its model's surfaces (map surface numbers), placed where it stands, or in its
     /// model's space if it turns.
     surfaces: Vec<usize>,
-    /// A turning one: placed each frame.
+    /// A turning or sliding one: placed each frame.
     turning: Option<Turning>,
 }
 
-/// A brush entity that turns as time passes, drawn by a bone of the frame's bones
-/// placing its model's space where it stands (`R_RotateForEntity`).
+/// A brush entity that turns or slides as time passes, drawn by a bone of the
+/// frame's bones placing its model's space where it stands (`R_RotateForEntity`).
 struct Turning {
-    /// The entity, without its "model2" (drawn by the static models, unturned), so
-    /// that a copy placed each frame allocates nothing.
+    /// The entity, without its "model2" (drawn by the static models, where it
+    /// spawns) and door, so that a copy placed each frame allocates nothing.
     entity: swjkja_world::brush_entity::BrushEntity,
     /// Its model's bounds.
     bounds: [[f32; 3]; 2],
@@ -629,25 +629,33 @@ impl WorldRenderer {
         }
 
         // The brush entities the map spawns, each surface of their models placed
-        // where the entity stands (a model two entities share is drawn by the first).
+        // where the entity stands (a model two entities share is drawn by the first),
+        // the doors NPCs stand in opening as they begin.
         let surfaces_in = |model: usize| {
             let m = &bsp.models[model];
             m.first_surface.max(0) as usize
                 ..(m.first_surface.max(0) + m.num_surfaces.max(0)) as usize
         };
-        // A turning one's surfaces stay in its model's space; its bones follow the
+        // A turning or sliding one's surfaces stay in its model's space; its bones follow the
         // posed models' (`first_bone`).
         let mut placed: HashMap<usize, Geometry> = HashMap::new();
         let mut brushes: Vec<BrushDraw> = Vec::new();
         // Per turning entity's surface: its bone among the turning entities'.
         let mut turned_by: HashMap<usize, usize> = HashMap::new();
         let mut turning_count = 0;
-        for e in swjkja_world::brush_entity::brush_entities(&bsp.entities, &bsp.models, rules) {
+        let mut entities =
+            swjkja_world::brush_entity::brush_entities(&bsp.entities, &bsp.models, rules);
+        swjkja_world::brush_entity::touch_doors(
+            &mut entities,
+            &models.bodies,
+            swjkja_world::script::FIRST_FRAME,
+        );
+        for e in entities {
             let surfaces: Vec<usize> = surfaces_in(e.model)
                 .filter(|i| *i < world.surfaces.len() && !placed.contains_key(i))
                 .collect();
             let m = &bsp.models[e.model];
-            let turning = e.spin.is_some().then(|| {
+            let turning = (e.spin.is_some() || e.slide.is_some()).then(|| {
                 turning_count += 1;
                 turning_count - 1
             });
@@ -674,7 +682,11 @@ impl WorldRenderer {
                 turning: turning.map(|bone| Turning {
                     bounds: [m.mins, m.maxs],
                     bone,
-                    entity: swjkja_world::brush_entity::BrushEntity { model2: None, ..e },
+                    entity: swjkja_world::brush_entity::BrushEntity {
+                        model2: None,
+                        door: None,
+                        ..e
+                    },
                 }),
             });
         }
@@ -1692,7 +1704,7 @@ impl WorldRenderer {
         // The brush entities the server sends this view, culled by their model's box
         // (R_AddBrushModelSurfaces), then each surface as the world's. They come
         // first: the entity number orders draws within a material, and the world's
-        // (ENTITYNUM_WORLD) is the last. A turning one is placed at its angles now,
+        // (ENTITYNUM_WORLD) is the last. A moving one is placed where it is now,
         // its surfaces culled in its model's space (R_CullSurface with
         // `or.viewOrigin`, R_CullLocalBox).
         let bone_table = bones.mapped_mut()?;
@@ -1712,6 +1724,7 @@ impl WorldRenderer {
                     e.axes = swjkja_world::static_model::angles_to_axis(
                         e.angles_at(ms).unwrap_or([0.0; 3]),
                     );
+                    e.origin = e.origin_at(ms);
                     let place: Mat34 = std::array::from_fn(|i| {
                         [e.axes[0][i], e.axes[1][i], e.axes[2][i], e.origin[i]]
                     });

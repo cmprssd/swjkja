@@ -860,6 +860,27 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   client's clock, as its look target's), and an NPC drawn while it is set gets 96
   of minimum ambient light instead of 32 (`RF_MORELIGHT`), clamped as before.
 
+## 2026-10-17: Doors NPCs stand in open as the map begins (decided by Claude, pending review)
+
+- **What opens**: a single-player `func_door` that spawns a trigger an NPC can open
+  (no "targetname" or "health"; not force-activated, toggled, locked, key-opened,
+  player-used or inactive: spawnflags 2, 8, 16, 32, 64, 128), when a drawn NPC's
+  box, where it stands, touches the trigger: the team's linked boxes, 120 units
+  further each way along their thinnest axis. A team opens together, its first
+  door in spawn order deciding. Toggled doors are left closed: touched every frame,
+  the original's would open and close again.
+- **When**: touched at `FIRST_FRAME` (1550 ms, the NPCs' first think; their first
+  `ClientThink` may come a frame later), opening "delay" seconds plus 50 ms later,
+  over its distance at "speed" (400 when 0) in whole ms, slowing to a stop
+  (`TR_NONLINEAR_STOP`) or at one speed ("linear"), then standing open while the
+  NPC stays. NPCs do not move here, so a door once touched stays touched.
+- **Drawn** like a turning entity, its bone placed each frame; linked over its
+  whole way.
+- **Left out**: what the door does as it opens (its targets, `BSET_USE` scripts,
+  area portals, sounds); its "model2", which stays where it spawned (no retail door
+  NPCs open has one); collision, which keeps it closed; touches by the player,
+  by invisible NPCs (not drawn here) and by anything else; multiplayer's doors.
+
 ## 2026-10-17: `run` and saber items modelled; kor1 kept out of the script views (decided by Claude, pending review)
 
 - **`run` runs the named script in place**, in the same update, then the rest of
