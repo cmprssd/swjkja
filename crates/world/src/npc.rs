@@ -10,7 +10,8 @@
 //! and scripts.
 //!
 //! What the spawn picks at random is the original's pick: the game's generator
-//! ([`crate::rand`]) is replayed through the spawn functions and each NPC's block.
+//! ([`crate::rand`]) is replayed through the spawn functions, the saber items
+//! finishing their spawn, and each NPC's block.
 
 use swjkja_bsp::Entity;
 use swjkja_shader::text::Cursor;
@@ -355,6 +356,32 @@ pub fn npc_spawns(
         });
     }
     spawns
+}
+
+/// The draws the saber items `entities` spawn under `rules` make as they finish
+/// spawning (`FinishSpawningItem`, the frame after 1250 ms; in entity order): each
+/// `weapon_saber` naming a saber ("saberType"; "player" the player's) reads its
+/// block in `sabers` for its model, but one waiting to be used ("targetname").
+fn item_saber_draws(entities: &[Entity], rules: Rules, sabers: &[u8], rand: &mut Rand) {
+    let Rules::SinglePlayer { skill } = rules else {
+        return;
+    };
+    for e in entities.iter().filter(|e| spawns_at(e, skill)) {
+        if !e
+            .get("classname")
+            .is_some_and(|c| c.eq_ignore_ascii_case("weapon_saber"))
+            || e.get("targetname").is_some()
+        {
+            continue;
+        }
+        match e.get("saberType") {
+            Some(t) if t.eq_ignore_ascii_case("player") => {
+                draw_saber_colors(sabers, PLAYER_SABER, rand);
+            }
+            Some(t) if !t.is_empty() => draw_saber_colors(sabers, t, rand),
+            _ => {}
+        }
+    }
 }
 
 /// The draws reading saber `name`'s block in `sabers` makes: one per colour it
@@ -1160,10 +1187,12 @@ pub fn npc_models(
     world: &Collision,
     scripts: &dyn Fn(&str) -> Option<Vec<Node>>,
 ) -> Vec<StaticModel> {
-    // The spawn functions draw as the map spawns, then each NPC's block is read in
-    // turn as it spawns (NPC_Spawn_Go, the frame after 1350 ms), drawn here or not.
+    // The spawn functions draw as the map spawns, the saber items as they finish
+    // spawning (1300 ms), then each NPC's block is read in turn as it spawns
+    // (NPC_Spawn_Go, the frame after 1350 ms), drawn here or not.
     let mut rand = Rand::default();
     let spawns = npc_spawns(entities, rules, sabers, &mut rand);
+    item_saber_draws(entities, rules, sabers, &mut rand);
     let looks: Vec<_> = spawns
         .iter()
         .map(|n| npc_look(parms, sabers, &n.npc_type, n.message, &mut rand))
