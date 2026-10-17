@@ -406,6 +406,34 @@ does not draw, and a door at stamp_barrels' right edge, open in the last frozen
 capture (whose game was not stopped at the view's time) and closed in the new one, as
 here.
 
+## yavin1's aisle door opened by its students, 2026-10-17
+
+yavin1_students' largest remaining difference was its aisle door: closed here, open
+in the original. yavin1 has two unnamed `func_door`s across the aisle (models `*3`
+and, behind it, `*2`), each spawning a trigger around itself that reaches 120 units
+further along its thinnest axis (`Think_SpawnNewDoorTrigger`). Two seated
+students (`jedi_student02` and `03`) stand in `*3`'s, and NPCs touch triggers
+from their first think (`ClientThink` runs with the AI frozen too), so `*3` opens 50
+ms later and slides its 72 units in 180 ms (`TR_NONLINEAR_STOP`), and every touch
+after that puts off its closing. No NPC stands in `*2`'s; it stays shut, as in the
+reference. Doors NPCs stand in now open as the map begins:
+
+| View | Mean difference (main) | Pixels off by > 16 (main) |
+|------|------|------|
+| yavin1_students | 0.94 (1.19) | 0.3% (1.2%) |
+
+- What is left at the door is a column 1-2 pixels wide down the doorway's right
+  edge, where this renderer draws the open door's side face dark (about 11 of 255)
+  and the original shows the wall's grey (about 45). Not explained yet.
+- Across the 34 single-player maps, 280 of the 458 doors open by touch (counted
+  independently from the entity text with Python), and NPCs stand in four of them
+  as the maps begin: yavin1's `*3`, t1_danger's `*67`, t1_sour's `*74` and
+  t2_wedge's `*156`. No other reference view shows one.
+- The 44 other reference views render pixel for pixel as on main.
+- `bench_world` (300 frames, alternating with main, three runs each, the yavin1
+  view): frame 10.14-10.23 ms against main's 10.12-10.32, GPU 8.49-8.58 ms against
+  8.42-8.60.
+
 ## yavin1's intro and the saber on its seat, 2026-10-17
 
 A new view, `yavin1_students` in `bench/reference/script-views.txt`, looks down

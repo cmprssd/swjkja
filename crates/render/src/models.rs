@@ -141,6 +141,9 @@ pub struct StaticModels {
     /// Every shader the models register, in the order the original registers them
     /// (`R_LoadMD3`, levels from least detailed to most).
     pub shaders: Vec<String>,
+    /// The NPCs' boxes where they stand (`ps.origin` + mins..maxs), which touch
+    /// triggers ([`swjkja_world::brush_entity::touch_doors`]).
+    pub bodies: Vec<[Vec3; 2]>,
     distance_cull: f32,
     rules: Rules,
 }
@@ -494,6 +497,13 @@ impl StaticModels {
             });
         }
         resolve_looks(&mut instances);
+        // An NPC's linked box is its box an epsilon larger.
+        let bodies = placements
+            .iter()
+            .filter(|p| p.ghoul2.as_ref().is_some_and(|g| g.pose.is_some()))
+            .filter_map(|p| p.entity_box)
+            .map(|[mins, maxs]| [mins.map(|x| x + 1.0), maxs.map(|x| x - 1.0)])
+            .collect();
         let distance_cull = bsp
             .entities
             .first()
@@ -504,6 +514,7 @@ impl StaticModels {
             instances,
             pieces,
             shaders,
+            bodies,
             distance_cull,
             rules,
         }

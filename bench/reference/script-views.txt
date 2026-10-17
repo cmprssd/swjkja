@@ -11,7 +11,8 @@
 # students run academy2's scripts on their own maps' cinematic skeletons.
 # yavin1_students looks down the shuttle at its seated students during the intro
 # (yavin1/intro, run by its opening): Rosh in the front seat in BOTH_CIN_11, the
-# students' colours drawn after the player's saber on a seat draws its own.
+# students' colours drawn after the player's saber on a seat draws its own, the
+# near aisle door open (two students stand in its trigger).
 # t1_fatal's corpses die (SET_HEALTH 0); kor1's intro camera never ends with the
 # AI frozen (it waits on a navgoal), so the server sends only what it sees.
 # vjun2_imp_stance looks at vjun2's imperial (entity 34) at 3000 ms, before its

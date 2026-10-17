@@ -1,6 +1,6 @@
 use swjkja_bsp::{DrawVert, Entity, Model};
 use swjkja_world::Geometry;
-use swjkja_world::brush_entity::{BrushEntity, brush_entities};
+use swjkja_world::brush_entity::{BrushEntity, brush_entities, touch_doors};
 use swjkja_world::static_model::Rules;
 
 const SP: Rules = Rules::SinglePlayer { skill: 0 };
@@ -328,4 +328,132 @@ fn multiplayer_turns_every_rotating_one_by_its_spin_angles() {
         ("speed", "300"),
     ]);
     assert_eq!(e[0].spin, Some([10.0, 0.0, -20.0]));
+}
+
+/// A body (an NPC's box) of 32 x 32 x 64 standing at `at`.
+fn body(at: [f32; 3]) -> [[f32; 3]; 2] {
+    [
+        [at[0] - 16.0, at[1] - 16.0, at[2] - 24.0],
+        [at[0] + 16.0, at[1] + 16.0, at[2] + 40.0],
+    ]
+}
+
+fn door(extra: &[(&str, &str)]) -> Vec<(String, String)> {
+    let mut pairs = vec![("classname", "func_door"), ("model", "*1"), ("angle", "0")];
+    pairs.extend_from_slice(extra);
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+fn spawn_doors(doors: &[Vec<(String, String)>]) -> Vec<BrushEntity> {
+    let entities: Vec<Entity> = doors.iter().map(|p| Entity { pairs: p.clone() }).collect();
+    brush_entities(&entities, &models(), SP)
+}
+
+#[test]
+fn a_door_opens_by_its_size_less_the_lip_at_its_speed() {
+    // Along +x: 64 units of size less the lip of 8, at the default 400 a second.
+    let e = spawn_doors(&[door(&[])]);
+    let d = e[0].door.as_ref().unwrap();
+    assert_eq!(d.pos2, [56.0, 0.0, 0.0]);
+    assert_eq!(
+        (d.duration, d.linear, d.delay, d.touched),
+        (140, false, 0, true)
+    );
+    // 56 units at 30 a second: 1866.67 ms, whole ms.
+    let e = spawn_doors(&[door(&[("speed", "30"), ("linear", "1"), ("delay", "2")])]);
+    let d = e[0].door.as_ref().unwrap();
+    assert_eq!((d.duration, d.linear, d.delay), (1866, true, 2000));
+    // One that starts open opens back to where it was placed.
+    let e = spawn_doors(&[door(&[("spawnflags", "1")])]);
+    assert_eq!(e[0].origin, [56.0, 0.0, 0.0]);
+    assert_eq!(e[0].door.as_ref().unwrap().pos2, [0.0; 3]);
+    // Multiplayer doors are not modelled.
+    let entity = Entity { pairs: door(&[]) };
+    assert_eq!(brush_entities(&[entity], &models(), MP)[0].door, None);
+}
+
+#[test]
+fn only_doors_without_a_name_health_or_blocking_flag_open_by_touch() {
+    let touched = |extra: &[(&str, &str)]| {
+        spawn_doors(&[door(extra)])[0]
+            .door
+            .as_ref()
+            .unwrap()
+            .touched
+    };
+    assert!(touched(&[]));
+    assert!(touched(&[("spawnflags", "1")]));
+    assert!(touched(&[("spawnflags", "4")]));
+    assert!(!touched(&[("targetname", "d")]));
+    assert!(!touched(&[("health", "10")]));
+    for flags in ["2", "8", "16", "32", "64", "128"] {
+        assert!(!touched(&[("spawnflags", flags)]), "{flags}");
+    }
+}
+
+#[test]
+fn a_body_in_its_trigger_opens_a_door_from_its_first_think() {
+    // The model's box is 64 x 32 x 128 (linked an epsilon larger); its thinnest
+    // axis, y, reaches 120 further: the trigger is y -137..137.
+    let mut e = spawn_doors(&[door(&[])]);
+    touch_doors(&mut e, &[body([0.0, 154.0, 30.0])], 1550);
+    assert_eq!(e[0].slide, None);
+    assert_eq!(e[0].origin_at(5000), [0.0; 3]);
+    // A body's edge on the trigger's touches it.
+    touch_doors(&mut e, &[body([0.0, 153.0, 30.0])], 1550);
+    let s = e[0].slide.as_ref().unwrap();
+    assert_eq!(
+        (s.start, s.duration, s.from, s.to),
+        (1600, 140, [0.0; 3], [56.0, 0.0, 0.0])
+    );
+    // Moving, it is linked over its whole way.
+    assert_eq!(e[0].entity_box, [[-33.0, -17.0, -1.0], [89.0, 17.0, 129.0]]);
+    // It slows to a stop: sin(90 degrees x elapsed / duration) of the way.
+    assert_eq!(e[0].origin_at(1600), [0.0; 3]);
+    let half = e[0].origin_at(1670)[0];
+    assert!(
+        (half - 56.0 * std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-3,
+        "{half}"
+    );
+    assert_eq!(e[0].origin_at(1740), [56.0, 0.0, 0.0]);
+    assert_eq!(e[0].origin_at(12345), [56.0, 0.0, 0.0]);
+    // "linear": at one speed, after its delay.
+    let mut e = spawn_doors(&[door(&[("linear", "1"), ("delay", "1")])]);
+    touch_doors(&mut e, &[body([0.0; 3])], 1550);
+    assert_eq!(e[0].slide.as_ref().unwrap().start, 2600);
+    assert!((e[0].origin_at(2635)[0] - 14.0).abs() < 1e-4);
+    // Not touchable: it stays.
+    let mut e = spawn_doors(&[door(&[("targetname", "d")])]);
+    touch_doors(&mut e, &[body([0.0; 3])], 1550);
+    assert_eq!(e[0].slide, None);
+}
+
+#[test]
+fn a_team_opens_together_by_its_first_doors_trigger() {
+    // Two doors 200 apart along y; the trigger is around both, and the first
+    // door's flags decide.
+    let mut pairs = [
+        door(&[("team", "t")]),
+        door(&[("team", "t"), ("origin", "0 200 0")]),
+    ];
+    let mut e = spawn_doors(&pairs);
+    touch_doors(&mut e, &[body([0.0, 100.0, 30.0])], 1550);
+    assert!(e[0].slide.is_some() && e[1].slide.is_some());
+    assert_eq!(e[1].slide.as_ref().unwrap().to, [56.0, 200.0, 0.0]);
+    // Across the team's box, the thinnest axis is x (66 < 234): it reaches 120
+    // further along x, not y.
+    let mut e = spawn_doors(&pairs);
+    touch_doors(&mut e, &[body([150.0, 100.0, 30.0])], 1550);
+    assert!(e[0].slide.is_some());
+    let mut e = spawn_doors(&pairs);
+    touch_doors(&mut e, &[body([0.0, 360.0, 30.0])], 1550);
+    assert!(e[0].slide.is_none() && e[1].slide.is_none());
+    // A named leader opens by being used only, its team too.
+    pairs[0].push(("targetname".into(), "d".into()));
+    let mut e = spawn_doors(&pairs);
+    touch_doors(&mut e, &[body([0.0, 200.0, 30.0])], 1550);
+    assert!(e[0].slide.is_none() && e[1].slide.is_none());
 }
