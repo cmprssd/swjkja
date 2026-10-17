@@ -196,7 +196,7 @@ fn single_player_draws_no_models_from_a_view_in_solid() {
 }
 
 /// t3_stamp's game entities (crates and barrels, ammo racks and their goods) in the
-/// stamp_barrels view (bench/reference/model-views.txt): the server sends those whose
+/// stamp_barrels view (bench/reference/npc-views.txt): the server sends those whose
 /// box touches a cluster the view sees, the renderer culls them by the frustum.
 #[test]
 fn t3_stamp_entities_cull_like_the_original() {

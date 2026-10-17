@@ -381,6 +381,31 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Single-player NPC views captured with scripts running, 2026-10-17
+
+The four views of NPCs that spawn with their maps (dpred_troopers, vjun2_officer,
+kor2_troopers, stamp_barrels) were captured with every NPC frozen from the first
+frame and no scripts (`d_npcfreeze 1`), while the new renderer runs the maps'
+scripts. They are now captured as the script views are (`SCRIPTS=1 ENTITIES=1
+bench/capture-reference.sh reference/npc-views.txt`: the AI alone frozen, script
+randoms pinned, the game stopped at 12345 ms) and moved from `model-views.txt` to
+`bench/reference/npc-views.txt`. Main against both captures:
+
+| View | Mean difference | Before (frozen capture) | Old capture against new |
+|------|------|------|------|
+| dpred_troopers | 1.02 | 1.02 | 0.36 |
+| vjun2_officer | 0.49 | 0.52 | 0.06 |
+| kor2_troopers | 0.38 | 0.39 | 0.05 |
+| stamp_barrels | 0.13 | 0.32 | 0.20 |
+
+No NPC in these views stands differently with scripts running: the logs give
+the same idles as before (starting at 4987-4989 ms on the client's clock), and the
+NPCs' pixels match between the two captures. What changed is elsewhere in the
+shot: dpred's foreground grass, which the original sways and this renderer
+does not draw, and a door at stamp_barrels' right edge, open in the last frozen
+capture (whose game was not stopped at the view's time) and closed in the new one, as
+here.
+
 ## yavin1's intro and the saber on its seat, 2026-10-17
 
 A new view, `yavin1_students` in `bench/reference/script-views.txt`, looks down
