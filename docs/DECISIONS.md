@@ -908,8 +908,8 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   at the view's time, lit by their vertices' blue. **Left out** (decided by Claude,
   pending review): the oriented and effect kinds, wind (no weather system or wind
   cvars give any on the retail maps viewed), wind points, a fog pass over sprites
-  in a fog volume, a field of view other than the first one rendered (its range
-  scale), and sprites on brush entities' surfaces, models and deformed surfaces.
+  in a fog volume, and sprites on brush entities' surfaces, models and deformed
+  surfaces. (The range scale for other fields of view came later, below.)
 - **The capture**: with the time pinned, the original's sprite update runs only
   when the time changes, so a capture whose grass first shows at the held time
   keeps the view vectors of that first frame: a zero lean, which the game never
@@ -922,3 +922,16 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   `GL_QUADS`, whose split is the driver's. The reference GPU's matches this
   diagonal (dpred_troopers 0.33 against 1.02 for the other one); another GPU may
   split the original's the other way.
+
+## 2026-10-17: Surface sprites' range scale, with a scripted camera's 90 degrees first (decided by Claude, pending review)
+
+- **The range scale as the original's**: the first field of view that draws
+  sprites, between 50 and 135 degrees, is the standard, and any other lengthens
+  the sprites' fade ranges by `tan(standard / 2) / tan(fov / 2)`. This is what
+  dpred_troopers' far grass needed (0.33 -> 0.15).
+- **A camera the level scripts enabled counts as drawing first, at 90 degrees**:
+  cameras are not modelled, and the reference's standard came from t2_dpred's
+  intro camera (`CAMERA_DEFAULT_FOV`) before its view was pinned. The alternative,
+  a standard written into each view's line, would hold only for the captures.
+  A camera that zooms before sprites show, or never sees any, would set another
+  standard; no reference view has one.

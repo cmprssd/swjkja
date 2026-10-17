@@ -144,6 +144,8 @@ pub struct StaticModels {
     /// The NPCs' boxes where they stand (`ps.origin` + mins..maxs), which touch
     /// triggers ([`swjkja_world::brush_entity::touch_doors`]).
     pub bodies: Vec<[Vec3; 2]>,
+    /// When the map's scripts first enable a camera (ms; [`script::Timelines`]).
+    pub camera: Option<i32>,
     distance_cull: f32,
     rules: Rules,
 }
@@ -375,7 +377,9 @@ impl StaticModels {
                     swjkja_world::sound::length_ms(&bytes).map(|ms| ms.ceil() as i32)
                 })
         };
-        let mut timelines = script::timelines(&npcs, &level, &voice).into_iter();
+        let scripted = script::timelines(&npcs, &level, &voice);
+        let camera = scripted.camera;
+        let mut timelines = scripted.npcs.into_iter();
         for (n, p) in placements.iter().enumerate() {
             let skin = |name: &Option<String>| {
                 name.as_ref()
@@ -515,6 +519,7 @@ impl StaticModels {
             pieces,
             shaders,
             bodies,
+            camera,
             distance_cull,
             rules,
         }

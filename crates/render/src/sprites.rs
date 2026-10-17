@@ -5,8 +5,7 @@
 //!
 //! Vertical and flattened sprites only; oriented and effect ones are not drawn. The
 //! wind is the original's without a weather system or wind cvars (no wind, only the
-//! idle sway), and the field of view is taken as the first one rendered (no range
-//! scale).
+//! idle sway).
 
 use swjkja_shader::{Facing, SpriteKind, SurfaceSprites};
 
@@ -58,13 +57,35 @@ pub struct SpriteVertex {
     pub light: u8,
 }
 
-/// The view sprites are scattered for: its origin, its left axis, and the game time
-/// in milliseconds.
+/// The view sprites are scattered for: its origin, its left axis, the game time in
+/// milliseconds, and how much further than the shader says its sprites reach
+/// ([`range_scale`]).
 #[derive(Debug, Clone, Copy)]
 pub struct SpriteView {
     pub origin: [f32; 3],
     pub left: [f32; 3],
     pub time_ms: i32,
+    pub range_scale: f32,
+}
+
+/// `R_SurfaceSpriteFrameUpdate`'s `rangescalefactor` for a view `fov_x` degrees
+/// across: sprites seen through a narrower field of view than the standard one
+/// look larger, so they reach as much further. The standard is the first field
+/// of view sprites are drawn with, between 50 and 135 degrees (`standard`, kept
+/// across frames; until then the scale is 1).
+pub fn range_scale(standard: &mut Option<f32>, fov_x: f32) -> f32 {
+    let tan_half = |fov: f32| (f64::from(fov) * 0.5).to_radians().tan();
+    match *standard {
+        None => {
+            if fov_x > 50.0 && fov_x < 135.0 {
+                *standard = Some(fov_x);
+            }
+            1.0
+        }
+        Some(s) if s == fov_x => 1.0,
+        // standardscalex is a float.
+        Some(s) => (f64::from(tan_half(s) as f32) / tan_half(fov_x.min(135.0))) as f32,
+    }
 }
 
 /// One sprite: its corners (bottom right, top right, top left, bottom left, with
@@ -129,8 +150,8 @@ pub fn scatter(
         nudge(0.985, -0.174),
     ];
 
-    let cut = ss.fade_max;
-    let fade = ss.fade_dist;
+    let cut = ss.fade_max * view.range_scale;
+    let fade = ss.fade_dist * view.range_scale;
     let inv_fade_diff = 1.0 / (cut * cut - fade * fade);
     let fade_range = (FADE_RANGE / (cut - fade)).min(1.0);
     let alpha_of = |v: &SpriteVertex| {
@@ -358,6 +379,7 @@ mod tests {
         origin: [-900.0, -4300.0, 90.0],
         left: [0.0, -1.0, 0.0],
         time_ms: 12345,
+        range_scale: 1.0,
     };
 
     fn triangle(normal_z: f32) -> Vec<SpriteVertex> {
@@ -400,6 +422,44 @@ mod tests {
             }
             assert_eq!(s.color, [light, light, light, 255]);
         }
+    }
+
+    #[test]
+    fn a_narrower_view_than_the_first_reaches_further() {
+        // A 90-degree camera drew sprites first: an 80-degree view reaches
+        // tan 45 / tan 40 further.
+        let mut standard = None;
+        assert_eq!(range_scale(&mut standard, 90.0), 1.0);
+        assert_eq!(standard, Some(90.0));
+        assert_eq!(range_scale(&mut standard, 80.0), 1.191_753_6);
+        assert_eq!(range_scale(&mut standard, 90.0), 1.0);
+        // Beyond 135 degrees, as at 135.
+        assert_eq!(range_scale(&mut standard, 170.0), 0.414_213_57);
+        // A first view outside 50-135 sets no standard.
+        let mut standard = None;
+        assert_eq!(range_scale(&mut standard, 30.0), 1.0);
+        assert_eq!(standard, None);
+        // Sprites past the shader's 3000 units show in range.
+        let mut out = Vec::new();
+        let far = SpriteView {
+            origin: [-900.0 + 3200.0, -4300.0, 90.0],
+            ..VIEW
+        };
+        scatter(&GRASS, false, &triangle(1.0), &[0, 1, 2], &far, &mut out);
+        assert!(out.is_empty());
+        let further = SpriteView {
+            range_scale: 1.191_753_6,
+            ..far
+        };
+        scatter(
+            &GRASS,
+            false,
+            &triangle(1.0),
+            &[0, 1, 2],
+            &further,
+            &mut out,
+        );
+        assert!(!out.is_empty());
     }
 
     #[test]
