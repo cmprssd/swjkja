@@ -898,3 +898,27 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   original sends only the entities visible from it. A kor1 view of the encounter's
   own room would need the runners that run on the player (spawnflags 1).
 
+
+## 2026-10-17: Surface sprites as the game draws them, and a capture that sees them so (recapture chosen by the owner)
+
+- **Drawn**: `surfaceSprites` stages of the vertical and flattened kinds (grass;
+  42 of the 70 retail lines), each frame over the visible world surfaces, placed
+  as `RB_DrawVerticalSurfaceSprites` places them (its random chart, seeds from each
+  triangle's corners, `Q_rsqrt` steps), faded with distance from the view, swaying
+  at the view's time, lit by their vertices' blue. **Left out** (decided by Claude,
+  pending review): the oriented and effect kinds, wind (no weather system or wind
+  cvars give any on the retail maps viewed), wind points, a fog pass over sprites
+  in a fog volume, a field of view other than the first one rendered (its range
+  scale), and sprites on brush entities' surfaces, models and deformed surfaces.
+- **The capture**: with the time pinned, the original's sprite update runs only
+  when the time changes, so a capture whose grass first shows at the held time
+  keeps the view vectors of that first frame: a zero lean, which the game never
+  has while its clock runs. The reference patch now runs that update every frame
+  while `cg_swjkjaTime` is set (a debugging capture logged the forward and origin
+  it then has: the view's), and dpred_troopers was captured again; the new
+  renderer draws the game's lean.
+- **Quads split along the top right to bottom left diagonal** (decided by Claude,
+  pending review): the lean makes a sprite's quad not flat, and the original draws
+  `GL_QUADS`, whose split is the driver's. The reference GPU's matches this
+  diagonal (dpred_troopers 0.33 against 1.02 for the other one); another GPU may
+  split the original's the other way.

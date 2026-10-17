@@ -189,7 +189,7 @@ difference per channel, 0-255; measured 2026-10-17):
 | Multiplayer world (sky, fog, fog volumes, flares, animated stages) | 19 | 0.05-0.41 |
 | Static and brush-entity models, rotating fans and drums | 16 | 0.16-7.03 |
 | Single-player NPCs (spawned, scripted, academy classes, yavin1's shuttle) | 10 | 0.10-0.85 |
-| **All** | **45** | **median 0.26; 36 under 0.5, 41 under 1.0** |
+| **All** | **45** | **median 0.26; 37 under 0.5, 41 under 1.0** |
 
 Two more model views (hoth2_fog, vjun1_hall) are not rendered: their maps lose the
 Vulkan device on the Windows GPU, on main too.
@@ -199,7 +199,7 @@ xychart-beta
     title "Views by mean difference (45 views)"
     x-axis ["< 0.25", "0.25-0.5", "0.5-1", "1-2", "> 2"]
     y-axis "views" 0 --> 20
-    bar [21, 15, 5, 0, 4]
+    bar [21, 16, 4, 0, 4]
 ```
 
 The four views above 2 are explained and are not renderer errors: dpred_racks

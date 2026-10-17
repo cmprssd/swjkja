@@ -378,9 +378,45 @@ pub struct Stage {
     pub tc_mods: Vec<TexMod>,
     pub detail: bool,
     pub glow: bool,
-    /// `surfaceSprites` and `ss*` lines, kept as written until surface sprites are
-    /// implemented (the original never fails a shader over them).
-    pub surface_sprites: Vec<String>,
+    /// From a valid `surfaceSprites` line and the `ss*` lines after it: the stage is
+    /// drawn as sprites scattered over its surfaces instead of on them.
+    pub surface_sprites: Option<SurfaceSprites>,
+}
+
+/// A `surfaceSprites` stage (`surfaceSprite_t`), without the `effect` kind's
+/// `ssFX*` parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SurfaceSprites {
+    pub kind: SpriteKind,
+    pub width: f32,
+    pub height: f32,
+    /// About one sprite per `density` units each way.
+    pub density: f32,
+    /// Sprites start fading out at `fade_dist` and are gone at `fade_max`.
+    pub fade_dist: f32,
+    pub fade_max: f32,
+    pub fade_scale: f32,
+    pub wind: f32,
+    pub wind_idle: f32,
+    pub variance: [f32; 2],
+    pub facing: Facing,
+    pub vert_skew: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpriteKind {
+    Vertical,
+    Oriented,
+    Effect,
+    Flattened,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Facing {
+    Normal,
+    Up,
+    Down,
+    Any,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -943,13 +979,17 @@ fn parse_stage(shader: &mut ShaderDef, c: &mut Cursor) -> Result<Stage, ParseErr
             depth_write_explicit = true;
         } else if is(t, "glow") {
             st.glow = true;
-        } else if is(t, "surfaceSprites") || starts(t, "ss") {
+        } else if is(t, "surfaceSprites") {
             let args = rest_of_line(c);
-            st.surface_sprites.push(format!(
-                "{} {}",
-                lower(t),
-                String::from_utf8_lossy(&args).trim_end()
-            ));
+            if let Some(ss) = parse_surface_sprites(&args) {
+                st.surface_sprites = Some(ss);
+            }
+        } else if starts(t, "ss") {
+            let args = rest_of_line(c);
+            // Before a valid surfaceSprites line, the line's defaults replace these.
+            if let Some(ss) = &mut st.surface_sprites {
+                parse_surface_sprites_optional(t, &args, ss);
+            }
         } else {
             return Err(ParseError::UnknownStageKeyword(lower(t)));
         }
@@ -1157,6 +1197,109 @@ fn parse_deform(s: &mut ShaderDef, c: &mut Cursor) {
         Deform::None
     };
     s.deforms.push(deform);
+}
+
+/// `ParseSurfaceSprites`: `<kind> <width> <height> <density> <fadedist>`, with
+/// the optional parameters' defaults; `None` (the stage unchanged) if any is missing
+/// or out of range.
+fn parse_surface_sprites(args: &[u8]) -> Option<SurfaceSprites> {
+    let mut c = Cursor::new(args);
+    let t = c.token(false);
+    let kind = if is(t, "vertical") {
+        SpriteKind::Vertical
+    } else if is(t, "oriented") {
+        SpriteKind::Oriented
+    } else if is(t, "effect") {
+        SpriteKind::Effect
+    } else if is(t, "flattened") {
+        SpriteKind::Flattened
+    } else {
+        return None;
+    };
+    let mut next = || {
+        let t = c.token(false);
+        (!t.is_empty()).then(|| atof(t))
+    };
+    let width = next().filter(|&v| v > 0.0)?;
+    let height = next().filter(|&v| v > 0.0)?;
+    let density = next().filter(|&v| v > 0.0)?;
+    let fade_dist = next().filter(|&v| v >= 32.0)?;
+    Some(SurfaceSprites {
+        kind,
+        width,
+        height,
+        density,
+        fade_dist,
+        fade_max: (f64::from(fade_dist) * 1.33) as f32,
+        fade_scale: 0.0,
+        wind: 0.0,
+        wind_idle: 0.0,
+        variance: [0.0; 2],
+        facing: Facing::Normal,
+        vert_skew: 0.0,
+    })
+}
+
+/// `ParseSurfaceSpritesOptional`: one `ss*` line. A missing or out-of-range value,
+/// a second facing, or an unknown name changes nothing.
+fn parse_surface_sprites_optional(name: &[u8], args: &[u8], ss: &mut SurfaceSprites) {
+    let mut c = Cursor::new(args);
+    let mut next = || {
+        let t = c.token(false);
+        (!t.is_empty()).then(|| atof(t))
+    };
+    let facing = match lower(name).as_str() {
+        "sshangdown" => Some(Facing::Down),
+        "ssanyangle" => Some(Facing::Any),
+        "ssfaceup" => Some(Facing::Up),
+        _ => None,
+    };
+    if let Some(f) = facing {
+        if ss.facing == Facing::Normal {
+            ss.facing = f;
+        }
+        return;
+    }
+    match lower(name).as_str() {
+        "ssfademax" => {
+            if let Some(v) = next().filter(|&v| v > ss.fade_dist) {
+                ss.fade_max = v;
+            }
+        }
+        "ssfadescale" => {
+            if let Some(v) = next() {
+                ss.fade_scale = v;
+            }
+        }
+        "ssvariance" => {
+            if let Some(w) = next().filter(|&v| v >= 0.0) {
+                ss.variance[0] = w;
+                if let Some(h) = next().filter(|&v| v >= 0.0) {
+                    ss.variance[1] = h;
+                }
+            }
+        }
+        "sswind" => {
+            if let Some(v) = next().filter(|&v| v >= 0.0) {
+                ss.wind = v;
+                // It also sets the idle sway, which is usually the same.
+                if ss.wind_idle <= 0.0 {
+                    ss.wind_idle = v;
+                }
+            }
+        }
+        "sswindidle" => {
+            if let Some(v) = next().filter(|&v| v >= 0.0) {
+                ss.wind_idle = v;
+            }
+        }
+        "ssvertskew" => {
+            if let Some(v) = next().filter(|&v| v >= 0.0) {
+                ss.vert_skew = v;
+            }
+        }
+        _ => {}
+    }
 }
 
 /// `ParseSkyParms`: `skyParms <outerbox> <cloudheight> <innerbox>`; innerboxes are

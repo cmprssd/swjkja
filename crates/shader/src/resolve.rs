@@ -7,7 +7,7 @@
 
 use crate::{
     AlphaGen, AlphaTest, Cull, Deform, DepthTest, DstBlend, FogParms, RgbGen, ShaderDef,
-    ShaderText, Sky, SrcBlend, Stage, TcGen, TexMod, Texture, sort,
+    ShaderText, Sky, SrcBlend, Stage, SurfaceSprites, TcGen, TexMod, Texture, sort,
 };
 
 /// Lightmap indexes with a special meaning (`tr_local.h`).
@@ -114,7 +114,7 @@ pub struct MaterialStage {
     pub active: bool,
     pub fog_adjust: FogAdjust,
     pub fog_color: FogColor,
-    pub surface_sprites: Vec<String>,
+    pub surface_sprites: Option<SurfaceSprites>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -188,7 +188,7 @@ fn stage_from(s: &Stage, bundle: Bundle) -> MaterialStage {
         active: true,
         fog_adjust: FogAdjust::None,
         fog_color: FogColor::Fog,
-        surface_sprites: s.surface_sprites.clone(),
+        surface_sprites: s.surface_sprites,
     }
 }
 
@@ -228,7 +228,7 @@ fn plain(
         active: true,
         fog_adjust: FogAdjust::None,
         fog_color: FogColor::Fog,
-        surface_sprites: Vec::new(),
+        surface_sprites: None,
     }
 }
 
