@@ -457,8 +457,39 @@ Against the new capture (main 0.86):
   (main 6.5-13.2 ms), the GPU's difference 0.3-1.1 ms.
 - Left out: oriented and effect sprites (28 of the 70 retail lines), wind (no
   weather system or wind cvars on the maps viewed), wind points, fog passes over
-  sprites in fog volumes, other fields of view (the range scale), and sprites on
-  brush entities, models and deformed surfaces.
+  sprites in fog volumes, and sprites on brush entities, models and deformed
+  surfaces. The far field was the range scale (next section).
+
+## dpred's far grass: the range scale of the intro's camera, 2026-10-17
+
+The field left of dpred_troopers' path, 400-3000 units out, had less grass in this
+renderer than in the original, and grass of other heights. Scaling both fade
+distances by one factor fits it to the pixel at 1.19: 0.26 at 1.1, **0.15 at
+1.1918**, 0.23 at 1.28, 0.29 at 1.4. That is tan 45° / tan 40°.
+`R_SurfaceSpriteFrameUpdate` takes the first field of view that sprites are drawn
+with (between 50 and 135 degrees) as the standard one, and lengthens the shader's
+ranges by `tan(standard / 2) / tan(fov / 2)` for any other field of view. With
+`SCRIPTS=1`, t2_dpred's intro runs as a cutscene. Its first command enables the
+camera (`camera` type 62, `TYPE_ENABLE`), which draws the view at
+`CAMERA_DEFAULT_FOV`, 90 degrees, until a later zoom to 80 (its block 112). So the
+grass's first frame was at 90, and the pinned view at `cg_fov` 80 reaches 1.19
+times further: 476 units to the fade's start, 3575 to its end.
+
+The renderer now keeps that standard (`sprites::range_scale`): the first field of
+view that draws sprites, or 90 when the map's level scripts enabled a camera
+before the view's time (`script::Timelines::camera`; the camera is taken to have
+drawn sprites first, as t2_dpred's did).
+
+| dpred_troopers | Mean difference | Pixels off by > 16 |
+|------|------|------|
+| main (range scale 1) | 0.33 | 0.5% |
+| **range scale 1.1918** | **0.15** | **0.0%** |
+
+- The 44 other reference views render pixel for pixel as on main. All 45: median
+  0.26, 37 under 0.5, 41 under 1.0 (as on main).
+- Left out: the camera's own frames (cameras are not modelled): a camera that
+  zooms before any sprites show, or one that never sees sprites, would set
+  another standard.
 
 ## Brush entities' bounds spread as the collision model's, 2026-10-17
 

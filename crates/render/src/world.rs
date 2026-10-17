@@ -341,6 +341,9 @@ pub struct WorldRenderer {
     fog_volumes: Vec<fog::FogVolume>,
     /// The NPCs' shadows, if the map has NPCs.
     shadows: Option<Shadows>,
+    /// The field of view surface sprites were first drawn with
+    /// ([`sprites::range_scale`]).
+    sprite_fov: Option<f32>,
 }
 
 /// One frame's data: its uniforms, deformed geometry and visible index ranges, and
@@ -1717,6 +1720,7 @@ impl WorldRenderer {
             shadows,
             surface_gate,
             gate_count: gates,
+            sprite_fov: None,
         })
     }
 
@@ -1890,11 +1894,7 @@ impl WorldRenderer {
         for &s in &visible {
             shown[s] = true;
         }
-        let sprite_view = sprites::SpriteView {
-            origin: camera.origin,
-            left: view.left,
-            time_ms: ms,
-        };
+        let mut sprite_view = None;
         let mut scattered = Vec::new();
         for m in &mut self.materials {
             let Some(Dynamic {
@@ -1913,12 +1913,25 @@ impl WorldRenderer {
             };
             scattered.clear();
             for t in surfaces.iter().filter(|t| shown[t.surface]) {
+                // The first sprites drawn set the standard field of view; a camera
+                // the scripts enabled drew the view before this one.
+                let sprite_view = sprite_view.get_or_insert_with(|| {
+                    if self.sprite_fov.is_none() && self.models.camera.is_some_and(|c| c <= ms) {
+                        self.sprite_fov = Some(swjkja_world::script::CAMERA_DEFAULT_FOV);
+                    }
+                    sprites::SpriteView {
+                        origin: camera.origin,
+                        left: view.left,
+                        time_ms: ms,
+                        range_scale: sprites::range_scale(&mut self.sprite_fov, camera.fov_x),
+                    }
+                });
                 sprites::scatter(
                     ss,
                     *additive,
                     &t.verts,
                     &t.indexes,
-                    &sprite_view,
+                    sprite_view,
                     &mut scattered,
                 );
             }

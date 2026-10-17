@@ -401,7 +401,7 @@ fn luke(spawnscript: Vec<Node>, level: &Level) -> Vec<(String, i32)> {
         script: Some(&spawnscript),
         holds: &holds,
     };
-    let t = timelines(&[npc], level, &|_| Some(1234)).remove(0);
+    let t = timelines(&[npc], level, &|_| Some(1234)).npcs.remove(0);
     let early = t.legs.iter().filter(|c| c.start < 7000);
     early.map(|c| (c.anim.clone(), c.start)).collect()
 }
@@ -453,6 +453,23 @@ fn an_intro_takes_over_an_npc_when_the_player_begins() {
         luke(spawnscript, &Level::default()),
         owned(&[("BOTH_STAND1", 1550), ("BOTH_STAND3", 6550)])
     );
+}
+
+#[test]
+fn the_first_camera_enable_is_kept() {
+    // As t2_dpred's intro: it enables the camera (type 62) after a wait, from the
+    // frame after the player begins (2050; a frame earlier for the client); a
+    // zoom (58) and a second enable change nothing.
+    let level = intro(vec![
+        wait(100.0),
+        command(id::CAMERA, vec![float(62.0)]),
+        command(id::CAMERA, vec![float(58.0), float(80.0), float(0.0)]),
+        wait(500.0),
+        command(id::CAMERA, vec![float(62.0)]),
+    ]);
+    assert_eq!(timelines(&[], &level, &|_| None).camera, Some(2150));
+    let zoom_only = intro(vec![command(id::CAMERA, vec![float(58.0)])]);
+    assert_eq!(timelines(&[], &zoom_only, &|_| None).camera, None);
 }
 
 #[test]

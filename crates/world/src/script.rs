@@ -21,7 +21,8 @@
 //! runs the block first) and runs it at once, and `run`, which runs another script
 //! in place (yavin1's opening runs its intro). Commands that move an NPC
 //! (`SET_NAVGOAL`, `SET_ORIGIN`, ...) are left out (those that complete later never
-//! do, as with the AI frozen), and so are cameras and the other commands. A random number is its range's low end
+//! do, as with the AI frozen), and so are cameras (but when one is first enabled)
+//! and the other commands. A random number is its range's low end
 //! (once the client runs, what the shared generator draws depends on frame timing:
 //! [`crate::rand`]); a `get` reads nothing (a condition with one is false).
 
@@ -651,6 +652,9 @@ fn text(b: &Block, n: usize) -> &str {
 /// (`TYPE_INSERT`); the other (`TYPE_FLUSH`, 56) drops the rest.
 const AFFECT_INSERT: f32 = 55.0;
 
+/// `camera`'s type that hands the view to the camera (`TYPE_ENABLE`).
+const CAMERA_ENABLE: f32 = 62.0;
+
 /// Whether a `sound` command's channel is a voice's, whose task completes when the
 /// line has played (`PlayIcarusSound`).
 fn voice_channel(channel: &str) -> bool {
@@ -821,6 +825,8 @@ struct World<'a> {
     signals: Vec<String>,
     voice: &'a dyn Fn(&str) -> Option<i32>,
     next_task: u32,
+    /// When a script first enabled the camera (ms, on the client's clock).
+    camera: Option<i32>,
 }
 
 impl<'a> World<'a> {
@@ -908,6 +914,11 @@ impl<'a> World<'a> {
                     id::USE => {
                         let name = text(b, 0).to_owned();
                         self.use_targets(&name, level);
+                    }
+                    id::CAMERA => {
+                        if b.members.first().and_then(Member::float) == Some(CAMERA_ENABLE) {
+                            self.camera.get_or_insert(client_time(level));
+                        }
                     }
                     id::SET | id::SOUND => {
                         let task = self.next_task;
@@ -1087,10 +1098,24 @@ impl<'a> World<'a> {
     }
 }
 
+/// What a map's scripts do up to [`HORIZON`] ([`timelines`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Timelines {
+    /// One per NPC, in order.
+    pub npcs: Vec<Timeline>,
+    /// When a script first enabled the camera (ms, on the client's clock): the
+    /// camera then draws the view (`CGCam_RenderScene`), its field of view
+    /// [`CAMERA_DEFAULT_FOV`] until a zoom; cameras are not modelled further.
+    pub camera: Option<i32>,
+}
+
+/// A camera's field of view as it is enabled (`CAMERA_DEFAULT_FOV`).
+pub const CAMERA_DEFAULT_FOV: f32 = 90.0;
+
 /// What NPCs standing in their stances do up to [`HORIZON`], each running its
 /// spawnscript, and the map's `level` scripts with them; `voice` gives how long a
 /// voice line plays (ms; `None` for one that does not load, which plays out at
-/// once). One timeline per NPC, in order.
+/// once).
 ///
 /// Each NPC starts in `BOTH_STAND1` (`NPC_Begin`). On the first frame its script
 /// runs its first pass, then its first movement frame (counting no time down) puts
@@ -1101,7 +1126,7 @@ pub fn timelines(
     npcs: &[Npc<'_>],
     level: &Level,
     voice: &dyn Fn(&str) -> Option<i32>,
-) -> Vec<Timeline> {
+) -> Timelines {
     let part = || Part {
         anim: STAND.to_owned(),
         start: FIRST_FRAME,
@@ -1133,6 +1158,7 @@ pub fn timelines(
         signals: Vec::new(),
         voice,
         next_task: 0,
+        camera: None,
     };
     let mut level_time = FIRST_FRAME;
     for i in world.runners..world.actors.len() {
@@ -1179,7 +1205,7 @@ pub fn timelines(
         }
         c
     };
-    world
+    let npcs = world
         .actors
         .into_iter()
         .filter_map(|a| a.body)
@@ -1192,7 +1218,11 @@ pub fn timelines(
                 more_light: b.more_light,
             }
         })
-        .collect()
+        .collect();
+    Timelines {
+        npcs,
+        camera: world.camera,
+    }
 }
 
 /// What an NPC standing in `stance` does up to [`HORIZON`], running `script` (its
@@ -1204,7 +1234,9 @@ pub fn timeline(stance: &Pose, script: Option<&[Node]>, holds: Holds<'_>) -> Tim
         script,
         holds,
     };
-    timelines(&[npc], &Level::default(), &|_| None).remove(0)
+    timelines(&[npc], &Level::default(), &|_| None)
+        .npcs
+        .remove(0)
 }
 
 /// What a spawnscript's first pass leaves before its first command that may wait
