@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use swjkja_shader::{ParseError, ShaderText, Texture};
+use swjkja_shader::{Facing, ParseError, ShaderText, SpriteKind, SurfaceSprites, Texture};
 
 #[test]
 fn every_retail_shader_loads_and_parses() {
@@ -45,5 +45,29 @@ fn every_retail_shader_loads_and_parses() {
     assert_eq!(
         first_texture("models/map_objects/cairn/utilitylight_face"),
         map("models/map_objects/cairn/utilitylight_face")
+    );
+
+    // t2_dpred's grass: the second stage of textures/imperial/dp_ground
+    // (imperial.shader, read by hand).
+    assert_eq!(
+        text.parse("textures/imperial/dp_ground")
+            .unwrap()
+            .unwrap()
+            .stages[1]
+            .surface_sprites,
+        Some(SurfaceSprites {
+            kind: SpriteKind::Flattened,
+            width: 48.0,
+            height: 24.0,
+            density: 45.0,
+            fade_dist: 400.0,
+            fade_max: 3000.0,
+            fade_scale: 2.5,
+            wind: 0.8,
+            wind_idle: 0.8,
+            variance: [1.0, 2.0],
+            facing: Facing::Normal,
+            vert_skew: 0.0,
+        })
     );
 }

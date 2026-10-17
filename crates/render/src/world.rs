@@ -8,7 +8,7 @@
 //!
 //! Not yet: normal and text deforms, distance LOD
 //! for patches, visibility culling, video maps (drawn white), noise waves (their
-//! base value), fog on sky layers.
+//! base value), fog on sky layers, oriented and effect surface sprites.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -24,8 +24,8 @@ use swjkja_shader::resolve::{
     resolve_map_shader,
 };
 use swjkja_shader::{
-    AlphaGen, AlphaTest, Cull, Deform, DepthTest, DstBlend, Func, RgbGen, ShaderText, SrcBlend,
-    TcGen, TexMod,
+    AlphaGen, AlphaTest, Cull, Deform, DepthTest, DstBlend, Func, RgbGen, ShaderText, SpriteKind,
+    SrcBlend, TcGen, TexMod,
 };
 use swjkja_world::{Geometry, World};
 
@@ -38,6 +38,7 @@ use crate::models::StaticModels;
 use crate::pipeline::{Pipeline, State, spirv};
 use crate::resource::{Buffer, Frame};
 use crate::sky;
+use crate::sprites;
 use crate::texture::{Texture, TextureSet};
 
 /// `R_FindImageFile`: the image `name` resolves to, or `None` if none decodes or its
@@ -227,6 +228,21 @@ enum DynamicSource {
     /// The NPCs' shadows in fog `fog`: the polygons in that fog, from the shadows'
     /// shared region ([`Shadows`]), filled each frame (see draw()).
     Shadows { fog: usize },
+    /// A surface sprite stage's sprites over the visible ones of its surfaces, at
+    /// most `capacity`.
+    Sprites {
+        sprites: swjkja_shader::SurfaceSprites,
+        additive: bool,
+        surfaces: Vec<SpriteSurface>,
+        capacity: usize,
+    },
+}
+
+/// A world surface that scatters sprites: its number and triangles.
+struct SpriteSurface {
+    surface: usize,
+    verts: Vec<sprites::SpriteVertex>,
+    indexes: Vec<u32>,
 }
 
 /// The NPCs' blob shadows (`CG_PlayerShadow` with `cg_shadows 1`): what they are
@@ -1309,7 +1325,13 @@ impl WorldRenderer {
                 let fog_pass =
                     fog != 0 && Some(fog) != global_fog && material.fog_pass != FogPass::None;
                 let mut stages = Vec::new();
-                for s in &material.stages {
+                // Surface sprite stages are drawn as sprites (below), not on the
+                // surfaces.
+                for s in material
+                    .stages
+                    .iter()
+                    .filter(|s| s.surface_sprites.is_none())
+                {
                     let st = state(material, s);
                     let pipeline = states.iter().position(|x| *x == st).unwrap_or_else(|| {
                         states.push(st);
@@ -1405,6 +1427,105 @@ impl WorldRenderer {
                         gate: None,
                         bones,
                     });
+                }
+                // Surface sprites (RB_DrawSurfaceSprites, after the surfaces' stages):
+                // each sprite stage but the first, over the world's own surfaces
+                // (not brush entities' or models', nor deformed ones), coloured by
+                // their vertices, textured whole, both sides drawn.
+                for s in material.stages.iter().skip(1) {
+                    let Some(ss) = s.surface_sprites else {
+                        continue;
+                    };
+                    if !matches!(ss.kind, SpriteKind::Vertical | SpriteKind::Flattened) || deformed
+                    {
+                        continue;
+                    }
+                    let surfaces: Vec<SpriteSurface> = group
+                        .iter()
+                        .filter(|&&i| i < first_model_surface && !placed.contains_key(&i))
+                        .map(|&i| {
+                            let (mut v, mut indexes) = (Vec::new(), Vec::new());
+                            append(geometry(i), &mut v, &mut indexes);
+                            let verts = v
+                                .iter()
+                                .map(|v| sprites::SpriteVertex {
+                                    xyz: v.xyz,
+                                    normal_z: v.normal[2],
+                                    light: v.color[2],
+                                })
+                                .collect();
+                            SpriteSurface {
+                                surface: i,
+                                verts,
+                                indexes,
+                            }
+                        })
+                        .collect();
+                    let capacity: usize = surfaces
+                        .iter()
+                        .map(|t| sprites::capacity(&ss, &t.verts, &t.indexes))
+                        .sum();
+                    if capacity == 0 {
+                        continue;
+                    }
+                    let sprite_stage = MaterialStage {
+                        bundle: swjkja_shader::resolve::Bundle {
+                            tc_gen: TcGen::Texture,
+                            tc_mods: Vec::new(),
+                            ..s.bundle.clone()
+                        },
+                        bundle2: None,
+                        rgb_gen: RgbGen::ExactVertex,
+                        alpha_gen: AlphaGen::Vertex,
+                        ..s.clone()
+                    };
+                    let st = State {
+                        cull: vk::CullModeFlags::NONE,
+                        depth_bias: false,
+                        ..state(material, &sprite_stage)
+                    };
+                    let pipeline = states.iter().position(|x| *x == st).unwrap_or_else(|| {
+                        states.push(st);
+                        states.len() - 1
+                    });
+                    let mut g = gpu_stage(&sprite_stage, None);
+                    if gl_fog {
+                        g.fog[0] = match s.fog_color {
+                            FogColor::Fog => 1,
+                            FogColor::Black => 2,
+                            FogColor::White => 3,
+                        };
+                    }
+                    gpu_stages.push(g);
+                    let mut slot = slots_for(&s.bundle.image, textures)?;
+                    if held[m] {
+                        slot = slot.first();
+                    }
+                    draw_materials.push(DrawMaterial {
+                        first_index: 0,
+                        index_count: 0,
+                        stages: vec![DrawStage {
+                            gpu_stage: gpu_stages.len() as u32 - 1,
+                            pipeline,
+                            slots: [slot, Slots::One(white)],
+                        }],
+                        dynamic: Some(Dynamic {
+                            vertex_offset: dynamic_vertices,
+                            index_offset: dynamic_indexes,
+                            source: DynamicSource::Sprites {
+                                sprites: ss,
+                                additive: (s.blend_src, s.blend_dst)
+                                    == (Some(SrcBlend::One), Some(DstBlend::One)),
+                                surfaces,
+                                capacity,
+                            },
+                        }),
+                        culled: false,
+                        gate: None,
+                        bones: 0,
+                    });
+                    dynamic_vertices += capacity as u32 * 4;
+                    dynamic_indexes += capacity as u32 * 6;
                 }
             }
         }
@@ -1672,7 +1793,7 @@ impl WorldRenderer {
                 DynamicSource::Flares { flares, radius } => {
                     flare_quads(flares, *radius, camera, &view)
                 }
-                DynamicSource::Shadows { .. } => continue,
+                DynamicSource::Shadows { .. } | DynamicSource::Sprites { .. } => continue,
             };
             let out: Vec<Vertex> = verts
                 .iter()
@@ -1763,6 +1884,68 @@ impl WorldRenderer {
             if let Some(r) = self.surface_draw[s] {
                 ranges.push(r);
             }
+        }
+        // The visible world surfaces' sprites, scattered for this view.
+        let mut shown = vec![false; self.surface_draw.len()];
+        for &s in &visible {
+            shown[s] = true;
+        }
+        let sprite_view = sprites::SpriteView {
+            origin: camera.origin,
+            left: view.left,
+            time_ms: ms,
+        };
+        let mut scattered = Vec::new();
+        for m in &mut self.materials {
+            let Some(Dynamic {
+                source:
+                    DynamicSource::Sprites {
+                        sprites: ss,
+                        additive,
+                        surfaces,
+                        capacity,
+                    },
+                vertex_offset,
+                index_offset,
+            }) = &m.dynamic
+            else {
+                continue;
+            };
+            scattered.clear();
+            for t in surfaces.iter().filter(|t| shown[t.surface]) {
+                sprites::scatter(
+                    ss,
+                    *additive,
+                    &t.verts,
+                    &t.indexes,
+                    &sprite_view,
+                    &mut scattered,
+                );
+            }
+            scattered.truncate(*capacity);
+            const ST: [[f32; 2]; 4] = [[1.0, 1.0], [1.0, 0.0], [0.0, 0.0], [0.0, 1.0]];
+            let verts: Vec<Vertex> = scattered
+                .iter()
+                .flat_map(|q| {
+                    (0..4).map(move |k| Vertex {
+                        xyz: q.corners[k],
+                        normal: [0.0, 0.0, 1.0],
+                        st: ST[k],
+                        lightmap: [[0.0; 2]; 4],
+                        color: q.color,
+                    })
+                })
+                .collect();
+            let indexes: Vec<u32> = (0..scattered.len() as u32)
+                .flat_map(|q| sprites::QUAD_TRIANGLES.map(|k| q * 4 + k))
+                .collect();
+            let vstart = *vertex_offset as usize * size_of::<Vertex>();
+            vb[vstart..vstart + size_of_val(&verts[..])]
+                .copy_from_slice(bytemuck::cast_slice(&verts));
+            let istart = *index_offset as usize * 4;
+            ib[istart..istart + indexes.len() * 4].copy_from_slice(bytemuck::cast_slice(&indexes));
+            m.first_index = *index_offset;
+            m.index_count = indexes.len() as u32;
         }
         // The static models this view draws (each at its level of detail), lit from
         // the light grid, NPCs posed as they stand now; entity n + 1 is model n.

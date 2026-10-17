@@ -275,6 +275,22 @@ index a349d4f..730edc8 100644
  #if	AI_TIMERS
  	AITime = 0;
  	navTime = 0;
+diff --git a/code/rd-vanilla/tr_surfacesprites.cpp b/code/rd-vanilla/tr_surfacesprites.cpp
+index f0c210a..032959a 100644
+--- a/code/rd-vanilla/tr_surfacesprites.cpp
++++ b/code/rd-vanilla/tr_surfacesprites.cpp
+@@ -111,7 +111,10 @@ static void R_SurfaceSpriteFrameUpdate(void)
+ 	float targetspeed;
+ 	vec3_t up={0,0,1};
+ 
+-	if (backEnd.refdef.time == lastSSUpdateTime)
++	// swjkja reference capture: with the time pinned (cg_swjkjaTime), update every
++	// frame as a running clock would, or the sprites keep the view (and the zero
++	// lean) of the first frame they were drawn at that time.
++	if (backEnd.refdef.time == lastSSUpdateTime && !ri.Cvar_VariableString("cg_swjkjaTime")[0])
+ 		return;
+ 
+ 	if (backEnd.refdef.time < lastSSUpdateTime)
 diff --git a/code/server/sv_client.cpp b/code/server/sv_client.cpp
 index 8e948c0..a93c333 100644
 --- a/code/server/sv_client.cpp

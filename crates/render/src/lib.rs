@@ -13,6 +13,7 @@ pub mod path;
 pub mod pipeline;
 pub mod resource;
 pub mod sky;
+pub mod sprites;
 pub mod swapchain;
 pub mod texture;
 pub mod vis;

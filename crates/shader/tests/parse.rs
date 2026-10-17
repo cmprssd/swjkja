@@ -285,3 +285,64 @@ fn a_nul_byte_ends_a_file_like_a_c_string() {
     assert!(t.contains("s"));
     assert!(!t.contains("t"));
 }
+
+#[test]
+fn surface_sprites_take_their_line_and_the_options_after_it() {
+    // dpred's grass (textures/imperial/dp_ground's second stage).
+    let s = ok(
+        "s { { map a } { map grass\nsurfaceSprites flattened 48 24 45 400\n\
+         ssFademax 3000\nssFadescale 2.5\nssVariance 1 2\nssWind 0.8\nalphaFunc GE192
+} }",
+    );
+    assert_eq!(s.stages[0].surface_sprites, None);
+    assert_eq!(
+        s.stages[1].surface_sprites,
+        Some(SurfaceSprites {
+            kind: SpriteKind::Flattened,
+            width: 48.0,
+            height: 24.0,
+            density: 45.0,
+            fade_dist: 400.0,
+            fade_max: 3000.0,
+            fade_scale: 2.5,
+            wind: 0.8,
+            wind_idle: 0.8,
+            variance: [1.0, 2.0],
+            facing: Facing::Normal,
+            vert_skew: 0.0,
+        })
+    );
+    let ss = |src: &str| ok(src).stages[0].surface_sprites;
+    // Defaults: fade_max 1.33 times fade_dist.
+    let v = ss("s { { map a\nsurfaceSprites vertical 8 16 20 100\n} }").unwrap();
+    assert_eq!(
+        (v.kind, v.fade_max, v.wind_idle),
+        (SpriteKind::Vertical, 133.0, 0.0)
+    );
+    // Options before the line are replaced by its defaults; a fade_max not past
+    // fade_dist, a second facing and an unknown option change nothing; ssWindidle
+    // set first keeps its value through ssWind.
+    let v = ss(
+        "s { { map a\nssWind 3\nsurfaceSprites vertical 8 16 20 100\nssFademax 90\n\
+         ssHangdown\nssFaceup\nssBogus 1\nssWindidle 2\nssWind 5\n} }",
+    )
+    .unwrap();
+    assert_eq!(
+        (v.fade_max, v.facing, v.wind, v.wind_idle),
+        (133.0, Facing::Down, 5.0, 2.0)
+    );
+    // An invalid line (fade_dist under 32, an unknown kind, a missing value) leaves
+    // the stage an ordinary one.
+    assert_eq!(
+        ss("s { { map a\nsurfaceSprites vertical 8 16 20 31\nssWind 1\n} }"),
+        None
+    );
+    assert_eq!(
+        ss("s { { map a\nsurfaceSprites upright 8 16 20 100\n} }"),
+        None
+    );
+    assert_eq!(
+        ss("s { { map a\nsurfaceSprites vertical 8 16 20\n} }"),
+        None
+    );
+}

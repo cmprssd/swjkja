@@ -381,6 +381,62 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## dpred's grass: surface sprites, 2026-10-17
+
+`textures/imperial/dp_ground`'s second stage is `surfaceSprites flattened 48 24 45
+400` (fade to 3000, variance 1 2, wind 0.8): the original skips it as a stage and
+scatters grass over the ground's upward-facing triangles each frame
+(`tr_surfacesprites.cpp`). This renderer now does the same for vertical and
+flattened sprites (`crates/render/src/sprites.rs`): each triangle's random numbers
+start from its corners (`randomchart`, seed and interval from coordinate sums), its
+step from its area (`Q_rsqrt`, the one-step approximation), each sprite faded by
+its distance and a drawn fade start, sized by a drawn variance, swaying idly at the
+view's time, grey from its vertices' blue. A separate Python port of
+`RB_DrawVerticalSurfaceSprites` gives the same 9 sprites for a 200-unit triangle.
+All 405 dp_ground surfaces are planar faces of the world model, so the triangles
+are the original's exactly.
+
+Two things only the captures showed:
+
+- **The old capture had no lean.** A sprite's top left corner leans a fifth of its
+  width away from the view (`ssfwdvector`). With the time pinned, the original's
+  sprite update runs only when the time changes; the capture holds the game's time
+  before the grass first shows, so the update ran once, while the view vector was
+  still zero, and never again. The reference patch now runs it every frame while
+  `cg_swjkjaTime` is set (a debugging build logged forward (-1, 0, 0) and origin
+  (-900, -4300, 90), the view's), and dpred_troopers was captured again (0.36
+  from the old capture, the near grass leaning).
+- **The quad's split.** The lean makes the quad not flat, and `GL_QUADS` leaves
+  the split to the driver: the reference GPU's splits along the top right to
+  bottom left diagonal. Split along the other one, the near grass moves visibly.
+
+Against the new capture (main 0.86):
+
+| dpred_troopers | Mean difference | Pixels off by > 16 | Near grass (480x220) | Field (460x160) |
+|------|------|------|------|------|
+| main (no grass) | 0.86 | 1.4% | 3.84 | 2.98 |
+| no lean | 0.54 | 0.8% | 1.13 | 2.65 |
+| lean, split top left to bottom right | 1.02 | 1.8% | 4.50 | 3.51 |
+| **lean, split top right to bottom left** | **0.33** | **0.5%** | **0.13** | **2.54** |
+
+- The view's time fits: rendered at 16 times across a sway period (4189 ms), the
+  near grass is closest at 12345 ms. The grass's colour matches (mean of its
+  pixels within 1%).
+- What is left is mostly the field on the left, 400-3000 units away, where
+  sprites fade out; not explained yet.
+- The 44 other reference views render pixel for pixel as on main. All 45: median
+  0.26, 37 under 0.5 (main 36), 41 under 1.0.
+- `bench_world` (300 frames, alternating with main, three runs each, the view on an
+  idle PC): frame 6.37-6.65 ms against main's 5.75-5.88, GPU 4.79-4.91 ms against
+  4.38-4.41. The view draws 518 sprites over 71 visible grass surfaces (at most
+  10,799), scattered in about 0.09 ms on the CPU; the rest is the GPU drawing
+  large alpha-tested quads near the eye. Later runs on a busy PC were noisier
+  (main 6.5-13.2 ms), the GPU's difference 0.3-1.1 ms.
+- Left out: oriented and effect sprites (28 of the 70 retail lines), wind (no
+  weather system or wind cvars on the maps viewed), wind points, fog passes over
+  sprites in fog volumes, other fields of view (the range scale), and sprites on
+  brush entities, models and deformed surfaces.
+
 ## Brush entities' bounds spread as the collision model's, 2026-10-17
 
 yavin1_students' last difference at its open aisle door was a column 1-2 pixels
