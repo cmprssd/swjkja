@@ -187,9 +187,9 @@ difference per channel, 0-255; measured 2026-10-17):
 | Kind | Views | Mean difference |
 |------|------:|------|
 | Multiplayer world (sky, fog, fog volumes, flares, animated stages) | 19 | 0.05-0.41 |
-| Static and brush-entity models, rotating fans and drums | 16 | 0.21-7.14 |
-| Single-player NPCs (spawned, scripted, academy classes, yavin1's shuttle) | 10 | 0.13-1.02 |
-| **All** | **45** | **median 0.35; 32 under 0.5, 38 under 1.0** |
+| Static and brush-entity models, rotating fans and drums | 16 | 0.16-7.03 |
+| Single-player NPCs (spawned, scripted, academy classes, yavin1's shuttle) | 10 | 0.10-0.85 |
+| **All** | **45** | **median 0.26; 36 under 0.5, 41 under 1.0** |
 
 Two more model views (hoth2_fog, vjun1_hall) are not rendered: their maps lose the
 Vulkan device on the Windows GPU, on main too.
@@ -199,12 +199,12 @@ xychart-beta
     title "Views by mean difference (45 views)"
     x-axis ["< 0.25", "0.25-0.5", "0.5-1", "1-2", "> 2"]
     y-axis "views" 0 --> 20
-    bar [18, 14, 6, 3, 4]
+    bar [21, 15, 5, 0, 4]
 ```
 
 The four views above 2 are explained and are not renderer errors: dpred_racks
-(7.14) and dpred_guns (6.72) show world flares the original doesn't draw, and
-weapons the original turns slightly at random; danger_rock (5.52) is two distant
+(7.03) and dpred_guns (6.44) show world flares the original doesn't draw, and
+weapons the original turns slightly at random; danger_rock (5.33) is two distant
 peaks; ffa5_pipes (3.87) has the original's first-person lightsaber, which its
 `cg_drawGun 0` doesn't hide.
 

@@ -5,14 +5,17 @@
 
 use swjkja_bsp::{Bsp, GridPoint, MAX_LIGHTMAPS};
 
+use crate::static_model::Rules;
 use crate::style::MAX_LIGHT_STYLES;
 use crate::{Vec3, color_shift};
 
 /// A grid sample's style slot that is unused (`LS_LSNONE`); in the first slot, the
 /// sample is inside a wall.
 const STYLE_NONE: u8 = 0xff;
-/// `r_ambientScale` and `r_directedScale`, the original's defaults.
-const AMBIENT_SCALE: f32 = 0.6;
+/// `r_ambientScale`'s default in multiplayer's renderer and in single player's
+/// (`tr_init.cpp`), and `r_directedScale`'s in both.
+const AMBIENT_SCALE_MP: f32 = 0.6;
+const AMBIENT_SCALE_SP: f32 = 0.5;
 const DIRECTED_SCALE: f32 = 1.0;
 /// `tr.identityLight * 150` when there is no grid, `tr.identityLightByte` the most
 /// ambient light, and the minimum ambient every entity gets (`* 32`), or one drawn
@@ -44,6 +47,8 @@ pub struct LightGrid {
     points: Vec<GridPoint>,
     /// Per cell, its point. Empty when the map has no usable grid.
     array: Vec<u16>,
+    /// `r_ambientScale`.
+    ambient_scale: f32,
 }
 
 fn atof3(s: &str) -> Option<Vec3> {
@@ -108,7 +113,18 @@ impl LightGrid {
             bounds,
             points,
             array,
+            ambient_scale: AMBIENT_SCALE_MP,
         }
+    }
+
+    /// The grid as the executable that plays by `rules` lights with it: single
+    /// player's renderer scales the ambient light by 0.5, multiplayer's by 0.6.
+    pub fn with_rules(mut self, rules: Rules) -> Self {
+        self.ambient_scale = match rules {
+            Rules::Multiplayer { .. } => AMBIENT_SCALE_MP,
+            Rules::SinglePlayer { .. } => AMBIENT_SCALE_SP,
+        };
+        self
     }
 
     /// Whether the map has a usable grid.
@@ -182,7 +198,7 @@ impl LightGrid {
             directed = directed.map(|x| x * scale);
         }
         EntityLight {
-            ambient: ambient.map(|x| x * AMBIENT_SCALE),
+            ambient: ambient.map(|x| x * self.ambient_scale),
             directed: directed.map(|x| x * DIRECTED_SCALE),
             dir: normalize(direction),
         }

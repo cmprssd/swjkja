@@ -1591,7 +1591,7 @@ impl WorldRenderer {
             models,
             first_model_surface,
             first_bone,
-            light_grid: swjkja_world::light_grid::LightGrid::load(bsp, 0),
+            light_grid: swjkja_world::light_grid::LightGrid::load(bsp, 0).with_rules(rules),
             fog_volumes,
             shadows,
             surface_gate,

@@ -381,6 +381,52 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Single-player models lit with single player's ambient scale, 2026-10-17
+
+Every model in a single-player view stood a little brighter than the original's:
+dpred_canopy's trees by about 8% all over, bounty_bomb's weapon caches by 12%
+(ours/original 0.877 in every brightness band, so a scale, not an offset). The
+caches' light grid (sampled independently in Python: styles 0 and 44 lit, 32
+switched off) is almost all ambient, and the light grid's ambient is scaled by
+`r_ambientScale`, whose default differs between the two executables: 0.6 in
+multiplayer's renderer (`codemp/rd-vanilla/tr_init.cpp`), 0.5 in single player's
+(`code/rd-vanilla/tr_init.cpp`). Everything else in `R_SetupEntityLighting` and
+`RB_CalcDiffuseColor` is the same in both. This renderer used 0.6 everywhere; the
+light grid now takes the map's rules (`LightGrid::with_rules`).
+
+| View | Mean difference (main) | Pixels off by > 16 (main) |
+|------|------|------|
+| dpred_canopy | 0.16 (1.34) | 0.0% (0.0%) |
+| bounty_bomb | 0.27 (1.17) | 0.0% (0.5%) |
+| yavin1_students | 0.41 (0.94) | 0.2% (0.3%) |
+| dpred_troopers | 0.85 (1.02) | 1.4% (1.4%) |
+| vjun2_imp_stance | 0.50 (0.82) | 0.6% (0.7%) |
+| vjun2_officer | 0.17 (0.49) | 0.1% (0.1%) |
+| rancor_gates | 0.69 (0.94) | 1.1% (1.1%) |
+| rancor_plate | 0.30 (0.47) | 0.3% (0.3%) |
+| rancor_drum | 0.29 (0.44) | 0.0% (0.0%) |
+| academy1_class | 0.32 (0.36) | 0.0% (0.0%) |
+| academy2_class | 0.35 (0.45) | 0.0% (0.0%) |
+| academy4_class | 0.48 (0.56) | 0.2% (0.2%) |
+| academy6_class | 0.85 (0.90) | 0.8% (0.8%) |
+| danger_rock | 5.33 (5.52) | 3.7% (3.7%) |
+| dpred_guns | 6.44 (6.72) | 12.2% (12.3%) |
+| dpred_racks | 7.03 (7.14) | 12.3% (12.3%) |
+| kor2_troopers | 0.36 (0.38) | 0.2% (0.2%) |
+| stamp_barrels | 0.10 (0.13) | 0.0% (0.0%) |
+| stamp_crates | 0.23 (0.25) | 0.0% (0.0%) |
+| hevil_wall_fan | 0.26 (0.27) | 0.0% (0.0%) |
+| hevil_wall_fan5 | 0.26 (0.28) | 0.0% (0.0%) |
+
+- Every single-player view with a model in it moved closer; none moved away. The
+  24 others (the 22 multiplayer views, and hevil_fan_low and hevil_fan_west, whose
+  fans are brush entities lit by lightmaps) render pixel for pixel as on main.
+- All 45 views: median 0.26 (main 0.35), 41 under 1.0 (main 38).
+- dpred_troopers' 0.85 is now nearly all grass, the foreground's and the field's on
+  the left, which the original draws (and sways) and this renderer does not.
+- `bench_world` was not run: the change is one constant per map, read once per
+  entity per frame as before.
+
 ## Single-player NPC views captured with scripts running, 2026-10-17
 
 The four views of NPCs that spawn with their maps (dpred_troopers, vjun2_officer,
