@@ -120,7 +120,9 @@ fn spawn(models: &[Model], e: &Entity, rules: Rules) -> Option<BrushEntity> {
     let model = atoi(e.get("model")?.strip_prefix('*')?);
     let model = usize::try_from(model).ok().filter(|&m| m >= 1)?;
     let m = models.get(model)?;
-    let (mins, maxs) = (m.mins, m.maxs);
+    // CMod_LoadSubmodels spreads the model's bounds by a unit each way; the game sees
+    // those (SetBrushModel).
+    let (mins, maxs) = (m.mins.map(|x| x - 1.0), m.maxs.map(|x| x + 1.0));
     let class = e.get("classname").unwrap_or("").to_ascii_lowercase();
     let spawnflags = e.get("spawnflags").map_or(0, atoi);
     let mut origin = e.get("origin").map_or([0.0; 3], vector_prefix);

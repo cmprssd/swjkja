@@ -381,6 +381,40 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Brush entities' bounds spread as the collision model's, 2026-10-17
+
+yavin1_students' last difference at its open aisle door was a column 1-2 pixels
+wide down the doorway's right edge: the open door's dark leading face here, the
+wall's grey in the original. With the open door moved for a test 1 unit further
+along its way, the column matched the original's (49 of 255 against 49), and 1 unit
+back made it wider: the original's door travels further. `CMod_LoadSubmodels`
+spreads every inline model's bounds by a unit each way ("spread the mins / maxs by
+a pixel", in both executables), and `SetBrushModel` gives the game those, so a
+door's size along its way is 2 units more than the BSP's bounds say, and it opens 2
+units further. This renderer read the BSP's bounds; it now spreads them, which also
+moves what reads them: a `func_plat` without a "height" starts 2 units lower, the
+boxes entities link (and the server sends them by) are a unit larger each way, and
+so are the door triggers spawned around them.
+
+| View | Mean difference (main) | Pixels off by > 16 (main) |
+|------|------|------|
+| yavin1_students | 0.40 (0.41) | 0.2% (0.2%) |
+| ffa3_spawn3 | 0.34 (0.35) | 0.1% (0.1%) |
+
+- At yavin1's doorway the 163 pixels that changed now differ by 0.1 on average
+  (37.4 before).
+- ffa3_spawn3's lift (`func_door`s `*5`-`*8`, start open, moving down with lip
+  -264) now stands 2 units lower; the changed pixels differ by 12.1 instead of
+  16.1. The original's stands lower still; not explained yet.
+- The 43 other reference views render pixel for pixel as on main.
+- `bench_world` was not run: the change moves entities by 2 units and adds nothing
+  to draw.
+
+What is left of yavin1_students is the NPCs' outlines. dpred_troopers' (0.85) is its
+grass: `textures/imperial/dp_ground`'s `surfaceSprites` stage, which the original
+scatters over the ground and sways in the wind (`tr_surfacesprites.cpp`); this
+renderer parses those stages and draws none of them yet.
+
 ## Single-player models lit with single player's ambient scale, 2026-10-17
 
 Every model in a single-player view stood a little brighter than the original's:
@@ -470,7 +504,8 @@ reference. Doors NPCs stand in now open as the map begins:
 
 - What is left at the door is a column 1-2 pixels wide down the doorway's right
   edge, where this renderer draws the open door's side face dark (about 11 of 255)
-  and the original shows the wall's grey (about 45). Not explained yet.
+  and the original shows the wall's grey (about 45). (Explained and fixed later the
+  same day: the collision model's spread bounds, above.)
 - Across the 34 single-player maps, 280 of the 458 doors open by touch (counted
   independently from the entity text with Python), and NPCs stand in four of them
   as the maps begin: yavin1's `*3`, t1_danger's `*67`, t1_sour's `*74` and

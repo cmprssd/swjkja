@@ -15,7 +15,8 @@ fn entity(pairs: &[(&str, &str)]) -> Entity {
     }
 }
 
-/// The world, then model 1: a 64 x 32 x 128 box around the origin.
+/// The world, then model 1: a 64 x 32 x 128 box around the origin, which the
+/// collision model spreads a unit each way (66 x 34 x 130).
 fn models() -> Vec<Model> {
     let model = |mins, maxs| Model {
         mins,
@@ -55,21 +56,22 @@ fn a_closed_door_stands_at_its_origin_in_its_linked_box() {
         e[0].axes,
         [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
     );
-    assert_eq!(e[0].entity_box, [[67.0, -17.0, -1.0], [133.0, 17.0, 129.0]]);
+    // The spread bounds, an epsilon larger (SV_LinkEntity).
+    assert_eq!(e[0].entity_box, [[66.0, -18.0, -2.0], [134.0, 18.0, 130.0]]);
     assert!(!e[0].broadcast && !e[0].shader_anim);
 }
 
 #[test]
 fn a_door_that_starts_open_stands_moved_by_its_size_less_the_lip() {
-    // Along +y (yaw 90): 32 units of size, less the default lip of 8.
+    // Along +y (yaw 90): 34 units of size, less the default lip of 8.
     let e = spawn(&[
         ("classname", "func_door"),
         ("model", "*1"),
         ("angle", "90"),
         ("spawnflags", "1"),
     ]);
-    assert!(close(e[0].origin, [0.0, 24.0, 0.0]));
-    // Straight up (yaw -1), with a lip of 28: 128 - 28.
+    assert!(close(e[0].origin, [0.0, 26.0, 0.0]));
+    // Straight up (yaw -1), with a lip of 28: 130 - 28.
     let e = spawn(&[
         ("classname", "func_door"),
         ("model", "*1"),
@@ -77,7 +79,7 @@ fn a_door_that_starts_open_stands_moved_by_its_size_less_the_lip() {
         ("lip", "28"),
         ("spawnflags", "1"),
     ]);
-    assert_eq!(e[0].origin, [0.0, 0.0, 100.0]);
+    assert_eq!(e[0].origin, [0.0, 0.0, 102.0]);
 }
 
 #[test]
@@ -97,7 +99,7 @@ fn a_plat_starts_at_the_bottom() {
         ("model", "*1"),
         ("origin", "0 0 500"),
     ]);
-    assert_eq!(e[0].origin, [0.0, 0.0, 500.0 - 120.0]);
+    assert_eq!(e[0].origin, [0.0, 0.0, 500.0 - 122.0]);
     let e = spawn(&[
         ("classname", "func_plat"),
         ("model", "*1"),
@@ -119,8 +121,8 @@ fn a_turned_func_static_is_drawn_turned_and_links_a_cube_of_its_radius() {
     assert!(close(e[0].axes[0], [0.0, 1.0, 0.0]));
     assert!(close(e[0].axes[1], [-1.0, 0.0, 0.0]));
     assert!(close(e[0].place([1.0, 0.0, 0.0]), [10.0, 21.0, 30.0]));
-    // RadiusFromBounds: the farthest corner, (32, 16, 128).
-    let r = (32.0f32 * 32.0 + 16.0 * 16.0 + 128.0 * 128.0).sqrt() + 1.0;
+    // RadiusFromBounds: the farthest corner of the spread bounds, (33, 17, 129).
+    let r = (33.0f32 * 33.0 + 17.0 * 17.0 + 129.0 * 129.0).sqrt() + 1.0;
     assert!(close(e[0].entity_box[0], [10.0 - r, 20.0 - r, 30.0 - r]));
     assert!(e[0].broadcast);
 }
@@ -305,7 +307,7 @@ fn a_rotating_one_that_starts_on_turns_by_its_speed_from_zero() {
     assert!(close(e[0].angles_at(1500).unwrap(), [0.0, 450.0, 0.0]));
     assert_eq!(e[0].origin, [10.0, 20.0, 30.0]);
     // Turning, it links a cube of its radius.
-    let r = (32.0f32 * 32.0 + 16.0 * 16.0 + 128.0 * 128.0).sqrt() + 1.0;
+    let r = (33.0f32 * 33.0 + 17.0 * 17.0 + 129.0 * 129.0).sqrt() + 1.0;
     assert!(close(e[0].entity_box[1], [10.0 + r, 20.0 + r, 30.0 + r]));
     // Roll (4) and pitch (8); speed 0 is 100.
     assert_eq!(rotating("5", "0")[0].spin, Some([0.0, 0.0, 100.0]));
@@ -313,7 +315,7 @@ fn a_rotating_one_that_starts_on_turns_by_its_speed_from_zero() {
     // Single player: not started on, it stands still at zero.
     let e = rotating("0", "300");
     assert_eq!((e[0].spin, e[0].angles_at(1500)), (None, None));
-    assert_eq!(e[0].entity_box[1], [43.0, 37.0, 159.0]);
+    assert_eq!(e[0].entity_box[1], [44.0, 38.0, 160.0]);
 }
 
 #[test]
@@ -354,21 +356,21 @@ fn spawn_doors(doors: &[Vec<(String, String)>]) -> Vec<BrushEntity> {
 
 #[test]
 fn a_door_opens_by_its_size_less_the_lip_at_its_speed() {
-    // Along +x: 64 units of size less the lip of 8, at the default 400 a second.
+    // Along +x: 66 units of size less the lip of 8, at the default 400 a second.
     let e = spawn_doors(&[door(&[])]);
     let d = e[0].door.as_ref().unwrap();
-    assert_eq!(d.pos2, [56.0, 0.0, 0.0]);
+    assert_eq!(d.pos2, [58.0, 0.0, 0.0]);
     assert_eq!(
         (d.duration, d.linear, d.delay, d.touched),
-        (140, false, 0, true)
+        (145, false, 0, true)
     );
-    // 56 units at 30 a second: 1866.67 ms, whole ms.
+    // 58 units at 30 a second: 1933.33 ms, whole ms.
     let e = spawn_doors(&[door(&[("speed", "30"), ("linear", "1"), ("delay", "2")])]);
     let d = e[0].door.as_ref().unwrap();
-    assert_eq!((d.duration, d.linear, d.delay), (1866, true, 2000));
+    assert_eq!((d.duration, d.linear, d.delay), (1933, true, 2000));
     // One that starts open opens back to where it was placed.
     let e = spawn_doors(&[door(&[("spawnflags", "1")])]);
-    assert_eq!(e[0].origin, [56.0, 0.0, 0.0]);
+    assert_eq!(e[0].origin, [58.0, 0.0, 0.0]);
     assert_eq!(e[0].door.as_ref().unwrap().pos2, [0.0; 3]);
     // Multiplayer doors are not modelled.
     let entity = Entity { pairs: door(&[]) };
@@ -396,30 +398,28 @@ fn only_doors_without_a_name_health_or_blocking_flag_open_by_touch() {
 
 #[test]
 fn a_body_in_its_trigger_opens_a_door_from_its_first_think() {
-    // The model's box is 64 x 32 x 128 (linked an epsilon larger); its thinnest
-    // axis, y, reaches 120 further: the trigger is y -137..137.
+    // The model's spread box is 66 x 34 x 130 (linked an epsilon larger); its
+    // thinnest axis, y, reaches 120 further: the trigger is y -138..138.
     let mut e = spawn_doors(&[door(&[])]);
-    touch_doors(&mut e, &[body([0.0, 154.0, 30.0])], 1550);
+    touch_doors(&mut e, &[body([0.0, 155.0, 30.0])], 1550);
     assert_eq!(e[0].slide, None);
     assert_eq!(e[0].origin_at(5000), [0.0; 3]);
     // A body's edge on the trigger's touches it.
-    touch_doors(&mut e, &[body([0.0, 153.0, 30.0])], 1550);
+    touch_doors(&mut e, &[body([0.0, 154.0, 30.0])], 1550);
     let s = e[0].slide.as_ref().unwrap();
     assert_eq!(
         (s.start, s.duration, s.from, s.to),
-        (1600, 140, [0.0; 3], [56.0, 0.0, 0.0])
+        (1600, 145, [0.0; 3], [58.0, 0.0, 0.0])
     );
     // Moving, it is linked over its whole way.
-    assert_eq!(e[0].entity_box, [[-33.0, -17.0, -1.0], [89.0, 17.0, 129.0]]);
+    assert_eq!(e[0].entity_box, [[-34.0, -18.0, -2.0], [92.0, 18.0, 130.0]]);
     // It slows to a stop: sin(90 degrees x elapsed / duration) of the way.
     assert_eq!(e[0].origin_at(1600), [0.0; 3]);
-    let half = e[0].origin_at(1670)[0];
-    assert!(
-        (half - 56.0 * std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-3,
-        "{half}"
-    );
-    assert_eq!(e[0].origin_at(1740), [56.0, 0.0, 0.0]);
-    assert_eq!(e[0].origin_at(12345), [56.0, 0.0, 0.0]);
+    let at_58 = e[0].origin_at(1658)[0];
+    let expected = 58.0 * (std::f32::consts::FRAC_PI_2 * 58.0 / 145.0).sin();
+    assert!((at_58 - expected).abs() < 1e-3, "{at_58}");
+    assert_eq!(e[0].origin_at(1745), [58.0, 0.0, 0.0]);
+    assert_eq!(e[0].origin_at(12345), [58.0, 0.0, 0.0]);
     // "linear": at one speed, after its delay.
     let mut e = spawn_doors(&[door(&[("linear", "1"), ("delay", "1")])]);
     touch_doors(&mut e, &[body([0.0; 3])], 1550);
@@ -442,8 +442,8 @@ fn a_team_opens_together_by_its_first_doors_trigger() {
     let mut e = spawn_doors(&pairs);
     touch_doors(&mut e, &[body([0.0, 100.0, 30.0])], 1550);
     assert!(e[0].slide.is_some() && e[1].slide.is_some());
-    assert_eq!(e[1].slide.as_ref().unwrap().to, [56.0, 200.0, 0.0]);
-    // Across the team's box, the thinnest axis is x (66 < 234): it reaches 120
+    assert_eq!(e[1].slide.as_ref().unwrap().to, [58.0, 200.0, 0.0]);
+    // Across the team's box, the thinnest axis is x (68 < 236): it reaches 120
     // further along x, not y.
     let mut e = spawn_doors(&pairs);
     touch_doors(&mut e, &[body([150.0, 100.0, 30.0])], 1550);
