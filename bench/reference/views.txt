@@ -3,6 +3,9 @@
 # units above spawn points; fog views come from the fog_views example (swjkja-bsp). bench/capture-reference.sh renders each with the reference
 # engine; `cargo run --release -p swjkja-render --example render_world` renders the
 # same views with the new one, and compare.py compares them.
+# The views down to ffa2_fog_above were captured world only (r_drawentities 0);
+# render_world draws entities there too, so ffa3_spawn3 shows a lift (*4) that the
+# reference leaves out.
 mp/ffa3   ffa3_spawn1   -1208 -912 228   0 360 0   12345
 mp/ffa3   ffa3_spawn2   728 1424 -20     0 270 0   12345
 mp/ffa3   ffa3_spawn3   2432 -744 -4     0 90 0   12345
