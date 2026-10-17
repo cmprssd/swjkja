@@ -1765,9 +1765,12 @@ impl WorldRenderer {
                 continue;
             };
             let m = &self.models.instances[n];
-            let light = self
-                .light_grid
-                .entity_light(m.light_origin, &styles, [0.0; 3]);
+            let light = self.light_grid.entity_light(
+                m.light_origin,
+                &styles,
+                [0.0; 3],
+                self.models.more_light(n, ms),
+            );
             let v4 = |v: [f32; 3]| [v[0], v[1], v[2], 0.0];
             let entity = GpuEntity {
                 ambient: v4(light.ambient),

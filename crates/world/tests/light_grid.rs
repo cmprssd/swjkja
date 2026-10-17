@@ -73,7 +73,7 @@ fn styles_colour_the_light() {
 #[test]
 fn entities_get_a_minimum_ambient_clamped_to_a_byte() {
     let g = grid(&[point(0, 0), point(250, 80)]);
-    let dark = g.entity_light([0.0; 3], &WHITE, [1.0, 0.0, 0.0]);
+    let dark = g.entity_light([0.0; 3], &WHITE, [1.0, 0.0, 0.0], false);
     // No directed light: no direction either.
     assert_eq!(
         dark,
@@ -83,10 +83,15 @@ fn entities_get_a_minimum_ambient_clamped_to_a_byte() {
             dir: [0.0; 3],
         }
     );
-    let bright = g.entity_light([64.0, 0.0, 0.0], &WHITE, [1.0, 0.0, 0.0]);
+    let bright = g.entity_light([64.0, 0.0, 0.0], &WHITE, [1.0, 0.0, 0.0], false);
     // 250 * 0.6 + 32 = 182; directed is not clamped.
     assert!(close(bright.ambient, [182.0; 3]), "{bright:?}");
     assert!(close(bright.dir, [0.0, 0.0, 1.0]), "{bright:?}");
+    // RF_MORELIGHT adds 96 instead.
+    let more = g.entity_light([64.0, 0.0, 0.0], &WHITE, [1.0, 0.0, 0.0], true);
+    assert!(close(more.ambient, [246.0; 3]), "{more:?}");
+    let dark = g.entity_light([0.0; 3], &WHITE, [1.0, 0.0, 0.0], true);
+    assert!(close(dark.ambient, [96.0; 3]), "{dark:?}");
 }
 
 #[test]
@@ -100,7 +105,7 @@ fn a_mismatched_array_drops_the_grid() {
     );
     assert!(!g.exists());
     // tr.identityLight * 150, plus 32; the sun's direction.
-    let l = g.entity_light([0.0; 3], &WHITE, [0.0, 1.0, 0.0]);
+    let l = g.entity_light([0.0; 3], &WHITE, [0.0, 1.0, 0.0], false);
     assert!(close(l.ambient, [182.0; 3]), "{l:?}");
     assert!(close(l.directed, [150.0; 3]), "{l:?}");
     assert!(close(l.dir, [0.0, 1.0, 0.0]), "{l:?}");

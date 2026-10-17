@@ -247,6 +247,28 @@ fn a_looping_script_waits_on_times_and_on_its_animations() {
 }
 
 #[test]
+fn a_script_draws_its_npc_with_more_light() {
+    // Set in the first pass, set again (no change), then cleared by anything but
+    // "true" after a 1000 ms wait.
+    let script = vec![
+        set("SET_MORELIGHT", "true"),
+        set("SET_MORELIGHT", "TRUE"),
+        command(id::WAIT, vec![float(1000.0)]),
+        set("SET_MORELIGHT", "false"),
+    ];
+    let t = timeline(&stance("BOTH_STAND1", "BOTH_STAND1"), Some(&script), &holds);
+    assert_eq!(t.more_light, [(1550, true), (2550, false)]);
+    assert!(!t.more_light_at(1549));
+    assert!(t.more_light_at(1550));
+    assert!(t.more_light_at(2549));
+    assert!(!t.more_light_at(2550));
+    // Without a script, never.
+    let t = timeline(&stance("BOTH_STAND1", "BOTH_STAND1"), None, &holds);
+    assert!(t.more_light.is_empty());
+    assert!(!t.more_light_at(12345));
+}
+
+#[test]
 fn a_script_sets_and_clears_what_its_npc_looks_at() {
     // The look target is set in the first pass, set again (no change), then
     // cleared after a 1000 ms wait and set anew after another.

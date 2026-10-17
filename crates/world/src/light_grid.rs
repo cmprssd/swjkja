@@ -15,11 +15,12 @@ const STYLE_NONE: u8 = 0xff;
 const AMBIENT_SCALE: f32 = 0.6;
 const DIRECTED_SCALE: f32 = 1.0;
 /// `tr.identityLight * 150` when there is no grid, `tr.identityLightByte` the most
-/// ambient light, and the minimum ambient every entity gets (`* 32`); identityLight
-/// is 1 without overbright bits.
+/// ambient light, and the minimum ambient every entity gets (`* 32`), or one drawn
+/// with `RF_MORELIGHT` (`* 96`); identityLight is 1 without overbright bits.
 const NO_GRID_LIGHT: f32 = 150.0;
 const IDENTITY_LIGHT_BYTE: f32 = 255.0;
 const MIN_AMBIENT: f32 = 32.0;
+const MORE_LIGHT_AMBIENT: f32 = 96.0;
 
 /// `tr.sinTable`: 1024 samples of one sine period.
 fn sin_table(i: usize) -> f32 {
@@ -188,13 +189,15 @@ impl LightGrid {
     }
 
     /// `R_SetupEntityLighting` for an entity lit at `point`: the grid's light (or a
-    /// flat 150 without a grid), plus the minimum ambient, clamped. `sun_direction` is
-    /// the light's direction without a grid (`tr.sunDirection`).
+    /// flat 150 without a grid), plus the minimum ambient (the larger one with
+    /// `more_light`, `RF_MORELIGHT`), clamped. `sun_direction` is the light's
+    /// direction without a grid (`tr.sunDirection`).
     pub fn entity_light(
         &self,
         point: Vec3,
         styles: &[[u8; 4]; MAX_LIGHT_STYLES],
         sun_direction: Vec3,
+        more_light: bool,
     ) -> EntityLight {
         let mut light = if self.exists() {
             self.sample(point, styles)
@@ -205,9 +208,12 @@ impl LightGrid {
                 dir: sun_direction,
             }
         };
-        light.ambient = light
-            .ambient
-            .map(|a| (a + MIN_AMBIENT).min(IDENTITY_LIGHT_BYTE));
+        let min = if more_light {
+            MORE_LIGHT_AMBIENT
+        } else {
+            MIN_AMBIENT
+        };
+        light.ambient = light.ambient.map(|a| (a + min).min(IDENTITY_LIGHT_BYTE));
         // The direction is rebuilt as dir * |directed| and normalized again: without
         // directed light it becomes zero.
         let d = length(light.directed);

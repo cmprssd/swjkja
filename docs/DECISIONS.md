@@ -851,3 +851,11 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   map loads get it too), `Random` returns its range's low end, as the new renderer
   takes it. Two captures of academy2, 4 and 6 now log the same animations; academy2
   1.61 -> 1.27, academy4 2.23 -> 1.40, academy6 2.45 -> 1.98.
+
+## 2026-10-17: Scripts' SET_MORELIGHT lights NPCs as the original does (decided by Claude, pending review)
+
+- **Found**: the academies' students were drawn darker than the original's because
+  their spawnscripts set `SET_MORELIGHT`, which this renderer ignored. Modelled as
+  the original has it: the flag's changes are kept on the NPC's timeline (on the
+  client's clock, as its look target's), and an NPC drawn while it is set gets 96
+  of minimum ambient light instead of 32 (`RF_MORELIGHT`), clamped as before.
