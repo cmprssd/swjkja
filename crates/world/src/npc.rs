@@ -425,9 +425,10 @@ fn block<'a>(text: &'a [u8], name: &str) -> Option<Cursor<'a>> {
 
 /// `DEFAULT_MINS_2`: an NPC's box always starts 24 units below its origin.
 const DEFAULT_MINS_2: f32 = -24.0;
-/// `playerMins` and `playerMaxs`, the box an NPC has unless its block sets one.
-const PLAYER_MINS: Vec3 = [-15.0, -15.0, DEFAULT_MINS_2];
-const PLAYER_MAXS: Vec3 = [15.0, 15.0, 40.0];
+/// `playerMins` and `playerMaxs`, the box an NPC has unless its block sets one
+/// (single player's `DEFAULT_MINS_0` is -16; multiplayer's -15).
+const PLAYER_MINS: Vec3 = [-16.0, -16.0, DEFAULT_MINS_2];
+const PLAYER_MAXS: Vec3 = [16.0, 16.0, 40.0];
 /// The model and skin of the player's character, which an NPC of type "Player"
 /// wears (`G_InitPlayerFromCvars`, with `g_char_model` and the `g_char_skin_*` at
 /// their defaults).
