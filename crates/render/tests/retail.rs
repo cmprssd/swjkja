@@ -157,3 +157,65 @@ fn flares_behind_walls_and_outside_the_pvs_are_not_drawn() {
         );
     }
 }
+
+/// Single player's environment mapping (code/rd-vanilla RB_CalcEnvironmentTexCoords)
+/// is not multiplayer's reflection: vjun1's glass floor tiles
+/// (textures/common/glass_security_tris, an added tcGen environment stage) under the
+/// view of bench/reference/model-views.txt's vjun1_hall.
+#[test]
+fn single_player_environment_maps_as_the_original() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let gpu = Gpu::new_headless().unwrap();
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let shaders = swjkja_shader::ShaderText::load(&vfs).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/vjun1.bsp").unwrap()).unwrap();
+    let world = swjkja_world::World::load(&bsp, &Default::default());
+    let mut textures = TextureSet::new(&gpu).unwrap();
+    let time = 12.345;
+    let mut renderer = WorldRenderer::new(
+        &gpu,
+        &mut textures,
+        &vfs,
+        &shaders,
+        &bsp,
+        &world,
+        "maps/vjun1.bsp",
+        time,
+    )
+    .unwrap();
+    let (width, height) = (1280, 720);
+    let target = Target::new(&gpu, width, height).unwrap();
+    let depth_slot = textures.add_view(target.depth_copy.view);
+    let camera = Camera::new([-7052.0, 468.0, 824.0], [10.0, 0.0, 0.0], width, height);
+    target
+        .render(&gpu, renderer.clear_color(), |frame| {
+            renderer
+                .draw(frame, &textures, &camera, time, depth_slot)
+                .unwrap()
+        })
+        .unwrap();
+    let rgba = target.read_rgba(&gpu).unwrap();
+    // A 9x9 box's mean red around four places on the tiles. Multiplayer's
+    // reflection gives 98, 38, 86 and 53.
+    let red = |x: usize, y: usize| {
+        let mut sum = 0u32;
+        for py in y - 4..=y + 4 {
+            for px in x - 4..=x + 4 {
+                sum += u32::from(rgba[(py * width as usize + px) * 4]);
+            }
+        }
+        sum / 81
+    };
+    let boxes = [(250, 400), (400, 400), (1000, 410), (1200, 380)];
+    let ours = boxes.map(|(x, y)| red(x, y));
+    let reference = [52, 54, 69, 78];
+    for ((&got, want), place) in ours.iter().zip(reference).zip(boxes) {
+        assert!(
+            got.abs_diff(want) <= 3,
+            "box at {place:?}: {got}, the reference {want} (all: {ours:?})"
+        );
+    }
+}

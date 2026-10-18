@@ -344,6 +344,9 @@ pub struct WorldRenderer {
     /// The field of view surface sprites were first drawn with
     /// ([`sprites::range_scale`]).
     sprite_fov: Option<f32>,
+    /// Whether the map is drawn by the single-player renderer, whose environment
+    /// mapping differs from multiplayer's.
+    single_player: bool,
 }
 
 /// One frame's data: its uniforms, deformed geometry and visible index ranges, and
@@ -1721,6 +1724,10 @@ impl WorldRenderer {
             surface_gate,
             gate_count: gates,
             sprite_fov: None,
+            single_player: matches!(
+                rules,
+                swjkja_world::static_model::Rules::SinglePlayer { .. }
+            ),
         })
     }
 
@@ -1750,7 +1757,12 @@ impl WorldRenderer {
             // tr.identityLight is 1 without overbright bits (the original's default).
             params: [time, 1.0, self.fog.map_or(0.0, |f| f.1), camera.z_near],
             fog_color: self.fog.map_or([0.0; 4], |f| [f.0[0], f.0[1], f.0[2], 1.0]),
-            misc: [depth_slot, camera.width, camera.height, 0],
+            misc: [
+                depth_slot,
+                camera.width,
+                camera.height,
+                u32::from(self.single_player),
+            ],
             view_forward: {
                 let f = camera.axes()[0];
                 [f[0], f[1], f[2], 0.0]
