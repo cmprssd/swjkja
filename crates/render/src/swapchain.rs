@@ -7,7 +7,7 @@ use std::sync::Arc;
 use ash::vk;
 
 use crate::resource::subresource;
-use crate::{Error, Gpu, Result};
+use crate::{Error, Gpu, Result, Target};
 
 pub struct Swapchain {
     gpu: Arc<Gpu>,
@@ -32,18 +32,24 @@ pub struct Swapchain {
     vsync: bool,
 }
 
-/// The image format: 8-bit UNORM, not sRGB. The original writes its colours to the
+/// The image format: UNORM, not sRGB. The original writes its colours to the
 /// framebuffer as they are (no sRGB conversion), and so does the renderer; an sRGB
-/// swapchain would brighten every pixel. `None` if the surface offers no such format.
+/// swapchain would brighten every pixel. The target's 10-bit format first (frames
+/// can then be drawn straight into the images), else 8-bit, which the target is
+/// copied to. `None` if the surface offers no such format.
 pub fn choose_format(available: &[vk::SurfaceFormatKHR]) -> Option<vk::SurfaceFormatKHR> {
-    [vk::Format::B8G8R8A8_UNORM, vk::Format::R8G8B8A8_UNORM]
-        .into_iter()
-        .find_map(|f| {
-            available
-                .iter()
-                .copied()
-                .find(|a| a.format == f && a.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR)
-        })
+    [
+        Target::COLOR_FORMAT,
+        vk::Format::B8G8R8A8_UNORM,
+        vk::Format::R8G8B8A8_UNORM,
+    ]
+    .into_iter()
+    .find_map(|f| {
+        available
+            .iter()
+            .copied()
+            .find(|a| a.format == f && a.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR)
+    })
 }
 
 /// With `vsync`, FIFO (always available). Without, the fastest the surface has:
@@ -221,6 +227,11 @@ mod tests {
             Some(fmt(vk::Format::R8G8B8A8_UNORM))
         );
         assert_eq!(choose_format(&[fmt(vk::Format::B8G8R8A8_SRGB)]), None);
+        let ten = fmt(vk::Format::A2B10G10R10_UNORM_PACK32);
+        assert_eq!(
+            choose_format(&[fmt(vk::Format::B8G8R8A8_UNORM), ten]),
+            Some(ten)
+        );
         // HDR colour spaces are not ours to draw into.
         let hdr = vk::SurfaceFormatKHR {
             format: vk::Format::B8G8R8A8_UNORM,

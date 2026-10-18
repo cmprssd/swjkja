@@ -239,7 +239,7 @@ pub fn transition(
     };
 }
 
-/// An offscreen colour (8-bit BGRA, the usual swapchain format) and depth target
+/// An offscreen colour (10-bit RGB, [`Target::COLOR_FORMAT`]) and depth target
 /// that can be read back to the CPU, plus a sampleable copy of the depth (for
 /// flares' occlusion test).
 pub struct Target {
@@ -363,7 +363,12 @@ impl Frame<'_> {
 }
 
 impl Target {
-    pub const COLOR_FORMAT: vk::Format = vk::Format::B8G8R8A8_UNORM;
+    /// 10 bits a channel (and 2 of alpha), as the original's framebuffer on the
+    /// reference PC: its Intel OpenGL driver reports 8-bit colour but blends in 10,
+    /// so each blend rounds to a 1023rd and its screenshots round that to 8 bits.
+    /// With 8-bit blending, additive layers and fog round differently (half the
+    /// pixels a level off on the academy classes' light shafts).
+    pub const COLOR_FORMAT: vk::Format = vk::Format::A2B10G10R10_UNORM_PACK32;
     pub const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
 
     pub fn new(gpu: &Arc<Gpu>, width: u32, height: u32) -> Result<Self> {
@@ -603,7 +608,8 @@ impl Target {
     }
 
     /// Copies the colour image (after [`Target::render`]) to the CPU: RGBA8, top row
-    /// first.
+    /// first, each 10-bit channel rounded to 8 bits (as `glReadPixels` does) and
+    /// alpha opaque.
     pub fn read_rgba(&self, gpu: &Arc<Gpu>) -> Result<Vec<u8>> {
         let extent = self.color.extent;
         let size = u64::from(extent.width) * u64::from(extent.height) * 4;
@@ -640,7 +646,9 @@ impl Target {
         })?;
         let mut rgba = staging.mapped()?.to_vec();
         for p in rgba.as_chunks_mut::<4>().0 {
-            p.swap(0, 2);
+            let packed = u32::from_le_bytes(*p);
+            let channel = |shift: u32| (((packed >> shift) & 1023) * 255 + 511) / 1023;
+            *p = [channel(0), channel(10), channel(20), 255].map(|c| c as u8);
         }
         Ok(rgba)
     }

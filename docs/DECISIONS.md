@@ -961,3 +961,14 @@ the owner chose porting its decoder to Rust (`crates/image/src/jpeg.rs`) over
 building its C source into the engine, which would have needed a C compiler for
 Linux builds. The port covers what the retail files and common JPEGs use; the rest
 (arithmetic coding, 12-bit, 4:2:2-style sampling) fails to decode with an error.
+
+## 2026-10-18: The target blends in 10 bits, everywhere (chosen by the owner)
+
+The reference captures come from a 10:10:10:2 framebuffer (the Intel OpenGL
+driver's, though OpenJK asks for 8 bits), and rendering into one brings the 47
+views from a median of 0.14 to 0.04, most pixels exact. It costs about 0.3 ms of
+GPU a frame on the HD 630 (ffa3 path, offscreen). Asked whether to use it
+everywhere or only for captures and tests, the owner chose everywhere: one format,
+so what the views verify is what the viewer and benchmarks run. On a PC whose
+OpenGL gives the original 8 bits, its pictures differ from these by a level here
+and there.
