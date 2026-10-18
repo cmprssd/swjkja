@@ -426,6 +426,8 @@ corridor's right wall and gate, 1000-1500 units out. dpred_racks' and dpred_guns
   and a copy of the visible surfaces' flags.
 - A Vulkan validation layer would have reported the binding; the Vulkan SDK is not
   installed on this machine.
+- hoth2 and vjun1, which lost the Vulkan device on the Windows GPU, render again:
+  hoth2_fog 0.14, vjun1_hall 1.46 (3.0% of pixels off by more than 16).
 
 ## Academy students placed as STARTINSOLID leaves them, 2026-10-18
 
