@@ -63,6 +63,69 @@ impl Grid {
     pub fn vert(&self, column: usize, row: usize) -> &DrawVert {
         &self.verts[row * self.width + column]
     }
+
+    /// What drawing it at a distance needs: its size, errors and LOD volume.
+    pub fn lod(&self) -> GridLod {
+        GridLod {
+            width: self.width,
+            height: self.height,
+            width_lod_error: self.width_lod_error.clone(),
+            height_lod_error: self.height_lod_error.clone(),
+            lod_origin: self.lod_origin,
+            lod_radius: self.lod_radius,
+        }
+    }
+}
+
+/// `r_lodCurveError`'s default, the same in both games.
+pub const LOD_CURVE_ERROR: f32 = 250.0;
+
+/// A grid as `RB_SurfaceGrid` draws it: the columns and rows whose error is within
+/// what the view's distance allows, the rest skipped.
+#[derive(Debug, Clone)]
+pub struct GridLod {
+    pub width: usize,
+    pub height: usize,
+    pub width_lod_error: Vec<f32>,
+    pub height_lod_error: Vec<f32>,
+    pub lod_origin: Vec3,
+    pub lod_radius: f32,
+}
+
+impl GridLod {
+    /// `LodErrorForVolume`: the error allowed with `lod_origin` at `origin` (the
+    /// grid's entity placed) and the eye at `view_origin` looking along `forward`;
+    /// the distance is along `forward`, less the LOD radius, at least 1.
+    pub fn allowed_error(&self, origin: Vec3, view_origin: Vec3, forward: Vec3) -> f32 {
+        let d = dot(sub(origin, view_origin), forward).abs() - self.lod_radius;
+        LOD_CURVE_ERROR / d.max(1.0)
+    }
+
+    /// `RB_SurfaceGrid`'s triangles at `allowed_error` (see [`Self::allowed_error`]),
+    /// over the full grid's vertices numbered from `base`. The edges always stay.
+    pub fn indexes(&self, allowed_error: f32, base: u32, out: &mut Vec<u32>) {
+        let kept = |errors: &[f32]| -> Vec<u32> {
+            let n = errors.len();
+            (0..n)
+                .filter(|&i| i == 0 || i == n - 1 || errors[i] <= allowed_error)
+                .map(|i| i as u32)
+                .collect()
+        };
+        let columns = kept(&self.width_lod_error);
+        let w = self.width as u32;
+        let mut above: Option<u32> = None;
+        for row in kept(&self.height_lod_error) {
+            let row = base + row * w;
+            if let Some(prev) = above {
+                for pair in columns.windows(2) {
+                    let (v2, v1) = (prev + pair[0], prev + pair[1]);
+                    let (v3, v4) = (row + pair[0], row + pair[1]);
+                    out.extend([v2, v3, v1, v1, v3, v4]);
+                }
+            }
+            above = Some(row);
+        }
+    }
 }
 
 /// The working control-point array, `ctrl[row][column]`, always 65 x 65 like the

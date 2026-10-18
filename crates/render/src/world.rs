@@ -194,6 +194,10 @@ struct DrawMaterial {
     bones: u32,
 }
 
+/// A visible surface's draw material and index range in `static_indexes`, with its
+/// surface and the curve error its grid may show (`LodErrorForVolume`), if a patch.
+type VisibleRange = (usize, u32, u32, Option<(usize, f32)>);
+
 /// Which vertex and index buffers a draw uses.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Bound {
@@ -323,6 +327,9 @@ pub struct WorldRenderer {
     vis: vis::WorldVis,
     /// Per surface: its culled draw material and index range in `static_indexes`.
     surface_draw: Vec<Option<(usize, u32, u32)>>,
+    /// Per surface: its grid's rows and columns, if a patch drawn from
+    /// `static_indexes` (drawn with fewer of them at a distance, `RB_SurfaceGrid`).
+    grid_lod: Vec<Option<swjkja_world::patch::GridLod>>,
     /// The brush entities drawn, in spawn order.
     brushes: Vec<BrushDraw>,
     /// Per surface: the sky it opens (drawn only when one of its surfaces is visible).
@@ -1677,6 +1684,12 @@ impl WorldRenderer {
         // Every texture's pixels, in a few large copies.
         uploads.borrow_mut().flush(gpu)?;
         let vis = vis::WorldVis::new(bsp, surface_cull);
+        let grid_lod = (0..surface_count)
+            .map(|i| match (geometry(i), surface_draw[i]) {
+                (Geometry::Grid(g), Some(_)) => Some(g.lod()),
+                _ => None,
+            })
+            .collect();
         models.locate(&vis);
         for b in &mut brushes {
             b.link = Some(vis.link(b.entity_box));
@@ -1714,6 +1727,7 @@ impl WorldRenderer {
             materials: draw_materials,
             vis,
             surface_draw,
+            grid_lod,
             brushes,
             models,
             first_model_surface,
@@ -1834,7 +1848,20 @@ impl WorldRenderer {
         let mut visible = Vec::new();
         self.vis.visible(camera, &mut visible);
         let mut gate_open = vec![false; self.gate_count];
-        let mut ranges: Vec<(usize, u32, u32)> = Vec::with_capacity(visible.len());
+        let mut ranges: Vec<VisibleRange> = Vec::with_capacity(visible.len());
+        let forward = camera.axes()[0];
+        let allowed_error = |s: usize, place: Option<([[f32; 3]; 3], [f32; 3])>| {
+            self.grid_lod[s].as_ref().map(|g| {
+                let o = g.lod_origin;
+                let origin = match place {
+                    None => o,
+                    Some((axes, at)) => std::array::from_fn(|k| {
+                        (0..3).map(|j| axes[j][k] * o[j]).sum::<f32>() + at[k]
+                    }),
+                };
+                (s, g.allowed_error(origin, camera.origin, forward))
+            })
+        };
         let frustum = vis::Frustum::new(camera);
         let view_cluster = self.vis.cluster(camera.origin);
         // The brush entities the server sends this view, culled by their model's box
@@ -1855,8 +1882,8 @@ impl WorldRenderer {
             if !sent {
                 continue;
             }
-            let (corners, local) = match &b.turning {
-                None => (b.corners, None),
+            let (corners, local, place) = match &b.turning {
+                None => (b.corners, None, None),
                 Some(t) => {
                     let mut e = t.entity.clone();
                     e.axes = swjkja_world::static_model::angles_to_axis(
@@ -1872,7 +1899,11 @@ impl WorldRenderer {
                     let d = [0, 1, 2].map(|k| camera.origin[k] - e.origin[k]);
                     let origin = e.axes.map(|a| (0..3).map(|k| a[k] * d[k]).sum::<f32>());
                     let corners = e.corners(t.bounds);
-                    (corners, Some((origin, frustum.local(e.axes, e.origin))))
+                    (
+                        corners,
+                        Some((origin, frustum.local(e.axes, e.origin))),
+                        Some((e.axes, e.origin)),
+                    )
                 }
             };
             if frustum.culls_points(&corners) {
@@ -1890,8 +1921,8 @@ impl WorldRenderer {
                 if let Some(g) = self.surface_gate[s] {
                     gate_open[g] = true;
                 }
-                if let Some(r) = self.surface_draw[s] {
-                    ranges.push(r);
+                if let Some((m, start, count)) = self.surface_draw[s] {
+                    ranges.push((m, start, count, allowed_error(s, place)));
                 }
             }
         }
@@ -1899,8 +1930,8 @@ impl WorldRenderer {
             if let Some(g) = self.surface_gate[s] {
                 gate_open[g] = true;
             }
-            if let Some(r) = self.surface_draw[s] {
-                ranges.push(r);
+            if let Some((m, start, count)) = self.surface_draw[s] {
+                ranges.push((m, start, count, allowed_error(s, None)));
             }
         }
         // The visible world surfaces' sprites, scattered for this view.
@@ -2052,8 +2083,9 @@ impl WorldRenderer {
                 *posed = Some(pose);
             }
             for piece in m.lods[level].pieces.clone() {
-                if let Some(r) = self.surface_draw[self.first_model_surface + piece] {
-                    ranges.push(r);
+                if let Some((m, start, count)) = self.surface_draw[self.first_model_surface + piece]
+                {
+                    ranges.push((m, start, count, None));
                 }
             }
         }
@@ -2118,12 +2150,23 @@ impl WorldRenderer {
         }
         let out = culled_indexes.mapped_mut()?;
         let mut at = 0usize;
-        for (i, &(m, start, count)) in ranges.iter().enumerate() {
+        let mut lod_indexes = Vec::new();
+        for (i, &(m, start, count, allowed)) in ranges.iter().enumerate() {
             if i == 0 || ranges[i - 1].0 != m {
                 self.materials[m].first_index = at as u32;
             }
-            self.materials[m].index_count += count;
-            let src = &self.static_indexes[start as usize..(start + count) as usize];
+            let full = &self.static_indexes[start as usize..(start + count) as usize];
+            let src = match allowed {
+                Some((s, error)) => {
+                    // A grid's first index is its first vertex (row 0, column 0).
+                    let grid = self.grid_lod[s].as_ref().unwrap();
+                    lod_indexes.clear();
+                    grid.indexes(error, full[0], &mut lod_indexes);
+                    &lod_indexes[..]
+                }
+                None => full,
+            };
+            self.materials[m].index_count += src.len() as u32;
             out[at * 4..(at + src.len()) * 4].copy_from_slice(bytemuck::cast_slice(src));
             at += src.len();
         }
