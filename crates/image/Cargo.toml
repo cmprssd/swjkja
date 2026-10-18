@@ -10,7 +10,6 @@ rust-version.workspace = true
 [dependencies]
 swjkja-fs = { path = "../fs" }
 zune-core = "0.5"
-zune-jpeg = "0.5"
 zune-png = "0.5"
 
 [dev-dependencies]
