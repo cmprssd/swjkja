@@ -38,4 +38,18 @@ fn every_retail_texture_decodes() {
     assert_eq!(crc("gfx/2d/battery.tga"), (64, 128, "8b6894fb".into()));
     assert_eq!(crc("fonts/aurabesh.png"), (512, 256, "8ca438e3".into()));
     assert_eq!(crc("gfx/chunks/chain1.png"), (128, 128, "728db073".into()));
+    // JPEG as OpenJK's libjpeg 9a decodes it (all 4,271 files match it): 4:2:0, 4:4:4
+    // with an Adobe marker, grey.
+    assert_eq!(
+        crc("textures/bespin/basic.jpg"),
+        (512, 512, "c1a4e599".into())
+    );
+    assert_eq!(
+        crc("textures/bespin/botton.jpg"),
+        (256, 256, "c44e3fd5".into())
+    );
+    assert_eq!(
+        crc("textures/common/dust3.jpg"),
+        (64, 64, "453957a1".into())
+    );
 }

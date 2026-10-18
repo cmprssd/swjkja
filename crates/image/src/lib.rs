@@ -6,11 +6,11 @@
 //! the same name with `.jpg`, `.png` and `.tga`. A file that exists but fails to decode
 //! is skipped like a missing one, and the failure is reported.
 
+mod jpeg;
 pub mod mip;
 
 use swjkja_fs::Vfs;
 use zune_core::bytestream::ZCursor;
-use zune_core::colorspace::ColorSpace;
 use zune_core::options::DecoderOptions;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -198,18 +198,11 @@ pub fn decode_tga(bytes: &[u8]) -> Result<Image, Error> {
     })
 }
 
-/// Baseline and progressive JPEG, decoded to RGB (grey expands to RGB) with alpha 255,
-/// as `LoadJPG` asks libjpeg for.
+/// JPEG decoded as libjpeg 9a, the version OpenJK bundles, decodes it for `LoadJPG`:
+/// RGB (grey expands to RGB) with alpha 255. See [`jpeg`] for what differs from
+/// other decoders and what is not supported.
 pub fn decode_jpg(bytes: &[u8]) -> Result<Image, Error> {
-    let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGBA);
-    let mut decoder = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(bytes), options);
-    let rgba = decoder
-        .decode()
-        .map_err(|e| Error(format!("JPEG: {e:?}")))?;
-    let info = decoder
-        .info()
-        .ok_or_else(|| Error("JPEG: no image info".into()))?;
-    image(info.width as usize, info.height as usize, rgba)
+    jpeg::decode(bytes)
 }
 
 /// 8-bit RGB or RGBA PNGs with power-of-two sides; RGB gets alpha 255. `LoadPNG`

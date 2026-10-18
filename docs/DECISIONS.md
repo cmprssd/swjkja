@@ -53,6 +53,8 @@ environment, or Steam's copy protection stops them with "Application load error
 
 ## 2026-10-07: JPEG decoding is close, not bit-exact (decided by Claude, pending review)
 
+Superseded on 2026-10-18 (below): JPEGs now decode as libjpeg 9a does.
+
 zune-jpeg (pure Rust) decodes the retail JPEGs within 5 of 255 levels of libjpeg
 (mean 0.077, 13% of pixels touched); the other pure-Rust decoder, `jpeg-decoder`,
 is not exact either. Bit-exact output would need libjpeg-turbo, a C library, in the
@@ -948,3 +950,14 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   give 2050 for every animation set then. A game whose client draws sooner would
   start them a frame earlier, as it does later ones. This renderer follows the
   captures.
+
+## 2026-10-18: JPEGs decode as OpenJK's libjpeg 9a, ported to Rust (chosen by the owner)
+
+The 2026-10-07 entry's condition came true: ctf1_fog_above's remaining 0.40 was the
+JPEG decoder (9a scales 4:2:0 chroma up in its inverse DCT, zune-jpeg filters it),
+and the reference captures turn texture compression off. With 9a's pixels all 47
+views came closer (median 0.14, from 0.21). Of the two ways to match 9a exactly,
+the owner chose porting its decoder to Rust (`crates/image/src/jpeg.rs`) over
+building its C source into the engine, which would have needed a C compiler for
+Linux builds. The port covers what the retail files and common JPEGs use; the rest
+(arithmetic coding, 12-bit, 4:2:2-style sampling) fails to decode with an error.

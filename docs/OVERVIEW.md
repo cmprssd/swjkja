@@ -174,7 +174,7 @@ timeline
 |------|------:|------|
 | Files in the `.pk3` archives | 22,775 (3,049 MB) | all read, every CRC-32 checked |
 | Maps | 57 (521 MB) | all parse, every cross-reference checked, 15-24 ms each |
-| Textures | 5,875 | all decode; TGA and PNG identical to reference decoders, JPEG within 5 of 255 levels |
+| Textures | 5,875 | all decode; TGA and PNG identical to reference decoders, JPEG identical to OpenJK's libjpeg 9a |
 | Shader definitions | 3,365 in 68 files | all parse in 9-11 ms; the 40 the original rejects are the editor-only ones |
 | Map surfaces | 57 maps | built in 1.20 s total |
 | MD3 and Ghoul2 models, ICARUS scripts | every retail file | load, pinned by tests |
@@ -186,17 +186,17 @@ difference per channel, 0-255; measured 2026-10-18):
 
 | Kind | Views | Mean difference |
 |------|------:|------|
-| Multiplayer world (sky, fog, fog volumes, flares, animated stages, curve LOD) | 19 | 0.05-0.40 |
-| Static and brush-entity models, rotating fans and drums | 18 | 0.14-5.33 |
-| Single-player NPCs (spawned, scripted, academy classes, yavin1's shuttle) | 10 | 0.10-0.39 |
-| **All** | **47** | **median 0.21; 41 under 0.5, 44 under 1.0** |
+| Multiplayer world (sky, fog, fog volumes, flares, animated stages, curve LOD) | 19 | 0.04-0.22 |
+| Static and brush-entity models, rotating fans and drums | 18 | 0.09-5.26 |
+| Single-player NPCs (spawned, scripted, academy classes, yavin1's shuttle) | 10 | 0.07-0.33 |
+| **All** | **47** | **median 0.14; 41 under 0.5, 44 under 1.0** |
 
 ```mermaid
 xychart-beta
     title "Views by mean difference (47 views)"
     x-axis ["< 0.25", "0.25-0.5", "0.5-1", "1-2", "> 2"]
     y-axis "views" 0 --> 30
-    bar [29, 12, 3, 1, 2]
+    bar [37, 4, 3, 1, 2]
 ```
 
 The two views above 2 are explained and are not renderer errors: danger_rock

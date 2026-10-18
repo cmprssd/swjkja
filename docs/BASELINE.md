@@ -381,6 +381,51 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## JPEG decoded by libjpeg 9a, 2026-10-18
+
+ctf1_fog_above's 0.40 was texture grain: no pixel off by more than 8, half of them
+off by one, in the shape of the walls' grainy texture and strongest where the walls
+are near. The reference decodes JPEGs with the libjpeg OpenJK bundles and builds on
+Windows, 9a, which scales 4:2:0 chroma up inside its inverse DCT (`jpeg_idct_16x16`,
+picked in `jdmaster.c`) rather than with libjpeg 6b's triangle filter. zune-jpeg,
+like libjpeg-turbo, follows 6b, so every JPEG texture differed by a level here and
+there (up to 5 of 255). The 2026-10-07 decision had left it there because the
+original re-compresses textures to S3TC by default, but the reference captures turn
+that off (`r_ext_compress_textures 0`).
+
+swjkja-image now decodes JPEGs with a Rust port of 9a's decoder
+(`crates/image/src/jpeg.rs`: Huffman baseline and progressive scans, the integer 8x8
+and 16x16 inverse DCTs, YCbCr to RGB, and 9a's handling of data that ends early).
+All 4,271 retail JPEGs decode bit for bit as 9a built from OpenJK's source does
+(per-file CRC-32s; `tests/retail.rs` keeps three, and `tests/decode.rs` checks
+small progressive, grey, restart-marker and truncated files against 9a). All 47
+views were rendered three ways (9a's own pixels swapped in, 9a's C source built in,
+and the port), and the three render pixel for pixel alike.
+
+| View | Mean difference (main) | Pixels off by > 16 (main) |
+|------|------|------|
+| ctf1_fog_above | 0.17 (0.40) | 0.0% (0.0%) |
+| academy6_class | 0.33 (0.39) | 0.1% (0.1%) |
+| academy4_class | 0.31 (0.37) | 0.1% (0.1%) |
+| academy2_class | 0.28 (0.35) | 0.0% (0.0%) |
+| academy1_class | 0.25 (0.32) | 0.0% (0.0%) |
+| ffa3_spawn1 | 0.21 (0.29) | 0.0% (0.0%) |
+| ffa3_spawn3 | 0.14 (0.26) | 0.1% (0.1%) |
+| yavin1_students | 0.13 (0.24) | 0.0% (0.0%) |
+| duel5_spawn1 | 0.07 (0.17) | 0.0% (0.0%) |
+
+- Every view changes, and 46 of 47 come closer on their changed pixels. The one
+  that does not is duel9_fog_in, by rounding: 5,282 pixels, 0.28 to 0.31. The fog
+  views change least (578 to 15,730 pixels), and their means move by under 0.01.
+- All 47 views: median 0.14 (0.21), 41 under 0.5, 44 under 1.0 (as on main). The
+  largest unexplained views are now the academy classes (0.25-0.33).
+- Loading is as fast as before: decoding every retail texture takes 34-39 s (36 s
+  with zune-jpeg; 66 s with 9a's C source).
+- Not supported, each reported as a decode error: arithmetic coding, 12-bit and
+  lossless JPEG, sampling other than equal or half both ways (4:2:2 and the like,
+  for which 9a picks a 16x8 or 8x16 inverse DCT), and files that leave out their
+  Huffman tables. No retail texture is any of these.
+
 ## Curved surfaces with fewer rows at a distance, 2026-10-18
 
 ffa3_spawn1's 0.41 was its curved surfaces: the arch's outline a pixel off along
