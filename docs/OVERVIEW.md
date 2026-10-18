@@ -191,8 +191,9 @@ difference per channel, 0-255; measured 2026-10-18):
 | Single-player NPCs (spawned, scripted, academy classes, yavin1's shuttle) | 10 | 0.10-0.44 |
 | **All** | **45** | **median 0.25; 40 under 0.5, 42 under 1.0** |
 
-Two more model views (hoth2_fog, vjun1_hall) are not rendered: their maps lose the
-Vulkan device on the Windows GPU, on main too.
+Two more model views render again since #74 (their maps lost the Vulkan device
+until the flare test's binding was fixed) and are not in the 45 yet: hoth2_fog
+0.14, vjun1_hall 1.46.
 
 ```mermaid
 xychart-beta
