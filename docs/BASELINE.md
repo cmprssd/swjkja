@@ -426,7 +426,19 @@ ffa5_pipes' eye, 2216 -1080 664) see door `*13` but not `*12`. Rendered without
   original (as dpred_racks'), half of it; and pixels one level brighter here, never
   darker, each channel on its own, over some faces of the door frame on the left
   (`cell_door_frame.md3`, scaled 1 2 1.34, `rgbGen lightingDiffuse`), a third of it.
-  Its light point is the original's; not found yet.
+  Its light point is the original's; not found yet. What is known: the pixels are
+  scattered, as a vertex colour one level higher in one channel makes them (about
+  t/255 of a texel t), so the frame's per-vertex light is higher, not its texture
+  (`R_MipMap`, normal decoding, `RB_CalcDiffuseColor` and the grid's trilerp were
+  checked line by line). Its four lower grid points are dark (style 0, no light),
+  so it is lit by the upper four alone (ambient 63.43 59.38 54.91, directed 65.74
+  58.13 48.83). The grid's ambient (before the +32) 1% lower, directed unchanged,
+  takes the frame's region (x < 300) from 0.061 to 0.009; per channel the original's
+  ambient is 63.06-63.23 red and 54.64-54.68 blue. Green has no single value: two
+  sets of faces want it at most 59.18 and above 59.23, so their incoming light also
+  differs, by about 0.1%. Moving the light point (x 0.5-2, y ±1, z 0 to -1) or
+  scaling the directed light fitted worse. No mechanism found yet for an ambient
+  1% lower with the directed light the same.
 - Left out: a non-uniformly scaled model's specular uses the normal's length, not
   each axis's scale; and the original's viewer for a scaled model points from the
   unscaled vertex (origin plus the turned model-space point), not the drawn one.
