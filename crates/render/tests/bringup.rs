@@ -228,3 +228,52 @@ fn quake_front_faces_survive_front_sided_culling() {
     );
     assert!(visible(reversed, Cull::TwoSided));
 }
+
+#[test]
+fn blending_keeps_ten_bits_like_the_original_framebuffer() {
+    use swjkja_render::State;
+    let gpu = Gpu::new_headless().expect("a Vulkan 1.3 device");
+    let target = Target::new(&gpu, 8, 8).unwrap();
+    // Additive (GL_SRC_ALPHA GL_ONE) at a level of 1 and alpha 64: a quarter of a
+    // level (64 / 255) a draw. Blending in 10 bits, each draw adds 1 / 1023, and eight
+    // read back as 8 / 1023, two levels; in 8 bits each draw rounds away to nothing.
+    let quarter = [1, 1, 1, 64];
+    let screen = [[-1.0, -1.0, 0.5], [3.0, -1.0, 0.5], [-1.0, 3.0, 0.5]];
+    let data: Vec<([f32; 3], [u8; 4])> = screen.iter().map(|&p| (p, quarter)).collect();
+    let vb =
+        Buffer::with_data(&gpu, vk::BufferUsageFlags::VERTEX_BUFFER, &vertices(&data)).unwrap();
+    let state = State {
+        blend: Some((vk::BlendFactor::SRC_ALPHA, vk::BlendFactor::ONE)),
+        depth_write: false,
+        depth_compare: None,
+        ..State::default()
+    };
+    let pipeline = Pipeline::with_state(
+        &gpu,
+        spirv::FLAT_VERT,
+        spirv::FLAT_FRAG,
+        16,
+        &[
+            (0, vk::Format::R32G32B32_SFLOAT, 0),
+            (1, vk::Format::R8G8B8A8_UNORM, 12),
+        ],
+        0,
+        &[],
+        state,
+    )
+    .unwrap();
+    target
+        .render(&gpu, [0.0, 0.0, 0.0, 1.0], |frame| unsafe {
+            let cmd = frame.cmd;
+            gpu.device
+                .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
+            gpu.device
+                .cmd_bind_vertex_buffers(cmd, 0, &[vb.buffer], &[0]);
+            for _ in 0..8 {
+                gpu.device.cmd_draw(cmd, 3, 1, 0, 0);
+            }
+        })
+        .unwrap();
+    let px = target.read_rgba(&gpu).unwrap();
+    assert!(px.chunks(4).all(|p| p == [2, 2, 2, 255]), "{:?}", &px[..4]);
+}

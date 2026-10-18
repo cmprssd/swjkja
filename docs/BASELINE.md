@@ -381,6 +381,49 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Blending in 10 bits, as the reference PC's framebuffer, 2026-10-18
+
+The academy classes' 0.25-0.33 was not the NPCs: 75-99% of each view's difference
+was pixels one level off, half the frame, in stripes of +1 beside -1 along the
+light shafts (`textures/common/dark_dust`, a gradient added at 35/255, several
+layers deep). Blurred, the error vanished (no shift, no scale): both engines drew
+the same values and rounded them differently. Where the reference crosses a level,
+its pixels flip between the two at random with the wall's texture under them, as
+if the wall had not been rounded to 8 bits before the dust was added.
+
+It had not: on the reference PC the original blends in 10 bits a channel. OpenJK
+asks for and reports 24-bit colour (`PIXELFORMAT: color(24-bits)`), but the Intel
+HD 630's OpenGL driver gives it a 10:10:10:2 surface, and screenshots round that to
+8 bits. This renderer's target is now `A2B10G10R10_UNORM_PACK32`, read back rounded
+to 8 bits (`Target::read_rgba`); windows draw straight into a 10-bit swapchain
+image when the surface offers one, else the target is copied to an 8-bit one.
+`blending_keeps_ten_bits_like_the_original_framebuffer` (`crates/render/tests/bringup.rs`)
+adds a quarter of a level eight times: 2 in 10 bits, 0 in 8.
+
+| View | Mean difference (main) | Exact pixels (main) |
+|------|------|------|
+| academy6_class | 0.09 (0.33) | 96.4% (50.0%) |
+| academy4_class | 0.07 (0.31) | 96.8% (50.6%) |
+| academy2_class | 0.04 (0.28) | 97.7% (50.8%) |
+| academy1_class | 0.01 (0.25) | 98.5% (51.0%) |
+| ffa3_spawn1 | 0.00 (0.21) | 99.2% (55.3%) |
+| duel9_fog_in | 0.00 (0.08) | 99.7% (84.3%) |
+| yavin1_students | 0.05 (0.13) | 92.2% (72.6%) |
+
+- Every one of the 47 views comes closer; 13 are at 0.00, among them every
+  multiplayer fog view. All 47: median 0.04 (0.14), 42 under 0.5, 45 under 1.0.
+- A 16-bit target does worse on every view (academy1_class 0.08, ffa3_spawn1
+  0.09): the reference rounds at 10 bits, not merely above 8.
+- It costs GPU time on the HD 630: the ffa3 camera path offscreen took 3.02-3.06
+  ms of GPU a frame against 2.71-2.74 ms in 8 bits (two alternating rounds of two
+  runs, a busy PC: about 300 FPS against 335). The FPS tables above were measured
+  in 8 bits. The owner chose 10 bits everywhere, so the viewer runs what the views
+  verify.
+- Not measured: whether this machine's Vulkan surface offers a 10-bit format (a
+  window was not opened), and so whether windows draw direct or copy.
+- What is left on the academy classes is the NPCs (academy2/4/6's students'
+  `BOTH_CIN_9` starts, from client frame jitter).
+
 ## JPEG decoded by libjpeg 9a, 2026-10-18
 
 ctf1_fog_above's 0.40 was texture grain: no pixel off by more than 8, half of them
