@@ -195,6 +195,37 @@ fn single_player_draws_no_models_from_a_view_in_solid() {
     assert!(drawn(tree_cluster) > 0);
 }
 
+/// A model's PVS test finds its cull point's leaf as the collision code does
+/// (`CM_PointLeafnum`): a point on a plane goes to its front. t2_rancor's water pump
+/// (the rancor_plate view, bench/reference/model-views.txt) stands with its cull
+/// point on a plane, whose back is solid; the reference draws it.
+#[test]
+fn a_cull_point_on_a_plane_goes_to_its_front() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t2_rancor.bsp").unwrap()).unwrap();
+    let mut models = StaticModels::load(&vfs, &bsp, &[], "maps/t2_rancor.bsp", 0);
+    let vis = WorldVis::new(&bsp, vec![SurfaceCull::Never; bsp.surfaces.len()]);
+    models.locate(&vis);
+    let camera = Camera::new([-5960.0, 5260.0, 1515.0], [10.0, 270.0, 0.0], 1280, 720);
+    let frustum = Frustum::new(&camera);
+    let cluster = vis.cluster(camera.origin);
+    let pump = models
+        .instances
+        .iter()
+        .position(|m| m.origin == [-5284.0, 4376.0, 1472.0])
+        .unwrap();
+    assert_eq!(models.instances[pump].cull_cluster, 924);
+    assert!(
+        models
+            .visible(pump, &camera, &frustum, cluster, &vis)
+            .is_some()
+    );
+}
+
 /// t3_stamp's game entities (crates and barrels, ammo racks and their goods) in the
 /// stamp_barrels view (bench/reference/npc-views.txt): the server sends those whose
 /// box touches a cluster the view sees, the renderer culls them by the frustum.

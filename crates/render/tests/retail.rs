@@ -219,3 +219,68 @@ fn single_player_environment_maps_as_the_original() {
         );
     }
 }
+
+/// The global fog's distance is the eye-plane distance's absolute value per vertex,
+/// interpolated across the triangle, as the reference PC's GL draws fixed-function
+/// fog: a triangle reaching behind the eye is foggier near it. mp/ctf4's walkway
+/// (textures/rooftop/window_building_trim) runs over the view of
+/// bench/reference/views.txt's ctf4_up and behind it; the fog's colour (0, 36, 47)
+/// shows in its panels as blue over red.
+#[test]
+fn global_fog_takes_the_distance_per_vertex_as_the_original() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let gpu = Gpu::new_headless().unwrap();
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let shaders = swjkja_shader::ShaderText::load(&vfs).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/mp/ctf4.bsp").unwrap()).unwrap();
+    let world = swjkja_world::World::load(&bsp, &Default::default());
+    let mut textures = TextureSet::new(&gpu).unwrap();
+    let time = 12.345;
+    let mut renderer = WorldRenderer::new(
+        &gpu,
+        &mut textures,
+        &vfs,
+        &shaders,
+        &bsp,
+        &world,
+        "maps/mp/ctf4.bsp",
+        time,
+    )
+    .unwrap();
+    let (width, height) = (1280, 720);
+    let target = Target::new(&gpu, width, height).unwrap();
+    let depth_slot = textures.add_view(target.depth_copy.view);
+    let camera = Camera::new([544.0, 1824.0, -260.0], [-25.0, 270.0, 0.0], width, height);
+    target
+        .render(&gpu, renderer.clear_color(), |frame| {
+            renderer
+                .draw(frame, &textures, &camera, time, depth_slot)
+                .unwrap()
+        })
+        .unwrap();
+    let rgba = target.read_rgba(&gpu).unwrap();
+    // A 9x9 box's mean blue less its mean red, at four places on the walkway's
+    // panels. Fogged by the depth at each pixel, they are 4 lower.
+    let blue_over_red = |x: usize, y: usize| {
+        let mut sum = 0i32;
+        for py in y - 4..=y + 4 {
+            for px in x - 4..=x + 4 {
+                let p = (py * width as usize + px) * 4;
+                sum += i32::from(rgba[p + 2]) - i32::from(rgba[p]);
+            }
+        }
+        sum as f32 / 81.0
+    };
+    let boxes = [(1200, 150), (1250, 60), (1150, 300), (1100, 250)];
+    let ours = boxes.map(|(x, y)| blue_over_red(x, y));
+    let reference = [3.6, 4.5, 0.9, 4.4];
+    for ((&got, want), place) in ours.iter().zip(reference).zip(boxes) {
+        assert!(
+            (got - want).abs() <= 1.0,
+            "box at {place:?}: {got}, the reference {want} (all: {ours:?})"
+        );
+    }
+}

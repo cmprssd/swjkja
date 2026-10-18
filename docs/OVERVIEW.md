@@ -186,17 +186,17 @@ difference per channel, 0-255; measured 2026-10-18):
 
 | Kind | Views | Mean difference |
 |------|------:|------|
-| Multiplayer world (sky, fog, fog volumes, flares, animated stages, curve LOD) | 19 | 0.00-0.19 |
+| Multiplayer world (sky, fog, fog volumes, flares, animated stages, curve LOD) | 19 | 0.00-0.03 |
 | Static and brush-entity models, rotating fans and drums | 18 | 0.00-5.19 |
 | Single-player NPCs (spawned, scripted, academy classes, yavin1's shuttle) | 10 | 0.01-0.10 |
-| **All** | **47** | **median 0.04; 42 under 0.5, 45 under 1.0** |
+| **All** | **47** | **median 0.03; 43 under 0.5, 45 under 1.0** |
 
 ```mermaid
 xychart-beta
     title "Views by mean difference (47 views)"
     x-axis ["< 0.25", "0.25-0.5", "0.5-1", "1-2", "> 2"]
     y-axis "views" 0 --> 45
-    bar [41, 1, 3, 0, 2]
+    bar [41, 2, 2, 0, 2]
 ```
 
 The two views above 2 are explained and are not renderer errors: danger_rock
