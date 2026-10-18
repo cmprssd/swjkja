@@ -284,3 +284,64 @@ fn global_fog_takes_the_distance_per_vertex_as_the_original() {
         );
     }
 }
+
+/// ComputeFinalVertexColor: a vertex-lit surface's colours are its light style's
+/// colour times the vertex's, shifted down by 8 bits, so a style at full (255) takes
+/// one level off each vertex. t3_stamp's crates on the right of
+/// bench/reference/views.txt's stamp_crates are vertex-lit (textures/factory/s_trim2);
+/// with the vertices' colours as stored they are 0.39 brighter than the reference.
+#[test]
+fn vertex_lit_surfaces_take_their_style_as_the_original() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let gpu = Gpu::new_headless().unwrap();
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let shaders = swjkja_shader::ShaderText::load(&vfs).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t3_stamp.bsp").unwrap()).unwrap();
+    let world = swjkja_world::World::load(&bsp, &Default::default());
+    let mut textures = TextureSet::new(&gpu).unwrap();
+    let time = 12.345;
+    let mut renderer = WorldRenderer::new(
+        &gpu,
+        &mut textures,
+        &vfs,
+        &shaders,
+        &bsp,
+        &world,
+        "maps/t3_stamp.bsp",
+        time,
+    )
+    .unwrap();
+    let (width, height) = (1280, 720);
+    let target = Target::new(&gpu, width, height).unwrap();
+    let depth_slot = textures.add_view(target.depth_copy.view);
+    let camera = Camera::new([-3248.0, -3574.0, 124.0], [10.0, 90.0, 0.0], width, height);
+    target
+        .render(&gpu, renderer.clear_color(), |frame| {
+            renderer
+                .draw(frame, &textures, &camera, time, depth_slot)
+                .unwrap()
+        })
+        .unwrap();
+    let rgba = target.read_rgba(&gpu).unwrap();
+    // The crates' mean colour (x 740-1269, y 110-409).
+    let mut sum = [0u64; 3];
+    for y in 110..410 {
+        for x in 740..1270 {
+            let p = (y * width as usize + x) * 4;
+            for (c, s) in sum.iter_mut().enumerate() {
+                *s += u64::from(rgba[p + c]);
+            }
+        }
+    }
+    let ours = sum.map(|s| s as f32 / (300.0 * 530.0));
+    let reference = [12.418, 12.741, 13.843];
+    for (got, want) in ours.iter().zip(reference) {
+        assert!(
+            (got - want).abs() <= 0.05,
+            "the crates' mean colour {ours:?}, the reference {reference:?}"
+        );
+    }
+}

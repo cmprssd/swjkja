@@ -1353,6 +1353,10 @@ impl WorldRenderer {
                     let mut g = gpu_stage(s, material.multitexture);
                     if m >= world_materials {
                         g.style[1] = 1.0; // a model's: lit by its entity
+                    } else if material.lightmaps[0] == swjkja_world::LIGHTMAP_BY_VERTEX {
+                        // ComputeFinalVertexColor: vertex-lit by its first style.
+                        g.style[2] = 1.0;
+                        g.style[3] = f32::from(material.styles[0]);
                     }
                     g.fog[2] = u32::from(is_flare);
                     g.fog[3] = fog as u32
