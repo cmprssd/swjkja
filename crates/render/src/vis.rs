@@ -242,6 +242,11 @@ impl WorldVis {
         self.vis.can_see(from, to)
     }
 
+    /// Multiplayer's `R_inPVS`, quirks included ([`swjkja_bsp::Visibility::r_in_pvs`]).
+    pub fn r_in_pvs(&self, from: i32, to: i32) -> bool {
+        self.vis.r_in_pvs(from, to)
+    }
+
     /// `CM_BoxLeafnums`: the leafs the box touches (at most 128), front child first,
     /// and the last of them with a cluster, overflowed or not.
     fn box_leafs(&self, mins: Vec3, maxs: Vec3) -> (Vec<usize>, usize) {

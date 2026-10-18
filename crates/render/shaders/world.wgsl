@@ -344,12 +344,18 @@ fn colors(s: Stage, xyz: vec3<f32>, vertex: vec4<f32>, normal: vec3<f32>, e: Ent
         case 6u: {
             // RB_CalcSpecularAlpha: the light reflected about the normal, towards the
             // viewer, to the fourth power. A model's light comes from its light
-            // direction, anything else's from a fixed point.
+            // direction, anything else's from a fixed point. The original reflects in
+            // the model's space, a unit normal about the light turned into the scaled
+            // axes: for axes scaled by s (this normal's length), s times the unit
+            // reflection.
             var light = e.light_dir.xyz;
-            if !model {
+            var scale = 1.0;
+            if model {
+                scale = select(length(normal), 1.0, all(normal == vec3<f32>(0.0)));
+            } else {
                 light = normalize(SPECULAR_LIGHT_ORIGIN - xyz);
             }
-            let reflected = normal * (2.0 * dot(normal, light)) - light;
+            let reflected = normal * (2.0 * dot(normal, light) / scale) - light * scale;
             let viewer = frame.view_origin.xyz - xyz;
             let l = dot(reflected, viewer) * inverseSqrt(dot(viewer, viewer));
             c.a = select(min(floor(l * l * l * l * 255.0), 255.0), 0.0, l < 0.0);

@@ -684,7 +684,7 @@ impl StaticModels {
                 if m.radius != 0.0 && frustum.culls_sphere(m.cull_origin, m.radius) {
                     return None;
                 }
-                if !vis.can_see(view_cluster, m.cull_cluster) {
+                if !vis.r_in_pvs(view_cluster, m.cull_cluster) {
                     return None;
                 }
                 if length(to_view) - m.radius > self.distance_cull {

@@ -182,7 +182,7 @@ timeline
 ### How close the pictures are
 
 47 reference views, 1280x720, rendered by both engines and compared (mean absolute
-difference per channel, 0-255; measured 2026-10-18):
+difference per channel, 0-255; measured 2026-10-19):
 
 | Kind | Views | Mean difference |
 |------|------:|------|
