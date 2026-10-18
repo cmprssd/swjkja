@@ -381,6 +381,45 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## GL fog's distance per vertex, and model cull points on a plane, 2026-10-18
+
+ctf4_up's 0.19 was the global fog on one surface: the walkway overhead
+(`textures/rooftop/window_building_trim`) was fogged more in the reference than its
+depth gives, by up to 4% near the eye and not at all 1,800 units away; every other
+surface in the view matched exactly. The original draws the global fog with GL
+fog (`GL_EXP2`, `r_drawfog 2`), and the reference PC's driver takes the fog
+distance per vertex as the eye-plane distance's absolute value and interpolates
+it. The walkway's long triangles reach behind the eye, where that value grows
+again, so near the eye they are foggier than their depth. This renderer
+interpolated the signed depth, exact everywhere. It now passes `abs(w)` per
+vertex (`shaders/world.wgsl`). Fog from the radial distance, per-vertex fog
+factors and screen-linear depth were tried first; each made the fog views worse.
+`global_fog_takes_the_distance_per_vertex_as_the_original`
+(`crates/render/tests/retail.rs`) checks four boxes on the walkway's panels.
+
+rancor_plate's 0.16 was one water pump (`models/map_objects/rocky_ruins/water_pump.md3`)
+left out: its cull point (origin raised 1 unit) lies on a plane of the BSP whose
+back is solid. The models' and entities' PVS tests (`R_inPVS`, `SV_inPVS`, the
+server's snapshots) find the leaf with `CM_PointLeafnum`, which sends a point on a
+plane to its front; `WorldVis::cluster` used `R_PointInLeaf`'s rule (to the back),
+which only the world's leaf marking uses. `a_cull_point_on_a_plane_goes_to_its_front`
+(`crates/render/tests/models.rs`) checks the pump.
+
+| View | Mean difference (main) | Exact pixels (main) |
+|------|------|------|
+| ctf4_up | 0.01 (0.19) | 98.9% (85.2%) |
+| rancor_plate | 0.08 (0.16) | 83.9% (83.7%) |
+| ctf4_spawn1 | 0.00 (0.04) | 99.9% (91.3%) |
+| ctf4_spawn2 | 0.00 (0.01) | 99.7% (97.0%) |
+
+- Five views change (ffa2_fog_above too, 282 pixels), all closer; the 42 others
+  render pixel for pixel as on main. All 47: median 0.03 (0.04), 43 under 0.5, 45
+  under 1.0, 16 at 0.00 (13). The multiplayer world views are now 0.00-0.03.
+- hevil_fan_low's 0.16 is rain over the fan (fx_rain, not drawn), as on
+  hevil_fan_west: the reference's streaks are the bright pixels ours lacks.
+- What is left on rancor_plate is pixels one level off over the whole frame
+  (16% of them), as before; the pump's own pixels differ by 0.1 on average.
+
 ## Blending in 10 bits, as the reference PC's framebuffer, 2026-10-18
 
 The academy classes' 0.25-0.33 was not the NPCs: 75-99% of each view's difference

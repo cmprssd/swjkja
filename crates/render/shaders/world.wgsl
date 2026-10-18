@@ -388,7 +388,7 @@ struct VertexOut {
     @location(0) tc0: vec2<f32>,
     @location(1) tc1: vec2<f32>,
     @location(2) color: vec4<f32>,
-    // Eye-space depth, for GL fog.
+    // GL fog's distance: the eye-plane distance's absolute value, per vertex.
     @location(3) eye_z: f32,
 }
 
@@ -432,7 +432,9 @@ fn vs_main(
         world_xyz = frame.view_origin.xyz + xyz;
     }
     out.position = frame.view_proj * vec4<f32>(world_xyz, 1.0);
-    out.eye_z = out.position.w;
+    // Interpolated as the reference PC's GL does, so a triangle reaching behind the
+    // eye is foggier near it than its depth there.
+    out.eye_z = abs(out.position.w);
     if s.fog.y == 1u {
         out.position.z = 0.0; // reversed depth: 0 is infinitely far
     }

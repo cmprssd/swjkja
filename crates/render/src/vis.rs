@@ -214,12 +214,25 @@ impl WorldVis {
         }
     }
 
-    /// The cluster of the leaf containing `p` (-1 outside the map, or without nodes).
+    /// The cluster of the leaf containing `p` (-1 outside the map, or without nodes),
+    /// as the PVS tests of models and entities find it (`CM_PointLeafnum`, for
+    /// `R_inPVS`, `SV_inPVS` and the server's snapshots). Unlike `R_PointInLeaf`, a
+    /// point on a plane goes to its front.
     pub fn cluster(&self, p: Vec3) -> i32 {
         if self.nodes.is_empty() {
             return -1;
         }
-        self.leafs[self.point_in_leaf(p)].cluster
+        let mut node = 0i32;
+        while node >= 0 {
+            let n = &self.nodes[node as usize];
+            let plane = &self.planes[n.plane as usize];
+            node = if dot(p, plane.normal) - plane.dist < 0.0 {
+                n.children[1]
+            } else {
+                n.children[0]
+            };
+        }
+        self.leafs[(-(node + 1)) as usize].cluster
     }
 
     /// `R_inPVS` for two points' clusters: whether `to` is in the potentially
