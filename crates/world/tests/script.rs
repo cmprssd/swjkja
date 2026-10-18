@@ -413,9 +413,10 @@ fn owned(list: &[(&str, i32)]) -> Vec<(String, i32)> {
 #[test]
 fn an_intro_takes_over_an_npc_when_the_player_begins() {
     // The player begins after the 2000 ms frame; the intro runs from the next, its
-    // affect running Luke's block at once (animations start a frame earlier for the
-    // client). Its 1000 ms wait ends on the first frame past 3050; Luke, updated
-    // after the runner, gets the signal in that frame.
+    // affect running Luke's block at once (animations start then on the level's
+    // clock, the client's still at 0; later ones a frame earlier for the client).
+    // Its 1000 ms wait ends on the first frame past 3050; Luke, updated after the
+    // runner, gets the signal in that frame.
     let level = intro(vec![
         affect(
             "LUKE",
@@ -442,7 +443,7 @@ fn an_intro_takes_over_an_npc_when_the_player_begins() {
         luke(spawnscript.clone(), &level),
         owned(&[
             ("BOTH_STAND1", 1550),
-            ("BOTH_CIN_1", 2000),
+            ("BOTH_CIN_1", 2050),
             ("BOTH_STAND1", 2950),
             ("BOTH_SIT5", 3050),
             ("BOTH_STAND1", 4050)
@@ -518,7 +519,7 @@ fn an_inserted_block_runs_first_and_a_wait_it_cut_starts_over() {
         luke(spawnscript, &level),
         owned(&[
             ("BOTH_STAND1", 1550),
-            ("BOTH_SIT5", 2000),
+            ("BOTH_SIT5", 2050),
             ("BOTH_STAND1", 2950),
             ("BOTH_STAND3", 5050),
             ("BOTH_STAND1", 6050)
@@ -572,7 +573,7 @@ fn a_signal_waits_for_its_receiver_and_a_runner_needs_its_user() {
         luke(spawnscript.clone(), &level),
         owned(&[
             ("BOTH_STAND1", 1550),
-            ("BOTH_SIT5", 2000),
+            ("BOTH_SIT5", 2050),
             ("BOTH_STAND1", 3000)
         ])
     );

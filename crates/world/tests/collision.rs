@@ -107,7 +107,7 @@ fn a_box_lands_on_a_slope_where_its_corner_meets_it() {
         "{end:?}"
     );
     // An NPC falling onto it lands sliding: still moving on its first frame.
-    let (at, moving) = settle(&world, [0.0, 0.0, 100.0], MINS, MAXS);
+    let (at, moving) = settle(&world, [0.0, 0.0, 100.0], MINS, MAXS, 0);
     assert!((at[2] - end[2]).abs() < 1e-3 && moving, "{at:?}");
 }
 
@@ -116,19 +116,39 @@ fn an_npc_falls_to_the_floor_and_rises_out_of_it() {
     // Spawned 8 units above the floor, or with its feet 8 units into it; either
     // way still on flat ground by its first idle check.
     assert_eq!(
-        settle(&floor(), [0.0, 0.0, 32.0], MINS, MAXS),
+        settle(&floor(), [0.0, 0.0, 32.0], MINS, MAXS, 0),
         ([0.0, 0.0, 24.125], false)
     );
-    let (risen, moving) = settle(&floor(), [0.0, 0.0, 16.0], MINS, MAXS);
+    let (risen, moving) = settle(&floor(), [0.0, 0.0, 16.0], MINS, MAXS, 0);
     assert!((risen[2] - 24.125).abs() < 1e-3 && !moving, "{risen:?}");
     // Stuck in solid, or over nothing: where it spawned.
     assert_eq!(
-        settle(&floor(), [0.0, 0.0, -32.0], MINS, MAXS),
+        settle(&floor(), [0.0, 0.0, -32.0], MINS, MAXS, 0),
         ([0.0, 0.0, -32.0], false)
     );
     assert_eq!(
-        settle(&floor(), [600.0, 0.0, 32.0], MINS, MAXS),
+        settle(&floor(), [600.0, 0.0, 32.0], MINS, MAXS, 0),
         ([600.0, 0.0, 32.0], false)
+    );
+}
+
+#[test]
+fn an_npc_spawned_on_the_floor_rises_by_the_epsilon_unless_it_may_start_in_solid() {
+    // As the academies' students: the spawner's box stands exactly on the floor.
+    // `G_CheckInSolid`'s trace hits it and lifts the NPC by the trace's epsilon;
+    // STARTINSOLID (128) skips that check, and the NPC stays where it spawned.
+    assert_eq!(
+        settle(&floor(), [0.0, 0.0, 24.0], MINS, MAXS, 0),
+        ([0.0, 0.0, 24.125], false)
+    );
+    assert_eq!(
+        settle(&floor(), [0.0, 0.0, 24.0], MINS, MAXS, 224),
+        ([0.0, 0.0, 24.0], false)
+    );
+    // It still falls onto the floor from above.
+    assert_eq!(
+        settle(&floor(), [0.0, 0.0, 32.0], MINS, MAXS, 128),
+        ([0.0, 0.0, 24.125], false)
     );
 }
 
@@ -137,7 +157,7 @@ fn an_npc_lands_on_a_solid_box_on_the_floor() {
     let mut world = floor();
     world.add_box([-32.0, -32.0, 0.0], [32.0, 32.0, 48.0], CONTENTS_SOLID);
     assert_eq!(
-        settle(&world, [0.0, 0.0, 100.0], MINS, MAXS),
+        settle(&world, [0.0, 0.0, 100.0], MINS, MAXS, 0),
         ([0.0, 0.0, 72.125], false)
     );
 }

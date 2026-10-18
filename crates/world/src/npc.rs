@@ -1221,7 +1221,7 @@ pub fn npc_models(
                 format!("{folder}model_{}.skin", look.skin)
             };
             let scaled = look.scale.map(|s| s != 0.0 && s != 1.0);
-            let (at, moving) = settle(world, n.origin, look.mins, look.maxs);
+            let (at, moving) = settle(world, n.origin, look.mins, look.maxs, n.flags);
             let pose = Pose {
                 still_since: if moving { FIRST_FRAME } else { 0 },
                 script,
@@ -1259,8 +1259,10 @@ pub fn npc_models(
 }
 
 /// Where an NPC spawned at `origin` with the box `mins`..`maxs` comes to rest: lifted
-/// out of a floor its box's lower half sinks into (`G_CheckInSolid` with fix, at
-/// spawn), then fallen onto the floor below, as the first movement frames drop it
+/// out of a floor its box's lower half sinks into or touches (`G_CheckInSolid` with
+/// fix, at spawn: a spawner standing on the floor rises by the trace's epsilon),
+/// unless its spawner's `flags` have STARTINSOLID (128), then fallen onto the floor
+/// below, as the first movement frames drop it
 /// (`Pmove` falls until `PM_GroundTrace` finds ground; with no sideways speed the
 /// fall ends where a box trace straight down does). An NPC stuck in solid, or with
 /// no floor below, stays where it is.
@@ -1270,15 +1272,17 @@ pub fn npc_models(
 /// quarter unit) onto a slope, where landing clips its fall into the slope's plane
 /// and leaves it sliding sideways for a frame. Falling onto flat ground or lifted
 /// out of a slope, it is already still (measured on t2_dpred and kor2).
-pub fn settle(world: &Collision, origin: Vec3, mins: Vec3, maxs: Vec3) -> (Vec3, bool) {
+pub fn settle(world: &Collision, origin: Vec3, mins: Vec3, maxs: Vec3, flags: i64) -> (Vec3, bool) {
     let mut at = origin;
-    let feet = [origin[0], origin[1], origin[2] + mins[2]];
-    let tr = world.trace(origin, feet, [mins[0], mins[1], 0.0], maxs, MASK_NPCSOLID);
-    if tr.start_solid || tr.all_solid {
-        return (origin, false);
-    }
-    if tr.fraction < 1.0 {
-        at = [tr.end[0], tr.end[1], tr.end[2] - mins[2]];
+    if flags & 128 == 0 {
+        let feet = [origin[0], origin[1], origin[2] + mins[2]];
+        let tr = world.trace(origin, feet, [mins[0], mins[1], 0.0], maxs, MASK_NPCSOLID);
+        if tr.start_solid || tr.all_solid {
+            return (origin, false);
+        }
+        if tr.fraction < 1.0 {
+            at = [tr.end[0], tr.end[1], tr.end[2] - mins[2]];
+        }
     }
     let tr = world.trace(
         at,

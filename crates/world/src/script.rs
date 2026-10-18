@@ -307,10 +307,11 @@ struct Actor<'a> {
 }
 
 /// When an animation started in level frame `level` starts for the client: one
-/// frame earlier, except on the first frame (the client's clock still at 0, the
-/// level's time is taken).
+/// frame earlier, but in the frames before the client draws its first (up to the
+/// one after the player begins), where its clock is still at 0 and the level's time
+/// is taken (`PM_SetAnimFinal`'s `cg.time ? cg.time : level.time`).
 fn client_time(level: i32) -> i32 {
-    if level == FIRST_FRAME {
+    if level <= PLAYER_BEGIN + FRAME_MS {
         level
     } else {
         level - FRAME_MS
