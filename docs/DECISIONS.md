@@ -972,3 +972,24 @@ everywhere or only for captures and tests, the owner chose everywhere: one forma
 so what the views verify is what the viewer and benchmarks run. On a PC whose
 OpenGL gives the original 8 bits, its pictures differ from these by a level here
 and there.
+
+## 2026-10-19: Captures pin the snapshot's eye and movers' places to the view (decided by Claude, pending review)
+
+t3_stamp's intro camera never ends in a capture with the AI frozen, so the server
+sent only what the camera saw, and SP's cgame placed a moving mover at its real
+clock, not the pinned time. The capture patch now builds the snapshot from the
+pinned view (`cg_swjkjaView`) and places a mover at `cg_swjkjaTime`, as it already
+turned one: what a capture shows is then the view at its time, as this renderer
+draws it. The other way, modelling the camera's snapshot and the client's clock,
+would tie every scripted view to its cutscene. Captures taken before this were not
+taken again; one that showed a camera's entities may differ if taken again.
+
+## 2026-10-19: A sliding entity is linked where it is (decided by Claude, pending review)
+
+A door opening was linked over its whole way, so the server sent it to a view that
+saw any of that way. The server relinks a mover where it is each frame
+(`SV_LinkEntity`), and scripted movers travel thousands of units (t3_stamp's
+cranes, 6,144), so a sliding brush entity and its "model2" are now linked where
+they are at the frame's time, once they have moved. yavin1's open door renders as
+before.
+

@@ -1,8 +1,16 @@
 diff --git a/code/cgame/cg_ents.cpp b/code/cgame/cg_ents.cpp
-index 4c8ea97..3c128af 100644
+index 4c8ea97..edf0010 100644
 --- a/code/cgame/cg_ents.cpp
 +++ b/code/cgame/cg_ents.cpp
-@@ -1779,7 +1779,11 @@ Ghoul2 Insert End
+@@ -1775,11 +1775,18 @@ Ghoul2 Insert End
+ 
+ 	if ( posData )
+ 	{
+-		EvaluateTrajectory( posData, cg.time, cent->lerpOrigin );
++		// swjkja reference capture: a moving mover (a script's or a door's move,
++		// from level time) where it is at the pinned time (ms).
++		EvaluateTrajectory( posData, cg_swjkjaTime.string[0] && cent->currentState.eType == ET_MOVER
++			? cg_swjkjaTime.integer : cg.time, cent->lerpOrigin );
  	}
  
  	// FIXME: this will stomp an apos trType of TR_INTERPOLATE!!
@@ -335,6 +343,26 @@ index 88d41de..fea2397 100644
  		sv.timeResidual -= frameMsec;
  		sv.time += frameMsec;
  		re.G2API_SetTime(sv.time,G2T_SV_TIME);
+diff --git a/code/server/sv_snapshot.cpp b/code/server/sv_snapshot.cpp
+index 149a0eb..e3332d1 100644
+--- a/code/server/sv_snapshot.cpp
++++ b/code/server/sv_snapshot.cpp
+@@ -547,8 +547,14 @@ static clientSnapshot_t *SV_BuildClientSnapshot( client_t *client ) {
+ */
+ 	// find the client's viewpoint
+ 
++	// swjkja reference capture: a view pinned by cg_swjkjaView is the snapshot's
++	// eye, as a camera's is: the server sends what that view sees.
++	const char *swjkjaView = Cvar_VariableString( "cg_swjkjaView" );
++	if ( swjkjaView[0] && sscanf( swjkjaView, "%f %f %f", &org[0], &org[1], &org[2] ) == 3 )
++	{
++	}
+ 	//if in camera mode use camera position instead
+-	if ( VM_Call( CG_CAMERA_POS, org))
++	else if ( VM_Call( CG_CAMERA_POS, org))
+ 	{
+ 		//org[2] += clent->client->viewheight;
+ 	}
 diff --git a/codemp/cgame/cg_light.c b/codemp/cgame/cg_light.c
 index 976ae03..fd4daed 100644
 --- a/codemp/cgame/cg_light.c

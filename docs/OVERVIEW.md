@@ -243,7 +243,7 @@ From [ROADMAP.md](ROADMAP.md):
 | 0 | Baseline: the original's numbers | multiplayer done; single-player and full-game frame spikes pending |
 | 1 | Assets | done |
 | 2 | Map viewer | done, speed goal met |
-| 3 | Models: Ghoul2, MD3, skins, sabers, effects | in progress: NPCs spawn, animate, run their scripts, look, cast shadows, open the doors they stand in; next: movers' motion, then AI |
+| 3 | Models: Ghoul2, MD3, skins, sabers, effects | in progress: NPCs spawn, animate, run their scripts, look, cast shadows, open the doors they stand in; scripts move brush entities; next: the rest of movers' motion, then AI |
 | 4 | Single-player: collision, movement, entities, scripts, AI, sound, UI, saves | partly started (scripts, traces) |
 | 5 | Multiplayer: protocol, server, client, bots | not started |
 | 6 | Mods | not started |

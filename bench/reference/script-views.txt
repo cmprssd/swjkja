@@ -22,9 +22,12 @@
 # A tenth column is how far behind the eye the capture's player stands (128 if
 # none): 128 behind the classroom views at y -1200 lands on Luke, whom setviewpos
 # then kills.
+# stamp_cranes looks along t3_stamp's crane line as its intro moves the cranes
+# (t3_stamp/crane_move): crane_1 and its crate 400 units ahead, moving.
 academy1  academy1_class   -1400 -1260 790   15 90 0   12345
 academy2  academy2_class   -1400 -1200 780   15 90 0   12345   64
 academy4  academy4_class   -1400 -1200 780   15 90 0   12345   64
 academy6  academy6_class   -1400 -1200 780   15 90 0   12345   64
 yavin1    yavin1_students  3990 -120 30   15 90 0   12345
 vjun2     vjun2_imp_stance 626 1654 3095   20 135 0   3000
+t3_stamp  stamp_cranes     -3584 0 1000   10 270 0   22000

@@ -19,7 +19,10 @@
 //! conditions, task groups, signals, `use` of other script runners, `affect`,
 //! which hands a block to an NPC (`FLUSH` drops the rest of its script, `INSERT`
 //! runs the block first) and runs it at once, and `run`, which runs another script
-//! in place (yavin1's opening runs its intro). Commands that move an NPC
+//! in place (yavin1's opening runs its intro). The brush entities scripts name move
+//! where `move` sends them (`Lerp2Pos`: to a `ref_tag` or a point, over its time),
+//! their task completing on the mover's first turn there (its angles, when `move`
+//! gives them too, and `rotate` are left out). Commands that move an NPC
 //! (`SET_NAVGOAL`, `SET_ORIGIN`, ...) are left out (those that complete later never
 //! do, as with the AI frozen), and so are cameras (but when one is first enabled)
 //! and the other commands. A random number is its range's low end
@@ -30,6 +33,8 @@ use std::collections::HashMap;
 
 use swjkja_icarus::{Block, Member, Node, id};
 
+use crate::Vec3;
+use crate::brush_entity::Slide;
 use crate::static_model::Pose;
 
 /// The level time (ms) of the server's first frame on a map: four settling frames
@@ -291,12 +296,29 @@ struct Body<'a> {
     slots: [Option<u32>; 3],
 }
 
+/// A brush entity scripts move: where it is and its moves.
+struct Moving {
+    origin: Vec3,
+    linear: bool,
+    slides: Vec<Slide>,
+    /// The move under way (`TID_MOVE_NAV`): its task and the level time it ends.
+    pending: Option<(u32, i32)>,
+}
+
+impl Moving {
+    /// `currentOrigin` at level time `level`.
+    fn at(&self, level: i32) -> Vec3 {
+        self.slides.last().map_or(self.origin, |s| s.at(level))
+    }
+}
+
 /// An entity that runs scripts (its `CSequencer` and `CTaskManager`): an NPC, with
-/// a body, or a script runner.
+/// a body, a script runner, or a mover.
 struct Actor<'a> {
     /// The name scripts find it by (`script_targetname`).
     name: Option<&'a str>,
     body: Option<Body<'a>>,
+    mover: Option<Moving>,
     groups: Vec<Group<'a>>,
     stack: Vec<Cursor<'a>>,
     /// When the current timed wait started (`CTask` time stamp).
@@ -338,6 +360,7 @@ impl<'a> Actor<'a> {
         let mut actor = Self {
             name,
             body,
+            mover: None,
             groups: Vec::new(),
             stack: Vec::new(),
             wait_since: None,
@@ -576,6 +599,57 @@ impl<'a> Actor<'a> {
         }
     }
 
+    /// `Lerp2Pos` for `move` command `b`, as task `task` at level time `level`: it
+    /// moves from where it is to the tag or point `b` names, over `b`'s time (1 ms
+    /// at least), slowing at the end unless "linear"; its task (in the current
+    /// group) completes as it gets there, and one it stomps completes now. A tag
+    /// not found fails the task: nothing moves.
+    fn move_to(&mut self, b: &Block, tags: &HashMap<String, Vec3>, task: u32, level: i32) {
+        let float = |n: usize| b.members.get(n).and_then(Member::float).unwrap_or(0.0);
+        let (to, mut at) = match b.members.first().map(|m| m.id) {
+            Some(id::TAG) => (tags.get(&text(b, 1).to_ascii_lowercase()).copied(), 3),
+            Some(id::VECTOR) => (Some([float(1), float(2), float(3)]), 4),
+            _ => (None, 0),
+        };
+        // Its angles, if given, are left out.
+        if b.members.get(at).is_some_and(|m| m.id == id::VECTOR) {
+            at += 4;
+        }
+        let Some(to) = to else { return };
+        let duration = match float(at) as i32 {
+            0 => 1,
+            d => d,
+        };
+        if let Some(g) = self.current_group() {
+            self.groups[g].tasks.push((task, false));
+        }
+        let m = self.mover.as_mut().unwrap();
+        let from = m.at(level);
+        let slide = Slide {
+            start: level,
+            from,
+            to,
+            duration,
+            linear: m.linear,
+        };
+        m.slides.push(slide);
+        if let Some((old, _)) = m.pending.replace((task, level + duration)) {
+            self.complete(old);
+        }
+    }
+
+    /// `G_MoverTeam`'s check on its turn at `level`: a move that has got there
+    /// completes its task.
+    fn reach(&mut self, level: i32) {
+        if let Some(m) = &mut self.mover
+            && let Some((task, end)) = m.pending
+            && end <= level
+        {
+            m.pending = None;
+            self.complete(task);
+        }
+    }
+
     /// The group whose body the innermost `do` runs, if any.
     fn current_group(&self) -> Option<usize> {
         self.stack.iter().rev().find_map(|c| match c.kind {
@@ -603,6 +677,9 @@ impl<'a> Actor<'a> {
             }
         }
         if let Some((_, end)) = self.voice {
+            at(frame_from(end));
+        }
+        if let Some((_, end)) = self.mover.as_ref().and_then(|m| m.pending) {
             at(frame_from(end));
         }
         let Some(body) = &self.body else { return next };
@@ -679,14 +756,27 @@ pub struct Runner {
     pub delay: i32,
 }
 
+/// A brush entity scripts can move: its name (`script_targetname`), where it
+/// stands, and whether it moves at one speed ("linear").
+#[derive(Debug, Clone)]
+pub struct Mover {
+    pub name: String,
+    pub origin: Vec3,
+    pub linear: bool,
+}
+
 /// The scripts a map runs besides its NPCs' spawnscripts: its script runners, the
 /// names its player's spawn point uses as the player begins, and the scripts the
-/// runners' scripts `run` (by name, in lower case; those runs reach too).
+/// runners' scripts `run` (by name, in lower case; those runs reach too); the
+/// places its `ref_tag`s name (in lower case), and the movers scripts can name.
 #[derive(Debug, Clone, Default)]
 pub struct Level {
     pub runners: Vec<Runner>,
     pub begin: Vec<String>,
     pub runs: HashMap<String, std::sync::Arc<Vec<Node>>>,
+    pub tags: HashMap<String, Vec3>,
+    /// In spawn order; the caller fills them ([`Timelines::movers`]).
+    pub movers: Vec<Mover>,
 }
 
 impl Level {
@@ -776,10 +866,24 @@ impl Level {
                 }
             }
         }
+        // TAG_Add: a tag's name in lower case, the first of a name kept; those with
+        // an "ownername" belong to it, and the movers here have none.
+        let mut tags = HashMap::new();
+        for e in entities {
+            if class(e, "ref_tag")
+                && e.get("ownername").is_none()
+                && let Some(name) = e.get("targetname")
+            {
+                let (origin, _) = crate::static_model::origin_and_angles(e);
+                tags.entry(name.to_ascii_lowercase()).or_insert(origin);
+            }
+        }
         Self {
             runners,
             begin,
             runs,
+            tags,
+            movers: Vec::new(),
         }
     }
 
@@ -916,6 +1020,11 @@ impl<'a> World<'a> {
                         let name = text(b, 0).to_owned();
                         self.use_targets(&name, level);
                     }
+                    id::MOVE if a.mover.is_some() => {
+                        let task = self.next_task;
+                        self.next_task += 1;
+                        a.move_to(b, &self.level.tags, task, level);
+                    }
                     id::CAMERA => {
                         if b.members.first().and_then(Member::float) == Some(CAMERA_ENABLE) {
                             self.camera.get_or_insert(client_time(level));
@@ -1021,9 +1130,19 @@ impl<'a> World<'a> {
                         let name = text(b, 0);
                         let insert =
                             b.members.get(1).and_then(Member::float) == Some(AFFECT_INSERT);
-                        let target = self.actors.iter().position(|t| {
-                            t.body.is_some() && t.name.is_some_and(|n| n.eq_ignore_ascii_case(name))
-                        });
+                        // An NPC by that name, or the last mover spawned with it (the
+                        // name map keeps the last one registered).
+                        let named =
+                            |t: &Actor| t.name.is_some_and(|n| n.eq_ignore_ascii_case(name));
+                        let target = self
+                            .actors
+                            .iter()
+                            .position(|t| t.body.is_some() && named(t))
+                            .or_else(|| {
+                                self.actors
+                                    .iter()
+                                    .rposition(|t| t.mover.is_some() && named(t))
+                            });
                         if let Some(t) = target {
                             self.actors[t].affect(body, insert);
                             if depth < 8 {
@@ -1069,6 +1188,7 @@ impl<'a> World<'a> {
         for i in self.runners..self.actors.len() {
             self.check_voice(i, level);
             self.actors[i].movement(level, msec);
+            self.actors[i].reach(level);
             self.script(i, level, 0);
         }
     }
@@ -1100,7 +1220,7 @@ impl<'a> World<'a> {
 }
 
 /// What a map's scripts do up to [`HORIZON`] ([`timelines`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Timelines {
     /// One per NPC, in order.
     pub npcs: Vec<Timeline>,
@@ -1108,6 +1228,8 @@ pub struct Timelines {
     /// camera then draws the view (`CGCam_RenderScene`), its field of view
     /// [`CAMERA_DEFAULT_FOV`] until a zoom; cameras are not modelled further.
     pub camera: Option<i32>,
+    /// One per mover of the level ([`Level::movers`]), in order: its moves.
+    pub movers: Vec<Vec<Slide>>,
 }
 
 /// A camera's field of view as it is enabled (`CAMERA_DEFAULT_FOV`).
@@ -1150,6 +1272,17 @@ pub fn timelines(
             slots: [None; 3],
         };
         actors.push(Actor::new(n.stance.name.as_deref(), Some(body), n.script));
+    }
+    let first_mover = actors.len();
+    for m in &level.movers {
+        let mut actor = Actor::new(Some(&m.name), None, None);
+        actor.mover = Some(Moving {
+            origin: m.origin,
+            linear: m.linear,
+            slides: Vec::new(),
+            pending: None,
+        });
+        actors.push(actor);
     }
     let mut world = World {
         actors,
@@ -1206,6 +1339,10 @@ pub fn timelines(
         }
         c
     };
+    let movers = world.actors[first_mover..]
+        .iter_mut()
+        .map(|a| std::mem::take(&mut a.mover.as_mut().unwrap().slides))
+        .collect();
     let npcs = world
         .actors
         .into_iter()
@@ -1223,6 +1360,7 @@ pub fn timelines(
     Timelines {
         npcs,
         camera: world.camera,
+        movers,
     }
 }
 
