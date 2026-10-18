@@ -935,3 +935,16 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   a standard written into each view's line, would hold only for the captures.
   A camera that zooms before sprites show, or never sees any, would set another
   standard; no reference view has one.
+
+## 2026-10-18: STARTINSOLID spawners keep their height; the client's clock starts after the intro frame (decided by Claude, pending review)
+
+- **An NPC whose spawner has STARTINSOLID (128) is not lifted out of the floor**
+  (`NPC_Begin` runs `G_CheckInSolid` with fix only without it). It still falls onto
+  the floor below. The capture logs show the difference: 672.0 against 672.125 for
+  the academies' students.
+- **Animations set before the client draws start at the level's time**, through the
+  frame after the player begins (2050). Before, only the first frame (1550) did. In
+  the captures the client draws its first frame after that server frame, and the logs
+  give 2050 for every animation set then. A game whose client draws sooner would
+  start them a frame earlier, as it does later ones. This renderer follows the
+  captures.

@@ -381,6 +381,45 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Academy students placed as STARTINSOLID leaves them, 2026-10-18
+
+academy6_class's 0.85 was a thin outline around every student, held poses as much
+as looping ones (jedi_rm2 2.33, in a two-frame hold): each body a fraction of a
+pixel off. The capture log gives the cause. It has academy6's students at z 672.0
+and this renderer had them at 672.125. academy1's and academy2's are at 672.1 in
+the log, and four of academy4's at 672.0 (four of its five worst students). Every
+spawner at 672.0 has spawnflag 128 (STARTINSOLID: 224-228), and none of those at
+672.1 has it. `NPC_Begin` runs `G_CheckInSolid` with fix only without that flag. Its
+trace from the origin down to the box's bottom hits the floor the spawner stands on
+and puts the NPC on the trace's end, 0.125 (`SURFACE_CLIP_EPSILON`) higher. With the
+flag, nothing moves the NPC, and the first movement frames leave it there.
+`npc::settle` now skips the lift for those spawners.
+
+The log also has every animation set in the frame after the player begins (2050)
+at 2050: academy1 (2), academy4 (6), academy6 (8) and t2_dpred (7). Here they started
+a frame earlier, at 2000. `PM_SetAnimFinal` takes `cg.time` once the client has
+drawn, and the level's time before that. The client's clock is still at 0 until it
+draws its first frame, which comes after that server frame, as on the first frame
+(1550). Animations set in frames up to 2050 now start at the level's time.
+
+| View | Mean difference (main) | Pixels off by > 16 (main) |
+|------|------|------|
+| academy6_class | 0.39 (0.85) | 0.1% (0.8%) |
+| academy4_class | 0.37 (0.48) | 0.1% (0.2%) |
+| yavin1_students | 0.27 (0.40) | 0.0% (0.2%) |
+
+- With the placement alone: academy6 0.39, academy4 0.38, yavin1_students 0.27.
+  The clock gives academy4's last 0.01 (kyle and the player, in `BOTH_CIN_*` loops
+  from the intro). The 42 other views render pixel for pixel as on main.
+- All 45 views: median 0.26, 38 under 0.5 (main 37), 41 under 1.0.
+- What is left on academy6 is mostly jedi_kdm2 (1.44) and jeditrainer (1.01). The
+  capture starts their `BOTH_CIN_9` at 12137 on the client's clock (academy4's at
+  12141, academy2's at 12138), and this renderer starts it at 12150, a frame behind
+  the server's 12200. The original's lag depends on its frame timing. Rendered 13 ms
+  later, so their animation lines up, they fall to 0.30 and 0.25.
+- `bench_world` was not run: the change moves NPCs once, as they spawn, and sets
+  different start times, with nothing added per frame.
+
 ## ffa3_spawn3's lift: missing from the world-only reference, 2026-10-17
 
 The lift that #69 found standing lower in the original than here is `*4` (lift2:
