@@ -381,6 +381,41 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Curved surfaces with fewer rows at a distance, 2026-10-18
+
+ffa3_spawn1's 0.41 was its curved surfaces: the arch's outline a pixel off along
+its curve, and the round tower's upper part a field of texture-shaped specks. This
+renderer drew every patch grid at full detail; the original's `RB_SurfaceGrid`
+skips the rows and columns whose error (one over their distance from the coarser
+curve, `R_SubdividePatchToGrid`) is above `r_lodCurveError` (250) over the grid's
+distance along the view less its LOD radius (`LodErrorForVolume`), the same in both
+games. The grids keep all their vertices; each view now picks the rows and columns
+when it copies the visible surfaces' indexes (`a_grid_drops_its_columns_as_the_view_moves_away`
+in `crates/world/tests/patches.rs`).
+
+| View | Mean difference (main) | Pixels off by > 16 (main) |
+|------|------|------|
+| ffa3_spawn1 | 0.29 (0.41) | 0.0% (0.1%) |
+| ffa3_spawn3 | 0.26 (0.34) | 0.1% (0.1%) |
+| ffa3_up | 0.08 (0.18) | 0.0% (0.1%) |
+| ffa3_spawn2 | 0.18 (0.20) | 0.0% (0.0%) |
+| ctf4_spawn2 | 0.09 (0.12) | 0.0% (0.0%) |
+| ctf4_up | 0.25 (0.26) | 0.0% (0.0%) |
+| duel5_spawn2 | 0.15 (0.16) | 0.0% (0.0%) |
+| kor2_troopers | 0.22 (0.23) | 0.0% (0.0%) |
+| rancor_plate | 0.29 (0.30) | 0.3% (0.3%) |
+
+- 14 views changed, every one closer to the reference on the changed pixels
+  (ffa3_spawn1's 63,381: 2.19 to 0.48; duel5_spawn2's 992: 8.47 to 0.30; the hevil
+  fans', rancor_gates' and ffa3_spawn2's a few thousand each, 2-10 to 0.1-0.5).
+  The other 33 render pixel for pixel as on main.
+- What is left on ffa3_spawn1 is rounding: 90% of the difference is pixels one
+  level off.
+- Grids in materials with deforms (rebuilt every frame) are still drawn at full
+  detail.
+- All 47 views: median 0.21, 41 under 0.5, 44 under 1.0 (as on main). The largest
+  unexplained multiplayer world view is now ctf1_fog_above (0.40).
+
 ## Single player's environment mapping, 2026-10-18
 
 vjun1_hall's 1.46 (3.0% of pixels off by more than 16) was the glass floor tiles

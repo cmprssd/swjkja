@@ -106,3 +106,37 @@ fn patches_of_different_groups_are_not_stitched() {
     let mut grids = vec![Some(fine), Some(coarse)];
     assert_eq!(stitch_all(&mut grids), 0);
 }
+
+#[test]
+fn a_grid_drops_its_columns_as_the_view_moves_away() {
+    // The curved patch above: 5 columns, the middle one's error 1/16, the two
+    // between 1/3.8806 (see a_curved_patch_subdivides_until_within_tolerance). Its
+    // LOD box is (0, 0, 0)-(128, 128, 16): origin (64, 64, 8), radius 90.86.
+    let points = patch(0.0, |c, _| if c == 1 { 32.0 } else { 0.0 });
+    let mut g = subdivide(3, 3, &points, 4.0);
+    g.lod_origin = [64.0, 64.0, 8.0];
+    g.lod_radius = 90.86;
+    let lod = g.lod();
+    let forward = [1.0, 0.0, 0.0];
+    let at = |x: f32| lod.allowed_error(lod.lod_origin, [64.0 - x, 64.0, 8.0], forward);
+    // 250 / (distance - radius), and 250 within a unit of the box.
+    assert_eq!(at(0.0), 250.0);
+    assert!((at(1090.86) - 250.0 / 1000.0).abs() < 1e-6);
+    // Only the distance along the view counts.
+    let side = lod.allowed_error(lod.lod_origin, [64.0, 5064.0, 8.0], forward);
+    assert_eq!(side, 250.0);
+
+    // Up close all 5 columns: 4 quads in the one row, as RB_SurfaceGrid orders them.
+    let mut near = Vec::new();
+    lod.indexes(at(500.0), 10, &mut near);
+    assert_eq!(&near[..6], [10, 15, 11, 11, 15, 16]);
+    assert_eq!(near.len(), 4 * 6);
+    // Past 968.6 + radius (where 1/3.8806 > 250 / d) the middle column alone stays.
+    let mut mid = Vec::new();
+    lod.indexes(at(1100.0), 10, &mut mid);
+    assert_eq!(mid, [10, 15, 12, 12, 15, 17, 12, 17, 14, 14, 17, 19]);
+    // Past 4000 + radius only the corners.
+    let mut far = Vec::new();
+    lod.indexes(at(4200.0), 10, &mut far);
+    assert_eq!(far, [10, 15, 14, 14, 15, 19]);
+}

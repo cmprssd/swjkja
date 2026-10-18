@@ -186,7 +186,7 @@ difference per channel, 0-255; measured 2026-10-18):
 
 | Kind | Views | Mean difference |
 |------|------:|------|
-| Multiplayer world (sky, fog, fog volumes, flares, animated stages) | 19 | 0.05-0.41 |
+| Multiplayer world (sky, fog, fog volumes, flares, animated stages, curve LOD) | 19 | 0.05-0.40 |
 | Static and brush-entity models, rotating fans and drums | 18 | 0.14-5.33 |
 | Single-player NPCs (spawned, scripted, academy classes, yavin1's shuttle) | 10 | 0.10-0.39 |
 | **All** | **47** | **median 0.21; 41 under 0.5, 44 under 1.0** |
