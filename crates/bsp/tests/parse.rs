@@ -169,6 +169,22 @@ fn visibility_bits() {
 }
 
 #[test]
+fn multiplayer_pvs_reads_bit_7_before_the_row_for_a_point_in_solid() {
+    // R_inPVS takes cluster -1's bit as bit 7 of the byte before the row.
+    let mut vis = ints(&[3, 1]);
+    vis.extend([0b1000_0101, 0b010, 0b111]);
+    let data = map(&[(1, shader("a")), (7, model((0, 0))), (16, vis)]);
+    let v = Bsp::parse(&data).unwrap().visibility;
+    assert!(v.r_in_pvs(1, -1));
+    assert!(!v.r_in_pvs(2, -1));
+    assert!(!v.r_in_pvs(0, -1));
+    // A point in solid reads row 0.
+    assert!(!v.r_in_pvs(-1, 1));
+    assert!(v.r_in_pvs(-1, 2));
+    assert!(v.r_in_pvs(1, 1) && !v.r_in_pvs(1, 0));
+}
+
+#[test]
 fn entity_text_with_comments_and_spaces() {
     let ents = parse_entities(
         b"// leading comment\n{\n\"classname\" \"light\" // trailing\n\"origin\" \"1 2 3\"\n}\n{\n}\n",

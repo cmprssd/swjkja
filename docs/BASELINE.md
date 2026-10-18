@@ -381,6 +381,56 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Scaled models' specular, and a static model culled from solid, 2026-10-19
+
+vjun2_officer's 0.07 was mostly the officer's specular: his armour and gun
+(`models/players/stormtrooper/*`, `golan_arms`) were up to 60 levels brighter on
+their highlights, the rest of him exact. stofficeralt.npc scales him 105, and
+`RB_CalcSpecularAlpha` reflects in the model's space: a unit normal about the light
+turned into the scaled axes, so a model scaled by s reflects s times the unit
+reflection. This renderer reflected the world normal, which carries the scale, about
+the unit light: 2s²(n·l)n - l, more than s(2(n·l)n - l), and the fourth power makes
+it larger still. The specular now divides the normal's length out and scales the
+light by it (`shaders/world.wgsl`). Diffuse light needs nothing: n·l is the same in
+either space. A smaller directed light and a lower light point were tried first;
+each left the body's bias at zero but made fewer pixels exact.
+`scaled_models_reflect_their_light_as_the_original` (`crates/render/tests/retail.rs`)
+checks the officer's mean colour: the reference's to 0.03, 0.66 brighter without the
+fix.
+
+ffa5_lamps' 0.09 was two things above the screen's top edge. A `lamp_rotated.md3`
+at the top left, drawn here, is left out by the original: its cull point is in a
+wall (cluster -1), and multiplayer's `R_inPVS` does not check for that, reading bit
+7 of the byte before the view cluster's row, the previous row's padding past the
+last cluster (clear). `Visibility::r_in_pvs` (`crates/bsp`) reads the same bit, and
+multiplayer's static models cull by it.
+`ffa5_static_model_culled_from_solid_reads_the_pvs_padding`
+(`crates/render/tests/models.rs`) checks both lamps. The other, at the top right, is
+door `*12` in a far doorway: the reference shows the room behind it. The door was
+not open (an open door's 24-unit lip would show; none does): the server never sent
+it. Multiplayer captures pin only the view (`cg_swjkjaView`); the snapshot is built
+from where the capture's player spawned, and two of ffa5's spawn points (one is
+ffa5_pipes' eye, 2216 -1080 664) see door `*13` but not `*12`. Rendered without
+`*12`, the doorway matches to 0.0003.
+
+| View | Mean difference (main) | Exact pixels (main) |
+|------|------|------|
+| vjun2_officer | 0.04 (0.07) | 95.5% (95.1%) |
+| ffa5_lamps | 0.07 (0.09) | 98.0% (97.9%) |
+
+- Five views change: these two, and dpred_troopers and kor2_troopers by 29 and 10
+  pixels (normals not quite unit length), level. The 42 others render pixel for
+  pixel as on main. All 47: median 0.01, 43 under 0.5, 45 under 1.0, 21 at 0.00.
+- What is left on ffa5_lamps is the door (0.06 of its 0.07); the rest is 0.009.
+- What is left on vjun2_officer: its ammo rack's items, turned at random by the
+  original (as dpred_racks'), half of it; and pixels one level brighter here, never
+  darker, each channel on its own, over some faces of the door frame on the left
+  (`cell_door_frame.md3`, scaled 1 2 1.34, `rgbGen lightingDiffuse`), a third of it.
+  Its light point is the original's; not found yet.
+- Left out: a non-uniformly scaled model's specular uses the normal's length, not
+  each axis's scale; and the original's viewer for a scaled model points from the
+  unscaled vertex (origin plus the turned model-space point), not the drawn one.
+
 ## Vertex-lit surfaces through their light style, 2026-10-18
 
 The next five views' 0.10-0.14 (hoth2_fog, rancor_gates, rancor_drum, stamp_crates,

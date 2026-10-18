@@ -219,6 +219,29 @@ impl Visibility {
         }
         self.bits[from * self.bytes_per_cluster + to / 8] & (1 << (to % 8)) != 0
     }
+
+    /// Multiplayer's `R_inPVS` (codemp `tr_world.cpp`) for two points' clusters: the
+    /// bit of `to` in `from`'s row (`CM_ClusterPVS`, row 0 for a cluster outside the
+    /// map). It does not check `to` for -1, so a point in solid reads bit 7 of the
+    /// byte before the row: the last byte of the previous row, which holds only
+    /// padding past the last cluster (clear) unless the row is full. Before row 0
+    /// lies other memory; taken as clear.
+    pub fn r_in_pvs(&self, from: i32, to: i32) -> bool {
+        if self.clusters == 0 {
+            return true;
+        }
+        let row = usize::try_from(from)
+            .ok()
+            .filter(|&c| c < self.clusters)
+            .unwrap_or(0)
+            * self.bytes_per_cluster;
+        let (byte, bit) = match usize::try_from(to) {
+            Ok(to) => (row + to / 8, to % 8),
+            Err(_) if row == 0 => return false,
+            Err(_) => (row - 1, 7),
+        };
+        self.bits.get(byte).is_some_and(|b| b & (1 << bit) != 0)
+    }
 }
 
 /// One `{ "key" "value" ... }` block of the entity lump.

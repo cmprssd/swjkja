@@ -68,6 +68,43 @@ fn ffa5_static_models_cull_like_the_original() {
     eprintln!("{total} of 84 models drawn in the rings view");
 }
 
+/// Multiplayer's `R_inPVS` does not check for a cull point in solid (cluster -1): it
+/// reads bit 7 of the byte before the view cluster's row, padding past the last
+/// cluster. ffa5's lamp above the lamps view's top left edge (bench/reference/
+/// model-views.txt) has its cull point in a wall, and the original leaves it out;
+/// its twin on the right, culled by a point in the open, is drawn.
+#[test]
+fn ffa5_static_model_culled_from_solid_reads_the_pvs_padding() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/mp/ffa5.bsp").unwrap()).unwrap();
+    let mut models = StaticModels::load(&vfs, &bsp, &[], "maps/mp/ffa5.bsp", 0);
+    let vis = WorldVis::new(&bsp, vec![SurfaceCull::Never; bsp.surfaces.len()]);
+    models.locate(&vis);
+    let find = |origin: [f32; 3]| {
+        models
+            .instances
+            .iter()
+            .position(|m| m.origin == origin)
+            .unwrap()
+    };
+    let camera = Camera::new([0.0, -200.0, 100.0], [0.0, 270.0, 0.0], 1280, 720);
+    let frustum = Frustum::new(&camera);
+    let cluster = vis.cluster(camera.origin);
+    let left = find([1024.0, -1728.0, 830.0]);
+    let right = find([-896.0, -1472.0, 704.0]);
+    assert_eq!(models.instances[left].cull_cluster, -1);
+    assert_eq!(models.visible(left, &camera, &frustum, cluster, &vis), None);
+    assert!(
+        models
+            .visible(right, &camera, &frustum, cluster, &vis)
+            .is_some()
+    );
+}
+
 /// Single player's fog choice depends on the view's fog when a model's box straddles
 /// fogs; the renderer bakes the choice seen from outside any fog, which is right only
 /// if no retail model's choice changes with the view. One does (a known difference).

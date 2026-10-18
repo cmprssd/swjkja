@@ -345,3 +345,65 @@ fn vertex_lit_surfaces_take_their_style_as_the_original() {
         );
     }
 }
+
+/// The original reflects a model's light for its specular stages
+/// (`RB_CalcSpecularAlpha`) in the model's space: a unit normal about the light
+/// turned into the scaled axes, so a model scaled by s reflects s times the unit
+/// reflection. vjun2's alternate officer (bench/reference/npc-views.txt's
+/// vjun2_officer) is scaled 105, its armour and gun specular; reflecting its scaled
+/// normal about the unit light made it 0.66 brighter than the reference.
+#[test]
+fn scaled_models_reflect_their_light_as_the_original() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let gpu = Gpu::new_headless().unwrap();
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let shaders = swjkja_shader::ShaderText::load(&vfs).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/vjun2.bsp").unwrap()).unwrap();
+    let world = swjkja_world::World::load(&bsp, &Default::default());
+    let mut textures = TextureSet::new(&gpu).unwrap();
+    let time = 12.345;
+    let mut renderer = WorldRenderer::new(
+        &gpu,
+        &mut textures,
+        &vfs,
+        &shaders,
+        &bsp,
+        &world,
+        "maps/vjun2.bsp",
+        time,
+    )
+    .unwrap();
+    let (width, height) = (1280, 720);
+    let target = Target::new(&gpu, width, height).unwrap();
+    let depth_slot = textures.add_view(target.depth_copy.view);
+    let camera = Camera::new([1264.0, 1800.0, 3300.0], [5.0, 90.0, 0.0], width, height);
+    target
+        .render(&gpu, renderer.clear_color(), |frame| {
+            renderer
+                .draw(frame, &textures, &camera, time, depth_slot)
+                .unwrap()
+        })
+        .unwrap();
+    let rgba = target.read_rgba(&gpu).unwrap();
+    // The officer's mean colour (x 590-759, y 290-609).
+    let mut sum = [0u64; 3];
+    for y in 290..610 {
+        for x in 590..760 {
+            let p = (y * width as usize + x) * 4;
+            for (c, s) in sum.iter_mut().enumerate() {
+                *s += u64::from(rgba[p + c]);
+            }
+        }
+    }
+    let ours = sum.map(|s| s as f32 / (320.0 * 170.0));
+    let reference = [81.576, 56.931, 40.591];
+    for (got, want) in ours.iter().zip(reference) {
+        assert!(
+            (got - want).abs() <= 0.1,
+            "the officer's mean colour {ours:?}, the reference {reference:?}"
+        );
+    }
+}
