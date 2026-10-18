@@ -219,10 +219,10 @@ enum DynamicSource {
         indexes: Vec<u32>,
         deforms: Vec<swjkja_shader::Deform>,
     },
-    /// Flare surfaces (origin, normal), and the flare radius (the shader's
-    /// portalRange, or 30).
+    /// Flare surfaces (surface, origin, normal), and the flare radius (the
+    /// shader's portalRange, or 30).
     Flares {
-        flares: Vec<([f32; 3], [f32; 3])>,
+        flares: Vec<(usize, [f32; 3], [f32; 3])>,
         radius: f32,
     },
     /// The NPCs' shadows in fog `fog`: the polygons in that fog, from the shadows'
@@ -1204,10 +1204,10 @@ impl WorldRenderer {
                 // The posed models' surfaces, then each turning brush entity's,
                 // drawn just after the others (first index, index count, bones).
                 let mut moved_draws: Vec<(u32, u32, u32)> = Vec::new();
-                let flares: Vec<([f32; 3], [f32; 3])> = group
+                let flares: Vec<(usize, [f32; 3], [f32; 3])> = group
                     .iter()
                     .filter_map(|&i| match *geometry(i) {
-                        Geometry::Flare { origin, normal, .. } => Some((origin, normal)),
+                        Geometry::Flare { origin, normal, .. } => Some((i, origin, normal)),
                         _ => None,
                     })
                     .collect();
@@ -1763,8 +1763,8 @@ impl WorldRenderer {
             .mapped_mut()?
             .copy_from_slice(bytemuck::bytes_of(&data));
 
-        // Geometry that depends on the view and time: deforms (RB_DeformTessGeometry)
-        // and flares (RB_SurfaceFlare), into the dynamic buffers.
+        // Geometry that depends on the view and time: deforms (RB_DeformTessGeometry),
+        // into the dynamic buffers; flares follow once the visible surfaces are known.
         let [forward, right, up] = camera.axes();
         let view = deform::View {
             forward,
@@ -1794,10 +1794,9 @@ impl WorldRenderer {
                     deform::apply(deforms, &mut v, &mut i, &view, time, time * 1000.0);
                     (v, i)
                 }
-                DynamicSource::Flares { flares, radius } => {
-                    flare_quads(flares, *radius, camera, &view)
-                }
-                DynamicSource::Shadows { .. } | DynamicSource::Sprites { .. } => continue,
+                DynamicSource::Flares { .. }
+                | DynamicSource::Shadows { .. }
+                | DynamicSource::Sprites { .. } => continue,
             };
             let out: Vec<Vertex> = verts
                 .iter()
@@ -1834,6 +1833,8 @@ impl WorldRenderer {
         // `or.viewOrigin`, R_CullLocalBox).
         let bone_table = bones.mapped_mut()?;
         let ms = (f64::from(time) * 1000.0).round() as i32;
+        // The brush entities' surfaces this view draws, for their flares.
+        let mut brush_shown = Vec::new();
         for b in &self.brushes {
             let sent = b.broadcast
                 || b.link
@@ -1873,6 +1874,7 @@ impl WorldRenderer {
                 if culled {
                     continue;
                 }
+                brush_shown.push(s);
                 if let Some(g) = self.surface_gate[s] {
                     gate_open[g] = true;
                 }
@@ -1893,6 +1895,47 @@ impl WorldRenderer {
         let mut shown = vec![false; self.surface_draw.len()];
         for &s in &visible {
             shown[s] = true;
+        }
+        // The flares of the surfaces drawn (RB_SurfaceFlare): like any surface, only
+        // from leaves the view sees, or from the brush entities it draws.
+        let mut flare_shown = shown.clone();
+        for &s in &brush_shown {
+            flare_shown[s] = true;
+        }
+        for m in &mut self.materials {
+            let Some(Dynamic {
+                source: DynamicSource::Flares { flares, radius },
+                vertex_offset,
+                index_offset,
+            }) = &m.dynamic
+            else {
+                continue;
+            };
+            let (verts, indexes) = flare_quads(
+                flares
+                    .iter()
+                    .filter(|f| flare_shown[f.0])
+                    .map(|f| (f.1, f.2)),
+                *radius,
+                camera,
+                &view,
+            );
+            let out: Vec<Vertex> = verts
+                .iter()
+                .map(|v| Vertex {
+                    xyz: v.xyz,
+                    normal: v.normal,
+                    st: v.st,
+                    lightmap: v.lightmap,
+                    color: v.color,
+                })
+                .collect();
+            let vstart = *vertex_offset as usize * size_of::<Vertex>();
+            vb[vstart..vstart + size_of_val(&out[..])].copy_from_slice(bytemuck::cast_slice(&out));
+            let istart = *index_offset as usize * 4;
+            ib[istart..istart + indexes.len() * 4].copy_from_slice(bytemuck::cast_slice(&indexes));
+            m.first_index = *index_offset;
+            m.index_count = indexes.len() as u32;
         }
         let mut sprite_view = None;
         let mut scattered = Vec::new();
@@ -2224,13 +2267,13 @@ fn lay_shadows(
 /// shrinking within 512 units (never below 5). The flare origin goes in the vertices'
 /// lightmap sets 2-3 for the depth test.
 fn flare_quads(
-    flares: &[([f32; 3], [f32; 3])],
+    flares: impl Iterator<Item = ([f32; 3], [f32; 3])>,
     radius: f32,
     camera: &Camera,
     view: &deform::View,
 ) -> (Vec<deform::DeformVertex>, Vec<u32>) {
     let (mut verts, mut indexes) = (Vec::new(), Vec::new());
-    for &(origin, normal) in flares {
+    for (origin, normal) in flares {
         let center = [0, 1, 2].map(|k| origin[k] + 3.0 * normal[k]);
         let dir = [0, 1, 2].map(|k| center[k] - camera.origin[k]);
         let dist = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();

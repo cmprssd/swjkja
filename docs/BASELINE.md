@@ -381,6 +381,52 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Flares hidden as the original hides them, 2026-10-18
+
+rancor_gates' 0.69 was almost all flares that this renderer drew and the original
+did not: four orange, three blue and four white ones in the room beyond the left
+gate, 2000-3300 units out, and five white ones on the ceilings behind the
+corridor's right wall and gate, 1000-1500 units out. dpred_racks' and dpred_guns'
+"world flares the original doesn't draw" were the same. Two causes:
+
+- **The depth test never saw any depth.** `RB_TestZFlare` is done in the vertex
+  shader, which reads the depth copy from the texture array, but the array's
+  binding was declared for the fragment stage only. Vulkan leaves that read
+  undefined; on the Intel HD 630 it gave 0, "nothing drawn", so every flare in the
+  view passed. That is why the stray flares came and went with the texture slots'
+  numbering (the blob shadows' section below). A debug render had every flare
+  reading 0, even those in front of the floor. With the binding visible to the
+  vertex stage, the ceiling flares fall behind the wall.
+- **Flares were drawn from every leaf.** The original adds a flare surface like any
+  other, from the leaves the view's cluster sees (no per-surface cull,
+  `R_CullSurface` skips `SF_FLARE`). This renderer drew all of a material's flares.
+  The far room's flares are outside rancor_gates' PVS; now only flares of the
+  visible surfaces (and of the brush entities the view draws) are built.
+
+| View | Mean difference (main) | Pixels off by > 16 (main) |
+|------|------|------|
+| rancor_gates | 0.25 (0.69) | 0.0% (1.1%) |
+| dpred_racks | 0.57 (7.03) | 1.6% (12.3%) |
+| dpred_guns | 1.02 (6.44) | 3.0% (12.2%) |
+| vjun2_imp_stance | 0.44 (0.50) | 0.5% (0.6%) |
+| ffa5_rings | 0.19 (0.22) | 0.0% (0.1%) |
+
+- With the PVS alone: rancor_gates 0.36 (the five ceiling flares left), dpred_racks
+  0.57, dpred_guns 1.02, ffa5_rings 0.19. The depth test then hides the ceiling
+  flares and a flare at the top of vjun2_imp_stance, and small ones on rancor_drum
+  and rancor_plate (a few hundred pixels, the same score). Every pixel that
+  changed now differs from the reference by 0.1-0.2 on average (4.5-33 on main).
+  The 38 other views render pixel for pixel as on main, duel5_spawn2's flares,
+  which the original draws, among them.
+- What is left on rancor_gates is three spots under 0.1% of the picture.
+  dpred_guns' 1.02 is the rack weapons the original turns at random.
+- All 45 views: median 0.25, 40 under 0.5 (main 38), 42 under 1.0 (main 41). Above
+  2 are only danger_rock (5.33) and ffa5_pipes (3.87).
+- `bench_world` was not run: per frame the change adds one pass over the flares
+  and a copy of the visible surfaces' flags.
+- A Vulkan validation layer would have reported the binding; the Vulkan SDK is not
+  installed on this machine.
+
 ## Academy students placed as STARTINSOLID leaves them, 2026-10-18
 
 academy6_class's 0.85 was a thin outline around every student, held poses as much

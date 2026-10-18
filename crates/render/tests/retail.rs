@@ -84,3 +84,76 @@ fn frames_in_flight_render_like_single_frames() {
     // Every submitted frame's GPU time came back exactly once.
     assert_eq!(gpu_times, runs.iter().map(|l| l + 2).sum::<usize>());
 }
+
+/// Flares are tested against the depth the world drew before them, and drawn only
+/// from leaves the view sees: on t2_rancor's rancor_gates view, the ceiling flares
+/// behind the corridor's wall and gates and the flares of the room beyond the left
+/// gate (outside the view's PVS) leave the picture as the original's reference
+/// shows it. Each box's brightest channel, measured from the reference capture.
+#[test]
+fn flares_behind_walls_and_outside_the_pvs_are_not_drawn() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let gpu = Gpu::new_headless().unwrap();
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let shaders = swjkja_shader::ShaderText::load(&vfs).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t2_rancor.bsp").unwrap()).unwrap();
+    let world = swjkja_world::World::load(&bsp, &Default::default());
+    let mut textures = TextureSet::new(&gpu).unwrap();
+    let time = 12.345;
+    let mut renderer = WorldRenderer::new(
+        &gpu,
+        &mut textures,
+        &vfs,
+        &shaders,
+        &bsp,
+        &world,
+        "maps/t2_rancor.bsp",
+        time,
+    )
+    .unwrap();
+    let (width, height) = (1280, 720);
+    let target = Target::new(&gpu, width, height).unwrap();
+    let depth_slot = textures.add_view(target.depth_copy.view);
+    let camera = Camera::new([-568.0, 4136.0, 1530.0], [5.0, 180.0, 0.0], width, height);
+    target
+        .render(&gpu, renderer.clear_color(), |frame| {
+            renderer
+                .draw(frame, &textures, &camera, time, depth_slot)
+                .unwrap()
+        })
+        .unwrap();
+    let rgba = target.read_rgba(&gpu).unwrap();
+    // A 9x9 box's brightest channel around each flare's place on screen: five on
+    // the ceiling behind the wall and the right gate, two in the room beyond the
+    // left gate. With those flares drawn, the boxes reach 97-234.
+    let brightest = |x: usize, y: usize| {
+        let mut max = 0;
+        for py in y - 4..=y + 4 {
+            for px in x - 4..=x + 4 {
+                let p = (py * width as usize + px) * 4;
+                max = max.max(*rgba[p..p + 3].iter().max().unwrap());
+            }
+        }
+        max
+    };
+    let boxes = [
+        (1118, 70),
+        (956, 156),
+        (885, 186),
+        (841, 206),
+        (1270, 70),
+        (232, 391),
+        (79, 439),
+    ];
+    let ours = boxes.map(|(x, y)| brightest(x, y));
+    let reference = [14, 32, 14, 50, 47, 0, 46];
+    for ((&got, want), place) in ours.iter().zip(reference).zip(boxes) {
+        assert!(
+            got.abs_diff(want) <= 4,
+            "box at {place:?}: {got}, the reference {want} (all: {ours:?})"
+        );
+    }
+}
