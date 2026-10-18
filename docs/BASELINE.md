@@ -381,6 +381,39 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Single player's environment mapping, 2026-10-18
+
+vjun1_hall's 1.46 (3.0% of pixels off by more than 16) was the glass floor tiles
+under the air purifiers (`textures/common/glass_security_tris`), not the purifiers'
+highlights the 2026-10-10 section below suspected: the tiles add a `tcGen
+environment` stage, and its gradients sat in different places, brighter on one side
+of each tile in the original and on the other here. Single player's renderer
+(`code/rd-vanilla` `RB_CalcEnvironmentTexCoords`) does not reflect the view about
+the normal as multiplayer's does: it takes `normal.xy * d - 0.5 * viewer.xy`
+(`d` the normal's dot with the direction to the eye), with no 0.5 offset. This
+renderer used multiplayer's formula on every map; single-player maps now use theirs
+(`single_player_environment_maps_as_the_original` in `crates/render/tests`).
+
+| View | Mean difference (main) | Pixels off by > 16 (main) |
+|------|------|------|
+| vjun1_hall | 0.58 (1.46) | 1.0% (3.0%) |
+| hevil_fan_west | 0.75 (0.99) | 0.2% (0.8%) |
+| hevil_fan_low | 0.27 (0.39) | 0.1% (0.3%) |
+| rancor_drum | 0.23 (0.29) | 0.0% (0.0%) |
+| yavin1_students | 0.24 (0.27) | 0.0% (0.0%) |
+| hevil_wall_fan | 0.23 (0.26) | 0.0% (0.0%) |
+| hevil_wall_fan5 | 0.24 (0.26) | 0.0% (0.0%) |
+| stamp_crates | 0.20 (0.23) | 0.0% (0.0%) |
+
+- kor2_troopers changed in 1,540 pixels, closer to the reference (0.44 from 0.69 on
+  them) but not enough to move its 0.23. The 38 other views render pixel for pixel
+  as on main (the multiplayer ones keep multiplayer's formula).
+- What is left on vjun1_hall is the green rain streaks (`fx_rain`, an effect this
+  renderer does not draw); on hevil_fan_west, its rain.
+- hoth2_fog (0.14) and vjun1_hall join the reference set, now 47 views: median 0.21
+  (main 0.23), 41 under 0.5, 44 under 1.0 (main 43). Above 1 are only danger_rock
+  (5.33), ffa5_pipes (3.87) and dpred_guns (1.02), all explained.
+
 ## NPCs' box 32 units wide, as single player's, 2026-10-18
 
 vjun2_imp_stance's 0.44 was an outline around the imperial: his whole body drawn

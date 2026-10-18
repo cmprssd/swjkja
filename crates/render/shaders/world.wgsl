@@ -15,7 +15,7 @@ struct Frame {
     // The global fog's colour.
     fog_color: vec4<f32>,
     // x: the texture slot of the depth copy (for flares), y: the view width,
-    // z: the view height.
+    // z: the view height, w: 1 for a single-player map.
     misc: vec4<u32>,
     // xyz: the view's forward axis.
     view_forward: vec4<f32>,
@@ -215,6 +215,10 @@ fn tc_gen(s: Stage, bundle: u32, xyz: vec3<f32>, normal: vec3<f32>, st: vec2<f32
             // RB_CalcEnvironmentTexCoords.
             let viewer = normalize(frame.view_origin.xyz - xyz);
             let d = dot(normal, viewer);
+            if frame.misc.w == 1u {
+                // Single player's (code/rd-vanilla) differs from multiplayer's.
+                return normal.xy * d - 0.5 * viewer.xy;
+            }
             let reflected = normal * 2.0 * d - viewer;
             return vec2<f32>(0.5 + reflected.y * 0.5, 0.5 - reflected.z * 0.5);
         }
