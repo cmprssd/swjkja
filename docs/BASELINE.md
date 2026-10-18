@@ -381,6 +381,44 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Vertex-lit surfaces through their light style, 2026-10-18
+
+The next five views' 0.10-0.14 (hoth2_fog, rancor_gates, rancor_drum, stamp_crates,
+kor2_troopers) were the same thing: pixels one level brighter than the reference,
+never darker, each channel on its own, over whole surfaces (hoth2's
+`textures/hoth/h_outground_2_clip`, t3_stamp's crates in `textures/factory/s_trim2`,
+t2_rancor's `halfwall_top` and `pillar_front`). Every such surface was vertex-lit
+(`LIGHTMAP_BY_VERTEX`); the lightmapped surfaces beside them matched. The original
+builds a vertex-lit surface's colours in `ComputeFinalVertexColor`
+(`tr_surface.cpp`): each style's colour times the vertex's, summed and shifted down
+by 8 bits, so a style at full (255) takes one level off every vertex. This renderer
+drew the stored colours. The vertex shader now applies the first style
+(`shaders/world.wgsl`, `Stage.style.zw`). Truncating the shaded colour to 8 bits
+instead fitted hoth2 and t3_stamp but overshot t2_rancor; anisotropy and LOD bias
+were ruled out first. `vertex_lit_surfaces_take_their_style_as_the_original`
+(`crates/render/tests/retail.rs`) checks the crates' mean colour: the reference's
+to 0.001, 0.39 brighter without the shift.
+
+| View | Mean difference (main) | Exact pixels (main) |
+|------|------|------|
+| hoth2_fog | 0.00 (0.13) | 99.8% (76.7%) |
+| rancor_gates | 0.04 (0.14) | 97.5% (77.5%) |
+| rancor_drum | 0.01 (0.11) | 97.8% (78.2%) |
+| stamp_crates | 0.00 (0.10) | 99.5% (79.3%) |
+| kor2_troopers | 0.01 (0.10) | 99.5% (83.7%) |
+| rancor_plate | 0.01 (0.08) | 97.6% (83.9%) |
+| hevil_wall_fan5 | 0.02 (0.07) | 98.1% (86.1%) |
+| bounty_bomb | 0.03 (0.06) | 99.1% (90.8%) |
+| hevil_wall_fan | 0.00 (0.05) | 99.6% (87.3%) |
+
+- 24 views change, every one closer or level (ffa5_pipes, ffa5_lamps and
+  dpred_canopy by a few hundred pixels); the 23 others render pixel for pixel as on
+  main. All 47: median 0.01 (0.03), 43 under 0.5, 45 under 1.0, 21 at 0.00 (16).
+- Left out: a vertex-lit surface's second to fourth styles (25-50 surfaces each on
+  kor1, kor2 and t3_stamp), which the original adds; they are still not drawn.
+- What is left on rancor_gates is its known spots (a thin line, an orange speck, a
+  blue patch), now most of its difference.
+
 ## GL fog's distance per vertex, and model cull points on a plane, 2026-10-18
 
 ctf4_up's 0.19 was the global fog on one surface: the walkway overhead

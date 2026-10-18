@@ -52,7 +52,8 @@ struct Stage {
     // Two vec4 of parameters per tcMod: [bundle * 8 + index * 2 + 0..1].
     tcmod: array<vec4<f32>, 16>,
     // x: the light style for rgbGen lightmapStyle. y: 1 for a model's surfaces:
-    // lm23.w holds the entity number (else the entity is the world, 0).
+    // lm23.w holds the entity number (else the entity is the world, 0). z: 1 for a
+    // vertex-lit world surface, whose first vertex style is w.
     style: vec4<f32>,
     // x: GL fog for this stage: 0 none, 1 towards the fog colour, 2 black, 3 white.
     // y: 1 for sky geometry: positions are offsets from the viewer, drawn at the far
@@ -447,7 +448,18 @@ fn vs_main(
     if s.style.y == 1.0 {
         entity = u32(lm23.w);
     }
-    var c = colors(s, world_xyz, round(color * 255.0), normal, entities[entity], entity != 0u);
+    var vertex = round(color * 255.0);
+    if s.style.z == 1.0 {
+        // ComputeFinalVertexColor: a vertex-lit surface's colours are its style's
+        // colour times the vertex's, shifted down by 8 bits (so a style at 255 takes
+        // one level off), none if the style is unused. Its other styles are left out.
+        var style = vec3<f32>(0.0);
+        if s.style.w < 254.0 {
+            style = frame.styles[min(u32(s.style.w), 63u)].rgb;
+        }
+        vertex = vec4<f32>(min(floor(vertex.rgb * style / 256.0), vec3<f32>(255.0)), vertex.a);
+    }
+    var c = colors(s, world_xyz, vertex, normal, entities[entity], entity != 0u);
     // adjustColorsForFog on a fogged surface: fade by the fog's opacity
     // (RB_CalcModulate*ByFog), in bytes as the original.
     let fog_num = s.fog.w & 0xffffu;

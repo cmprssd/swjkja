@@ -188,8 +188,8 @@ difference per channel, 0-255; measured 2026-10-18):
 |------|------:|------|
 | Multiplayer world (sky, fog, fog volumes, flares, animated stages, curve LOD) | 19 | 0.00-0.03 |
 | Static and brush-entity models, rotating fans and drums | 18 | 0.00-5.19 |
-| Single-player NPCs (spawned, scripted, academy classes, yavin1's shuttle) | 10 | 0.01-0.10 |
-| **All** | **47** | **median 0.03; 43 under 0.5, 45 under 1.0** |
+| Single-player NPCs (spawned, scripted, academy classes, yavin1's shuttle) | 10 | 0.01-0.09 |
+| **All** | **47** | **median 0.01; 43 under 0.5, 45 under 1.0** |
 
 ```mermaid
 xychart-beta
