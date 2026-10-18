@@ -188,8 +188,8 @@ difference per channel, 0-255; measured 2026-10-18):
 |------|------:|------|
 | Multiplayer world (sky, fog, fog volumes, flares, animated stages) | 19 | 0.05-0.41 |
 | Static and brush-entity models, rotating fans and drums | 16 | 0.16-5.33 |
-| Single-player NPCs (spawned, scripted, academy classes, yavin1's shuttle) | 10 | 0.10-0.44 |
-| **All** | **45** | **median 0.25; 40 under 0.5, 42 under 1.0** |
+| Single-player NPCs (spawned, scripted, academy classes, yavin1's shuttle) | 10 | 0.10-0.39 |
+| **All** | **45** | **median 0.23; 40 under 0.5, 42 under 1.0** |
 
 Two more model views render again since #74 (their maps lost the Vulkan device
 until the flare test's binding was fixed) and are not in the 45 yet: hoth2_fog
@@ -200,7 +200,7 @@ xychart-beta
     title "Views by mean difference (45 views)"
     x-axis ["< 0.25", "0.25-0.5", "0.5-1", "1-2", "> 2"]
     y-axis "views" 0 --> 20
-    bar [22, 18, 2, 1, 2]
+    bar [24, 16, 2, 1, 2]
 ```
 
 The two views above 2 are explained and are not renderer errors: danger_rock

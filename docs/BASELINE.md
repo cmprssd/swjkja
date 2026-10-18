@@ -381,6 +381,31 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## NPCs' box 32 units wide, as single player's, 2026-10-18
+
+vjun2_imp_stance's 0.44 was an outline around the imperial: his whole body drawn
+2.5 pixels low, head to boots. The game's log has him at z 3037.13; this renderer
+put him at 3036.879. He spawns half inside a trim brush whose top slopes 14 degrees
+(normal 0, 0.243, 0.970), and the spawn lift (`G_CheckInSolid`) stops where his box's
+corner meets that slope. The box was multiplayer's, 30 units wide (`playerMins`
+-15); single player's `DEFAULT_MINS_0` is -16, so the original's corner is one unit
+further up the slope: 0.25 units higher, which is exactly the log's height.
+
+The same unit explains "an NPC that lands on a slope stops a little higher there"
+(the NPC views' section below): on every slope in the logs this renderer's NPCs were
+lower by the slope's tangent (dpred's stormtrooper2 by 0.12, kor2's three by
+0.17-0.31), within the logs' tenth of a unit.
+
+| View | Mean difference (main) | Pixels off by > 16 (main) |
+|------|------|------|
+| vjun2_imp_stance | 0.14 (0.44) | 0.0% (0.5%) |
+| kor2_troopers | 0.23 (0.36) | 0.0% (0.2%) |
+
+- The other 43 views render pixel for pixel as on main.
+- All 45 views: median 0.23 (main 0.25), 40 under 0.5, 42 under 1.0. Single-player
+  NPC views now 0.10-0.39 (the academy classes are the highest).
+- What is left on vjun2_imp_stance is single scattered pixels.
+
 ## Flares hidden as the original hides them, 2026-10-18
 
 rancor_gates' 0.69 was almost all flares that this renderer drew and the original

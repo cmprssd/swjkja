@@ -347,10 +347,11 @@ fn npcs_stand_upright_at_their_spawner_scaled_from_their_feet() {
         assert!(got.iter().zip(want).all(|(g, w)| (g - w * s).abs() < 1e-5));
     }
     assert!(!officer.normalized);
-    // Linked with the block's box around the spawner, an epsilon larger.
+    // Linked with the default box (single player's, 16 units out) around the
+    // spawner, an epsilon larger.
     assert_eq!(
         officer.entity_box,
-        Some([[-15.0, -14.0, -22.0], [17.0, 18.0, 44.0]])
+        Some([[-16.0, -15.0, -22.0], [18.0, 19.0, 44.0]])
     );
     let g = officer.ghoul2.as_ref().unwrap();
     assert_eq!(
