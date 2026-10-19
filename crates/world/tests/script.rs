@@ -1,8 +1,9 @@
 use std::sync::Arc;
 use swjkja_icarus::{Block, Member, Node, id};
 
+use swjkja_world::brush_entity::{BrushEntity, Slide};
 use swjkja_world::script::{
-    Change, FirstPass, Level, Npc, Runner, first_pass, script_path, timeline, timelines,
+    Change, FirstPass, Level, Mover, Npc, Runner, first_pass, script_path, timeline, timelines,
 };
 use swjkja_world::static_model::Pose;
 
@@ -388,7 +389,7 @@ fn intro(script: Vec<Node>) -> Level {
             delay: 0,
         }],
         begin: vec!["intro".to_owned()],
-        runs: Default::default(),
+        ..Default::default()
     }
 }
 
@@ -595,4 +596,119 @@ fn a_signal_waits_for_its_receiver_and_a_runner_needs_its_user() {
             ("BOTH_STAND1", 3500)
         ])
     );
+}
+
+/// `move(tag(name, ORIGIN), ms)` as the compiler writes it.
+fn move_to_tag(name: &str, ms: f32) -> Node {
+    let marker = Member {
+        id: id::TAG,
+        data: f32::MAX.to_le_bytes().to_vec(),
+    };
+    command(id::MOVE, vec![marker, text(name), float(54.0), float(ms)])
+}
+
+/// A task group `name` running `nodes`.
+fn task(name: &str, nodes: Vec<Node>) -> Node {
+    body(id::TASK, vec![text(name)], nodes)
+}
+
+/// `do(name)` then `wait(name)`.
+fn do_and_wait(name: &str) -> [Node; 2] {
+    [
+        command(id::DO, vec![text(name)]),
+        command(id::WAIT, vec![text(name)]),
+    ]
+}
+
+/// t3_stamp's cranes (t3_stamp/crane_move): the intro waits 7 s, then has a
+/// crane shuttle between two tags for good: an instant move back, 28 s forward.
+fn crane_level(movers: &[(&str, [f32; 3], bool)]) -> Level {
+    let shuttle = [
+        vec![
+            task("move1", vec![move_to_tag("CP1", 0.0)]),
+            task("move2", vec![move_to_tag("cp2", 28000.0)]),
+        ],
+        do_and_wait("move1").into(),
+        do_and_wait("move2").into(),
+    ]
+    .concat();
+    let mut level = intro(vec![
+        wait(7000.0),
+        affect(
+            "crane",
+            false,
+            vec![body(id::LOOP, vec![float(-1.0)], shuttle)],
+        ),
+    ]);
+    level.tags.insert("cp1".to_owned(), [0.0, -1000.0, 0.0]);
+    level.tags.insert("cp2".to_owned(), [0.0, 5000.0, 0.0]);
+    level.movers = movers
+        .iter()
+        .map(|&(name, origin, linear)| Mover {
+            name: name.to_owned(),
+            origin,
+            linear,
+        })
+        .collect();
+    level
+}
+
+#[test]
+fn a_script_moves_a_mover_to_its_tags_each_move_waiting_for_the_last() {
+    let level = crane_level(&[("crane", [0.0, 200.0, 0.0], false)]);
+    let movers = timelines(&[], &level, &|_| None).movers;
+    let slides = |m: &[Slide], n: usize| -> Vec<(i32, [f32; 3], [f32; 3], i32)> {
+        m.iter()
+            .take(n)
+            .map(|s| (s.start, s.from, s.to, s.duration))
+            .collect()
+    };
+    // The intro starts at 2050 and waits until 9100. An instant move takes 1 ms and
+    // completes on the mover's next turn; the 28 s one on its turn at its end, when
+    // the loop moves it back at once.
+    let (cp1, cp2) = ([0.0, -1000.0, 0.0], [0.0, 5000.0, 0.0]);
+    assert_eq!(
+        slides(&movers[0], 4),
+        [
+            (9100, [0.0, 200.0, 0.0], cp1, 1),
+            (9150, cp1, cp2, 28000),
+            (37150, cp2, cp1, 1),
+            (37200, cp1, cp2, 28000),
+        ]
+    );
+    assert!(!movers[0][1].linear);
+    // Halfway in time, slowing to a stop: sin(45 degrees) of the way.
+    let e = BrushEntity {
+        slides: movers[0].clone(),
+        ..brush_at([0.0, 200.0, 0.0])
+    };
+    assert_eq!(e.origin_at(9000), [0.0, 200.0, 0.0]);
+    let halfway = e.origin_at(9150 + 14000)[1];
+    assert!((halfway - (-1000.0 + 6000.0 * std::f32::consts::FRAC_1_SQRT_2)).abs() < 0.01);
+    assert_eq!(e.origin_at(37150), cp2);
+    assert_eq!(e.origin_at(37151), cp1);
+    // Of two movers with one name, the last spawned moves; a "linear" one at one
+    // speed.
+    let level = crane_level(&[("crane", [0.0; 3], false), ("CRANE", [0.0; 3], true)]);
+    let movers = timelines(&[], &level, &|_| None).movers;
+    assert!(movers[0].is_empty());
+    assert!(movers[1][1].linear);
+}
+
+/// A brush entity standing at `origin`, for its moves.
+fn brush_at(origin: [f32; 3]) -> BrushEntity {
+    BrushEntity {
+        model: 1,
+        origin,
+        axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        entity_box: [origin, origin],
+        broadcast: false,
+        shader_anim: false,
+        model2: None,
+        spin: None,
+        door: None,
+        script_name: None,
+        linear: false,
+        slides: Vec::new(),
+    }
 }

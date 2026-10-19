@@ -15,7 +15,8 @@
 //! `InitBBrush`; cgame's `CG_Mover` adds it after the brushes).
 //!
 //! In single player a door that spawns a trigger opens when an NPC stands in it
-//! ([`touch_doors`]), and stays open while the NPC does.
+//! ([`touch_doors`]), and stays open while the NPC does; and the map's scripts move
+//! the brush entities they name ([`crate::script::Timelines::movers`]).
 
 use swjkja_bsp::{Entity, Model};
 
@@ -50,8 +51,14 @@ pub struct BrushEntity {
     pub spin: Option<Vec3>,
     /// A single-player door: how it opens.
     pub door: Option<Door>,
-    /// A door opening: it is drawn from [`BrushEntity::origin_at`], not `origin`.
-    pub slide: Option<Slide>,
+    /// The name scripts find it by ("script_targetname").
+    pub script_name: Option<String>,
+    /// "linear": it moves at one speed (`TR_LINEAR_STOP`), not slowing at the end
+    /// (`TR_NONLINEAR_STOP`).
+    pub linear: bool,
+    /// Its moves, in the order they start (a door opening, a script's moves): it is
+    /// drawn from [`BrushEntity::origin_at`], not `origin`, and linked where it is.
+    pub slides: Vec<Slide>,
 }
 
 /// How a single-player door opens (`SP_func_door`, `InitMoverTrData`).
@@ -62,9 +69,6 @@ pub struct Door {
     /// Its travel time, ms (`trDuration`: its distance at "speed", 400 when 0, in
     /// whole ms; at least 1).
     pub duration: i32,
-    /// "linear": it moves at one speed (`TR_LINEAR_STOP`), not slowing at the end
-    /// (`TR_NONLINEAR_STOP`).
-    pub linear: bool,
     /// "delay" (whole seconds), in ms between being used and starting.
     pub delay: i32,
     /// "team": the doors that open with it, the first in spawn order leading
@@ -78,7 +82,7 @@ pub struct Door {
     pub touched: bool,
 }
 
-/// A door moving from `from` to `to` over `duration` ms from game time `start`.
+/// A mover moving from `from` to `to` over `duration` ms from game time `start`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Slide {
     pub start: i32,
@@ -86,6 +90,41 @@ pub struct Slide {
     pub to: Vec3,
     pub duration: i32,
     pub linear: bool,
+}
+
+/// Where moves `slides` (in the order they start) have a mover at game time `ms`:
+/// where the last started by then has it; `None` before the first.
+pub fn slid(slides: &[Slide], ms: i32) -> Option<Vec3> {
+    slides
+        .iter()
+        .rev()
+        .find(|s| s.start <= ms)
+        .map(|s| s.at(ms))
+}
+
+impl Slide {
+    /// Where it is at game time `ms` (`EvaluateTrajectory`'s `TR_NONLINEAR_STOP` or
+    /// `TR_LINEAR_STOP`, in floats as the original); once there, it stands at its
+    /// end (`Reached_BinaryMover`, `moverCallback`).
+    pub fn at(&self, ms: i32) -> Vec3 {
+        if ms >= self.start + self.duration {
+            return self.to;
+        }
+        let elapsed = ms - self.start;
+        if elapsed <= 0 {
+            return self.from;
+        }
+        let duration = self.duration as f32;
+        let seconds = if self.linear {
+            elapsed as f32 * 0.001
+        } else {
+            let degrees = 90.0 - 90.0 * elapsed as f32 / duration;
+            duration * 0.001 * (degrees * (std::f32::consts::PI / 180.0)).cos()
+        };
+        // trDelta: the way, a second (SetMoverState).
+        let per_second = (1000.0 / f64::from(self.duration)) as f32;
+        [0, 1, 2].map(|k| self.from[k] + seconds * ((self.to[k] - self.from[k]) * per_second))
+    }
 }
 
 /// `MOVER_LOCKED`: a door locked until used, its shader animation frame-controlled.
@@ -162,7 +201,6 @@ fn spawn(models: &[Model], e: &Entity, rules: Rules) -> Option<BrushEntity> {
                 door = Some(Door {
                     pos2,
                     duration: ((length * 1000.0 / speed) as i32).max(1),
-                    linear: e.get("linear").map_or(0, atoi) != 0,
                     delay: e.get("delay").map_or(0, atoi).saturating_mul(1000) as i32,
                     team: e.get("team").map(str::to_owned),
                     touched: spawnflags & UNTOUCHED == 0
@@ -224,7 +262,9 @@ fn spawn(models: &[Model], e: &Entity, rules: Rules) -> Option<BrushEntity> {
         model2,
         spin,
         door,
-        slide: None,
+        script_name: e.get("script_targetname").map(str::to_owned),
+        linear: e.get("linear").map_or(0, atoi) != 0,
+        slides: Vec::new(),
     })
 }
 
@@ -238,7 +278,7 @@ fn spawn(models: &[Model], e: &Entity, rules: Rules) -> Option<BrushEntity> {
 /// `SV_EntityContact`) uses its leader ("delay" later), and the team moves together,
 /// each door over its own time, from 50 ms later (`Use_BinaryMover_Go`,
 /// `MatchTeam`). Each touch of an open door puts off its closing, so it stays
-/// open. Moving, a door is linked over its whole way.
+/// open.
 pub fn touch_doors(entities: &mut [BrushEntity], bodies: &[[Vec3; 2]], at: i32) {
     for lead in 0..entities.len() {
         let Some(door) = &entities[lead].door else {
@@ -274,18 +314,13 @@ pub fn touch_doors(entities: &mut [BrushEntity], bodies: &[[Vec3; 2]], at: i32) 
         for i in team {
             let e = &mut entities[i];
             let Some(door) = &e.door else { continue };
-            let moved = [0, 1, 2].map(|k| door.pos2[k] - e.origin[k]);
-            for k in 0..3 {
-                e.entity_box[0][k] += moved[k].min(0.0);
-                e.entity_box[1][k] += moved[k].max(0.0);
-            }
-            e.slide = Some(Slide {
+            e.slides = vec![Slide {
                 start,
                 from: e.origin,
                 to: door.pos2,
                 duration: door.duration,
-                linear: door.linear,
-            });
+                linear: e.linear,
+            }];
         }
     }
 }
@@ -394,30 +429,18 @@ impl BrushEntity {
         self.spin.map(|d| d.map(|x| seconds * x))
     }
 
-    /// Where it is drawn from at game time `ms` (`EvaluateTrajectory`'s
-    /// `TR_NONLINEAR_STOP` or `TR_LINEAR_STOP`, in floats as the original); once
-    /// there, it stands at its end (`Reached_BinaryMover`).
+    /// Where it is drawn from at game time `ms`: where its last move started by
+    /// then has it.
     pub fn origin_at(&self, ms: i32) -> Vec3 {
-        let Some(s) = &self.slide else {
-            return self.origin;
-        };
-        if ms >= s.start + s.duration {
-            return s.to;
-        }
-        let elapsed = ms - s.start;
-        if elapsed <= 0 {
-            return s.from;
-        }
-        let duration = s.duration as f32;
-        let seconds = if s.linear {
-            elapsed as f32 * 0.001
-        } else {
-            let degrees = 90.0 - 90.0 * elapsed as f32 / duration;
-            duration * 0.001 * (degrees * (std::f32::consts::PI / 180.0)).cos()
-        };
-        // trDelta: the way, a second (SetMoverState).
-        let per_second = (1000.0 / f64::from(s.duration)) as f32;
-        [0, 1, 2].map(|k| s.from[k] + seconds * ((s.to[k] - s.from[k]) * per_second))
+        slid(&self.slides, ms).unwrap_or(self.origin)
+    }
+
+    /// Its linked box at game time `ms` (`SV_LinkEntity` where it is then).
+    pub fn entity_box_at(&self, ms: i32) -> [Vec3; 2] {
+        let at = self.origin_at(ms);
+        let moved = [0, 1, 2].map(|k| at[k] - self.origin[k]);
+        self.entity_box
+            .map(|corner| [0, 1, 2].map(|k| corner[k] + moved[k]))
     }
 
     /// A point of the model's space in the world.

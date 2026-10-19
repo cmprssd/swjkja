@@ -625,7 +625,7 @@ fn npcs_open_the_doors_they_stand_in() {
             let Some(d) = &b.door else { continue };
             doors += 1;
             touchable += usize::from(d.touched);
-            if b.slide.is_some() {
+            if !b.slides.is_empty() {
                 opened.push(format!("{name} *{}", b.model));
             }
         }

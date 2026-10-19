@@ -42,7 +42,7 @@ fn ffa5_static_models_cull_like_the_original() {
     let camera = Camera::new([-2024.0, -1296.0, 572.0], [0.0, 342.0, 0.0], 1280, 720);
     let frustum = Frustum::new(&camera);
     let cluster = vis.cluster(camera.origin);
-    let drawn = |origin| models.visible(find(origin), &camera, &frustum, cluster, &vis);
+    let drawn = |origin| models.visible(find(origin), &camera, &frustum, cluster, &vis, 12345);
     // The four rings at eye level.
     for ring in [
         [-1464.0, -1464.0, 576.0],
@@ -61,7 +61,7 @@ fn ffa5_static_models_cull_like_the_original() {
     let total = (0..models.instances.len())
         .filter(|&n| {
             models
-                .visible(n, &camera, &frustum, cluster, &vis)
+                .visible(n, &camera, &frustum, cluster, &vis, 12345)
                 .is_some()
         })
         .count();
@@ -97,10 +97,13 @@ fn ffa5_static_model_culled_from_solid_reads_the_pvs_padding() {
     let left = find([1024.0, -1728.0, 830.0]);
     let right = find([-896.0, -1472.0, 704.0]);
     assert_eq!(models.instances[left].cull_cluster, -1);
-    assert_eq!(models.visible(left, &camera, &frustum, cluster, &vis), None);
+    assert_eq!(
+        models.visible(left, &camera, &frustum, cluster, &vis, 12345),
+        None
+    );
     assert!(
         models
-            .visible(right, &camera, &frustum, cluster, &vis)
+            .visible(right, &camera, &frustum, cluster, &vis, 12345)
             .is_some()
     );
 }
@@ -214,7 +217,7 @@ fn single_player_draws_no_models_from_a_view_in_solid() {
         (0..models.instances.len())
             .filter(|&n| {
                 models
-                    .visible(n, &camera, &frustum, cluster, &vis)
+                    .visible(n, &camera, &frustum, cluster, &vis, 12345)
                     .is_some()
             })
             .count()
@@ -258,7 +261,7 @@ fn a_cull_point_on_a_plane_goes_to_its_front() {
     assert_eq!(models.instances[pump].cull_cluster, 924);
     assert!(
         models
-            .visible(pump, &camera, &frustum, cluster, &vis)
+            .visible(pump, &camera, &frustum, cluster, &vis, 12345)
             .is_some()
     );
 }
@@ -266,6 +269,40 @@ fn a_cull_point_on_a_plane_goes_to_its_front() {
 /// t3_stamp's game entities (crates and barrels, ammo racks and their goods) in the
 /// stamp_barrels view (bench/reference/npc-views.txt): the server sends those whose
 /// box touches a cluster the view sees, the renderer culls them by the frustum.
+#[test]
+fn t3_stamps_intro_moves_its_cranes_as_the_original() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t3_stamp.bsp").unwrap()).unwrap();
+    let models = StaticModels::load(&vfs, &bsp, &[], "maps/t3_stamp.bsp", 0);
+    // t3_stamp/crane_move, run as the player begins: every 7 s from 9100 ms a
+    // crane and its crate, each shuttling between two tags. Four cranes and four
+    // crates (func_statics) move; four other func_statics share the cranes' names,
+    // spawned first, and stay.
+    assert_eq!(models.brush_slides.len(), 8);
+    let crane = |origin: [f32; 3]| {
+        models
+            .instances
+            .iter()
+            .find(|m| m.origin == origin)
+            .unwrap()
+    };
+    // crane_1's model2, as the original's log has it: back to cp1 at 9100, on to
+    // cp2 (6144 units north) over 28 s from 9150.
+    let crane_1 = crane([-3584.0, -3120.0, 1148.0]);
+    assert_eq!(crane_1.moved(9000), [0.0; 3]);
+    assert_eq!(crane_1.moved(9150), [0.0, -1344.0, 0.0]);
+    // In the stamp_cranes view, at 22000 ms: sin(90 degrees x 12850 / 28000).
+    let y = crane_1.moved(22000)[1];
+    let expected = -1344.0 + 6144.0 * (std::f32::consts::FRAC_PI_2 * 12850.0 / 28000.0).sin();
+    assert!((y - expected).abs() < 0.01, "{y} {expected}");
+    // The one spawned first with crane_1's name stays.
+    assert!(crane([0.0; 3]).slides.is_empty());
+}
+
 #[test]
 fn t3_stamp_entities_cull_like_the_original() {
     let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
@@ -299,7 +336,7 @@ fn t3_stamp_entities_cull_like_the_original() {
             .unwrap()
     };
     let sent = |n: usize| vis.sends(cluster, models.instances[n].link.as_ref().unwrap());
-    let drawn = |n| models.visible(n, &camera, &frustum, cluster, &vis);
+    let drawn = |n| models.visible(n, &camera, &frustum, cluster, &vis, 12345);
     // The barrels ahead, at their most detailed level.
     for barrels in [
         [352.0, 692.0, 64.0],
@@ -371,7 +408,7 @@ fn t2_dpred_rack_weapons_draw_as_ghoul2_items() {
     let drawn: Vec<(f32, usize)> = weapons
         .iter()
         .filter_map(|&n| {
-            let level = models.visible(n, &camera, &frustum, cluster, &vis)?;
+            let level = models.visible(n, &camera, &frustum, cluster, &vis, 12345)?;
             Some((models.instances[n].origin[0], level))
         })
         .collect();

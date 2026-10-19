@@ -381,6 +381,60 @@ renderer does not draw yet, and the corridor behind them shows instead. The four
 single-player static-model views were captured before the script changes and not
 captured again.
 
+## Brush entities moved by the level's scripts, 2026-10-19
+
+The first of the movers' motion: brush entities that a level script moves. Across
+the 34 single-player maps, the runners their player's spawn point starts move brush
+entities on two (a throwaway survey of every runner's script):
+t3_stamp's cranes (`t3_stamp/crane_move`, run by the player's spawn point) and
+t3_hevil's two clip brushes (no surfaces). On t3_stamp, every 7 s from 9100 ms a
+crane (a `func_static` drawing `s_crane02.md3` as its "model2") and the crate it
+carries (another, with surfaces) shuttle between two `ref_tag`s 6,144 units apart:
+back at once, then 28 s forward, slowing to a stop (`TR_NONLINEAR_STOP`), for good.
+
+ICARUS's `move` (`Lerp2Pos`) is now modelled for the brush entities scripts name:
+from where the entity is to the tag (or point) over the move's time, its task
+completing on the mover's first turn there (`G_MoverTeam`), so the next move starts
+a frame later. `affect` finds a mover by its "script_targetname", the last spawned
+of a name (the name map keeps the last registered): t3_stamp has two func_statics
+named for each crane, and the one spawned first stays. The original's ICARUS trace
+of the capture (`g_ICARUSDebug 4`) gives the same times: crane_1 back at 9100 and
+forward from 9150, crane_2 at 16150 and 16200. A moving entity is drawn by a bone
+placing its model where it is (its "model2", baked where it spawns, by a
+translation), and culled, linked and lit there.
+
+A new view, stamp_cranes, looks along the crane line at 22000 ms, crane_1 and its
+crate 400 units ahead and still moving (13 units a frame there). Captured with
+scripts running (`SCRIPTS=1 ENTITIES=1`):
+
+| View | Mean difference (cranes where they spawn, as main) | Exact pixels |
+|------|------|------|
+| stamp_cranes | 0.01 (2.61) | 97.8% (82.9%) |
+
+- The capture needed two additions to the capture patch. t3_stamp's intro camera
+  never ends with the AI frozen (it waits on navgoals), and the server built the
+  snapshot from the camera: the first capture showed no entities in the corridor at
+  all. A view pinned by `cg_swjkjaView` is now the snapshot's eye too
+  (`SV_BuildClientSnapshot`). And SP's cgame placed a moving mover at the real
+  `cg.time`, not the pinned one: the second capture showed crane_1 where ours is at
+  20500 ms (2.67 against ours at 22000). A mover's position is now evaluated at
+  `cg_swjkjaTime` as its angles were. The other captures predate both and were not
+  taken again.
+- What is left is spread evenly (the crane's region 0.010, the rest 0.007-0.013;
+  129 pixels off by more than 2): the move itself is exact.
+- The 47 other views render pixel for pixel as on main (no other view's scripts
+  move a drawn brush entity).
+- `bench_world` (600 frames, alternating with main, three runs each): t3_stamp's
+  view at 9000 ms (nothing moved yet, the same scene as main) 6.91-7.08 ms against
+  main's 7.04-7.13, GPU 5.30-5.34 against 5.26-5.29; stamp_cranes 6.88-7.08 against
+  main's 6.91-7.07 (main's cranes stand elsewhere); yavin1_students (its door's
+  slide now linked where it is) 10.41-10.56 against 10.46-10.49.
+- Left out: `move`'s angles and `rotate` (t3_hevil's intro ship turns as it lands,
+  and is a `misc_model_breakable`, not a brush entity: also left out), a Ghoul2
+  "model2" moving, a moving model's fog (taken where it spawns), and scripts run by
+  what the map's triggers and buttons do later (elevators on t1_fatal, hoth2 and
+  others).
+
 ## Scaled models' specular, and a static model culled from solid, 2026-10-19
 
 vjun2_officer's 0.07 was mostly the officer's specular: his armour and gun

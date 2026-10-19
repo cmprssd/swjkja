@@ -361,13 +361,13 @@ fn a_door_opens_by_its_size_less_the_lip_at_its_speed() {
     let d = e[0].door.as_ref().unwrap();
     assert_eq!(d.pos2, [58.0, 0.0, 0.0]);
     assert_eq!(
-        (d.duration, d.linear, d.delay, d.touched),
+        (d.duration, e[0].linear, d.delay, d.touched),
         (145, false, 0, true)
     );
     // 58 units at 30 a second: 1933.33 ms, whole ms.
     let e = spawn_doors(&[door(&[("speed", "30"), ("linear", "1"), ("delay", "2")])]);
     let d = e[0].door.as_ref().unwrap();
-    assert_eq!((d.duration, d.linear, d.delay), (1933, true, 2000));
+    assert_eq!((d.duration, e[0].linear, d.delay), (1933, true, 2000));
     // One that starts open opens back to where it was placed.
     let e = spawn_doors(&[door(&[("spawnflags", "1")])]);
     assert_eq!(e[0].origin, [58.0, 0.0, 0.0]);
@@ -402,17 +402,24 @@ fn a_body_in_its_trigger_opens_a_door_from_its_first_think() {
     // thinnest axis, y, reaches 120 further: the trigger is y -138..138.
     let mut e = spawn_doors(&[door(&[])]);
     touch_doors(&mut e, &[body([0.0, 155.0, 30.0])], 1550);
-    assert_eq!(e[0].slide, None);
+    assert_eq!(e[0].slides, []);
     assert_eq!(e[0].origin_at(5000), [0.0; 3]);
     // A body's edge on the trigger's touches it.
     touch_doors(&mut e, &[body([0.0, 154.0, 30.0])], 1550);
-    let s = e[0].slide.as_ref().unwrap();
+    let s = &e[0].slides[0];
     assert_eq!(
         (s.start, s.duration, s.from, s.to),
         (1600, 145, [0.0; 3], [58.0, 0.0, 0.0])
     );
-    // Moving, it is linked over its whole way.
-    assert_eq!(e[0].entity_box, [[-34.0, -18.0, -2.0], [92.0, 18.0, 130.0]]);
+    // It is linked where it is.
+    assert_eq!(
+        e[0].entity_box_at(1600),
+        [[-34.0, -18.0, -2.0], [34.0, 18.0, 130.0]]
+    );
+    assert_eq!(
+        e[0].entity_box_at(1745),
+        [[24.0, -18.0, -2.0], [92.0, 18.0, 130.0]]
+    );
     // It slows to a stop: sin(90 degrees x elapsed / duration) of the way.
     assert_eq!(e[0].origin_at(1600), [0.0; 3]);
     let at_58 = e[0].origin_at(1658)[0];
@@ -423,12 +430,12 @@ fn a_body_in_its_trigger_opens_a_door_from_its_first_think() {
     // "linear": at one speed, after its delay.
     let mut e = spawn_doors(&[door(&[("linear", "1"), ("delay", "1")])]);
     touch_doors(&mut e, &[body([0.0; 3])], 1550);
-    assert_eq!(e[0].slide.as_ref().unwrap().start, 2600);
+    assert_eq!(e[0].slides[0].start, 2600);
     assert!((e[0].origin_at(2635)[0] - 14.0).abs() < 1e-4);
     // Not touchable: it stays.
     let mut e = spawn_doors(&[door(&[("targetname", "d")])]);
     touch_doors(&mut e, &[body([0.0; 3])], 1550);
-    assert_eq!(e[0].slide, None);
+    assert_eq!(e[0].slides, []);
 }
 
 #[test]
@@ -441,19 +448,19 @@ fn a_team_opens_together_by_its_first_doors_trigger() {
     ];
     let mut e = spawn_doors(&pairs);
     touch_doors(&mut e, &[body([0.0, 100.0, 30.0])], 1550);
-    assert!(e[0].slide.is_some() && e[1].slide.is_some());
-    assert_eq!(e[1].slide.as_ref().unwrap().to, [58.0, 200.0, 0.0]);
+    assert!(!e[0].slides.is_empty() && !e[1].slides.is_empty());
+    assert_eq!(e[1].slides[0].to, [58.0, 200.0, 0.0]);
     // Across the team's box, the thinnest axis is x (68 < 236): it reaches 120
     // further along x, not y.
     let mut e = spawn_doors(&pairs);
     touch_doors(&mut e, &[body([150.0, 100.0, 30.0])], 1550);
-    assert!(e[0].slide.is_some());
+    assert!(!e[0].slides.is_empty());
     let mut e = spawn_doors(&pairs);
     touch_doors(&mut e, &[body([0.0, 360.0, 30.0])], 1550);
-    assert!(e[0].slide.is_none() && e[1].slide.is_none());
+    assert!(e[0].slides.is_empty() && e[1].slides.is_empty());
     // A named leader opens by being used only, its team too.
     pairs[0].push(("targetname".into(), "d".into()));
     let mut e = spawn_doors(&pairs);
     touch_doors(&mut e, &[body([0.0, 200.0, 30.0])], 1550);
-    assert!(e[0].slide.is_none() && e[1].slide.is_none());
+    assert!(e[0].slides.is_empty() && e[1].slides.is_empty());
 }

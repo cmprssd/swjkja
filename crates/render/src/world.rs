@@ -343,6 +343,9 @@ pub struct WorldRenderer {
     first_model_surface: usize,
     /// Per model: where its bones start in the frame's bones, if it is posed.
     first_bone: Vec<Option<usize>>,
+    /// Per model: its bone in the frame's bones if scripts move it (a moving brush
+    /// entity's "model2", baked where it spawns: the bone moves it from there).
+    moved_bone: Vec<Option<usize>>,
     light_grid: swjkja_world::light_grid::LightGrid,
     /// The map's fog volumes, by fog number - 1.
     fog_volumes: Vec<fog::FogVolume>,
@@ -679,12 +682,15 @@ impl WorldRenderer {
             &models.bodies,
             swjkja_world::script::FIRST_FRAME,
         );
+        for (i, slides) in &models.brush_slides {
+            entities[*i].slides = slides.clone();
+        }
         for e in entities {
             let surfaces: Vec<usize> = surfaces_in(e.model)
                 .filter(|i| *i < world.surfaces.len() && !placed.contains_key(i))
                 .collect();
             let m = &bsp.models[e.model];
-            let turning = (e.spin.is_some() || e.slide.is_some()).then(|| {
+            let turning = (e.spin.is_some() || !e.slides.is_empty()).then(|| {
                 turning_count += 1;
                 turning_count - 1
             });
@@ -868,6 +874,21 @@ impl WorldRenderer {
             None => placed.get(&i).unwrap_or(&world.surfaces[i].geometry),
         };
         let surface_count = first_model_surface + models.pieces.len();
+        // A moving model's pieces are drawn by its bone, among the turning entities'.
+        let moved_bone: Vec<Option<usize>> = models
+            .instances
+            .iter()
+            .map(|m| {
+                if m.slides.is_empty() {
+                    return None;
+                }
+                for piece in m.lods.iter().flat_map(|l| l.pieces.clone()) {
+                    turned_by.insert(first_model_surface + piece, turning_count);
+                }
+                turning_count += 1;
+                Some(turning_count - 1)
+            })
+            .collect();
 
         // Textures.
         let default_image: Vec<u8> = (0..16 * 16)
@@ -1065,6 +1086,10 @@ impl WorldRenderer {
                 t.bone += first_turning_bone;
             }
         }
+        let moved_bone: Vec<Option<usize>> = moved_bone
+            .into_iter()
+            .map(|b| Some(first_turning_bone + b?))
+            .collect();
         for &m in &order {
             let material = &materials[m];
             if let Some(sky) = &material.sky {
@@ -1736,6 +1761,7 @@ impl WorldRenderer {
             models,
             first_model_surface,
             first_bone,
+            moved_bone,
             light_grid: swjkja_world::light_grid::LightGrid::load(bsp, 0).with_rules(rules),
             fog_volumes,
             shadows,
@@ -1879,9 +1905,17 @@ impl WorldRenderer {
         // The brush entities' surfaces this view draws, for their flares.
         let mut brush_shown = Vec::new();
         for b in &self.brushes {
+            // One that has slid is linked where it is.
+            let relinked = match &b.turning {
+                Some(t) if t.entity.origin_at(ms) != t.entity.origin => {
+                    Some(self.vis.link(t.entity.entity_box_at(ms)))
+                }
+                _ => None,
+            };
             let sent = b.broadcast
-                || b.link
+                || relinked
                     .as_ref()
+                    .or(b.link.as_ref())
                     .is_some_and(|l| self.vis.sends(view_cluster, l));
             if !sent {
                 continue;
@@ -2059,13 +2093,24 @@ impl WorldRenderer {
         for (n, posed) in posed.iter_mut().enumerate() {
             let Some(level) = self
                 .models
-                .visible(n, camera, &frustum, view_cluster, &self.vis)
+                .visible(n, camera, &frustum, view_cluster, &self.vis, ms)
             else {
                 continue;
             };
             let m = &self.models.instances[n];
+            let moved = m.moved(ms);
+            if let Some(bone) = self.moved_bone[n] {
+                let place: Mat34 = std::array::from_fn(|i| {
+                    let mut row = [0.0; 4];
+                    row[i] = 1.0;
+                    row[3] = moved[i];
+                    row
+                });
+                let at = bone * size_of::<Mat34>();
+                bone_table[at..at + size_of::<Mat34>()].copy_from_slice(bytemuck::bytes_of(&place));
+            }
             let light = self.light_grid.entity_light(
-                m.light_origin,
+                [0, 1, 2].map(|k| m.light_origin[k] + moved[k]),
                 &styles,
                 [0.0; 3],
                 self.models.more_light(n, ms),

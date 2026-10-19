@@ -47,6 +47,7 @@ use swjkja_model::glm::{self, Ghoul2Model};
 use swjkja_model::md3::{Md3, Md3Model};
 use swjkja_model::skin::Skin;
 use swjkja_world::Geometry;
+use swjkja_world::brush_entity::Slide;
 use swjkja_world::collision::Collision;
 use swjkja_world::npc;
 use swjkja_world::script::{self, Timeline};
@@ -131,6 +132,17 @@ pub struct Instance {
     /// The entity's colour (`shaderRGBA`), 0-255: a Ghoul2 model's
     /// ([`swjkja_world::static_model::Ghoul2::color`]), else zero.
     pub color: [u8; 4],
+    /// A brush entity's "model2" that scripts move: its entity's moves. It is drawn,
+    /// culled, linked and lit [`Instance::moved`] from where it spawns.
+    pub slides: Vec<Slide>,
+}
+
+impl Instance {
+    /// How far its moves have taken it from where it spawns at game time `ms`.
+    pub fn moved(&self, ms: i32) -> Vec3 {
+        let at = swjkja_world::brush_entity::slid(&self.slides, ms).unwrap_or(self.origin);
+        [0, 1, 2].map(|k| at[k] - self.origin[k])
+    }
 }
 
 pub struct StaticModels {
@@ -146,6 +158,9 @@ pub struct StaticModels {
     pub bodies: Vec<[Vec3; 2]>,
     /// When the map's scripts first enable a camera (ms; [`script::Timelines`]).
     pub camera: Option<i32>,
+    /// The moves scripts give the brush entities, by their spawn order
+    /// ([`swjkja_world::brush_entity::brush_entities`]), for those that move.
+    pub brush_slides: HashMap<usize, Vec<Slide>>,
     distance_cull: f32,
     rules: Rules,
 }
@@ -276,11 +291,16 @@ impl StaticModels {
         let mut level = script::Level::default();
         let mut placements =
             swjkja_world::static_model::entity_models(&bsp.entities, rules, &mut world);
-        placements.extend(
-            swjkja_world::brush_entity::brush_entities(&bsp.entities, &bsp.models, rules)
-                .into_iter()
-                .filter_map(|e| e.model2),
-        );
+        let brushes = swjkja_world::brush_entity::brush_entities(&bsp.entities, &bsp.models, rules);
+        // Placement first_model2 + k is the model2 of brush entity model2_of[k].
+        let first_model2 = placements.len();
+        let model2_of: Vec<usize> = (0..brushes.len())
+            .filter(|&i| brushes[i].model2.is_some())
+            .collect();
+        placements.extend(brushes.iter().filter_map(|e| e.model2.clone()));
+        let movable: Vec<usize> = (0..brushes.len())
+            .filter(|&i| brushes[i].script_name.is_some())
+            .collect();
         if sp {
             let text = |folder: &str, ext: &str| {
                 let files: Vec<Vec<u8>> = vfs
@@ -309,6 +329,14 @@ impl StaticModels {
                 &scripts,
             ));
             level = script::Level::of(bsp, &scripts);
+            level.movers = movable
+                .iter()
+                .map(|&i| script::Mover {
+                    name: brushes[i].script_name.clone().unwrap(),
+                    origin: brushes[i].origin,
+                    linear: brushes[i].linear,
+                })
+                .collect();
         }
         placements.extend(swjkja_world::static_model::static_models(
             &bsp.entities,
@@ -379,6 +407,11 @@ impl StaticModels {
         };
         let scripted = script::timelines(&npcs, &level, &voice);
         let camera = scripted.camera;
+        let brush_slides: HashMap<usize, Vec<Slide>> = movable
+            .into_iter()
+            .zip(scripted.movers)
+            .filter(|(_, s)| !s.is_empty())
+            .collect();
         let mut timelines = scripted.npcs.into_iter();
         for (n, p) in placements.iter().enumerate() {
             let skin = |name: &Option<String>| {
@@ -498,6 +531,11 @@ impl StaticModels {
                 lods,
                 rig: None,
                 color: [0; 4],
+                slides: n
+                    .checked_sub(first_model2)
+                    .and_then(|k| brush_slides.get(model2_of.get(k)?))
+                    .cloned()
+                    .unwrap_or_default(),
             });
         }
         resolve_looks(&mut instances);
@@ -520,6 +558,7 @@ impl StaticModels {
             shaders,
             bodies,
             camera,
+            brush_slides,
             distance_cull,
             rules,
         }
@@ -660,7 +699,8 @@ impl StaticModels {
         Some((&model.glm.lods[lod][surface], first))
     }
 
-    /// The level of detail instance `n` draws in this view, or `None` if culled.
+    /// The level of detail instance `n` draws in this view at game time `ms`, or
+    /// `None` if culled. One that has moved is linked where it is.
     pub fn visible(
         &self,
         n: usize,
@@ -668,10 +708,19 @@ impl StaticModels {
         frustum: &Frustum,
         view_cluster: i32,
         vis: &WorldVis,
+        ms: i32,
     ) -> Option<usize> {
         let m = &self.instances[n];
-        let to_view = [0, 1, 2].map(|i| m.origin[i] - camera.origin[i]);
-        let scale = match (&m.link, self.rules) {
+        let moved = m.moved(ms);
+        let origin = [0, 1, 2].map(|k| m.origin[k] + moved[k]);
+        let to_view = [0, 1, 2].map(|i| origin[i] - camera.origin[i]);
+        let relinked = match m.entity_box {
+            Some(b) if moved != [0.0; 3] => {
+                Some(vis.link(b.map(|c| [0, 1, 2].map(|k| c[k] + moved[k]))))
+            }
+            _ => None,
+        };
+        let scale = match (relinked.as_ref().or(m.link.as_ref()), self.rules) {
             // A game entity: the server's choice, then the renderer's.
             (Some(link), _) => {
                 if !vis.sends(view_cluster, link) {
@@ -709,14 +758,14 @@ impl StaticModels {
                 SP_LOD_SCALE
             }
         };
-        let level = lod(m.lods.len(), m.lod_radius, m.origin, camera, scale);
+        let level = lod(m.lods.len(), m.lod_radius, origin, camera, scale);
         // R_AddGhoulSurfaces: the entity's sphere (R_GCullModel).
         if let Some(radius) = m.ghoul2_radius {
-            return (!frustum.culls_sphere(m.origin, radius)).then_some(level);
+            return (!frustum.culls_sphere(origin, radius)).then_some(level);
         }
         // R_AddMD3Surfaces: the level's sphere and box (R_CullModel).
         let (center, radius) = m.lods[level].sphere;
-        if m.sphere_cull && frustum.culls_sphere(transform(m.origin, &m.axes, center), radius) {
+        if m.sphere_cull && frustum.culls_sphere(transform(origin, &m.axes, center), radius) {
             return None;
         }
         let [mins, maxs] = m.lods[level].bounds;
@@ -726,7 +775,7 @@ impl StaticModels {
                 if i & 2 == 0 { mins[1] } else { maxs[1] },
                 if i & 4 == 0 { mins[2] } else { maxs[2] },
             ];
-            transform(m.origin, &m.axes, v)
+            transform(origin, &m.axes, v)
         });
         (!frustum.culls_points(&corners)).then_some(level)
     }
@@ -1304,6 +1353,7 @@ fn ghoul2_instance(
         lods,
         rig: None,
         color: p.ghoul2.as_ref().map_or([0; 4], |g| g.color),
+        slides: Vec::new(),
     }
 }
 
