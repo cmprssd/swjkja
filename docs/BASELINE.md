@@ -1900,9 +1900,46 @@ picture as 30 and 100 frames on every view).
   (`crates/render/tests/retail.rs`) checks the two slots' mean colours against the
   reference within 0.25 after ten frames (17-19 levels redder than the first frame).
 - The ledge at fatal_elevator's right edge (4,280 pixels, 4-5 levels brighter in the
-  reference) is one floor surface, `textures/factory/darkfloor` (surface 8554, z
-  4264, lightmap 14): the reference is 6-14% brighter across it, more towards +y,
-  and exactly as bright around it. Not a dynamic light (it would cross the
-  surface's edges) and no fx_runner is near; not found yet.
+  reference): two surfaces, not one; see "fatal_elevator's ledge" below.
 - Not observed in a window: the viewer keeps colour the same way (a swapchain image
   keeps the last frame drawn into it); only offscreen targets were checked.
+
+## fatal_elevator's ledge, 2026-10-19 (not found)
+
+The 4,280 pixels at fatal_elevator's right edge (mean difference 0.03 over the view,
+4-5 levels on the ledge) are what the reference draws brighter there; the cause is
+not found. What is known:
+
+- They are two world surfaces, not one: the darkfloor (8554, lightmap 14) and the
+  brace beside it (`textures/factory/ll_longbrace`, 7667, sloped, lightmap 15),
+  found by casting each pixel's ray through the map's triangles. The brightening is
+  one smooth field across both, unbroken at their shared edge: a factor of 1.05-1.11,
+  the same in red, green and blue (fitting `ref = a × ours + b` gives b within 1.5
+  levels of 0), largest at the ledge's visible near edge and towards +y, gone about
+  50 units further on. Its sharp edges are other surfaces' outlines in front.
+- It depends on where the eye is. A new view looking straight down on the ledge
+  from 236 units (`90 190 4500 89 180`, captured once for this, not kept) matches
+  pixel for pixel across the same floor: the reference's lighting there (its normal
+  picture divided by an `r_fullbright 1` capture of it) equals the lightmap's texels
+  to within 0.3 levels.
+- Not a dynamic light: a capture with `r_dynamiclight 0` is byte for byte the
+  reference (`RE_RenderScene` then drops every dlight). t1_fatal has no
+  `misc_dlight`, no entity with a "light" key and no fx_runner within 1,600 units.
+- Not this renderer's mip levels, fog, models or movers: mip level 0 everywhere
+  (`max_lod` 0) and leaving out every static model each leave the band as it is;
+  t1_fatal's one fog volume lies 3,700 units below; no brush entity comes within 200
+  units; the three surfaces are in both eyes' PVS.
+- Under `r_fullbright 1` from fatal_elevator's eye, the band is about 0.65 of the
+  plain texture (the top-down view: 1.0); under `r_lightmap 1`, it is a blue field
+  with a white streak running across the floor, the brace and the wall beside them
+  (the top-down view: the darkfloor's grey lightmap). No single surface drawn with
+  other lighting gives all three pictures, so the original draws something more
+  over those pixels from that eye. A ray cast through the map's surfaces finds
+  nothing in front of them but the back of the shaft's ceiling (7987, culled).
+- Moving the eye down to `64 -352 4900` (below that ceiling) leaves the ledge out of
+  sight, so it does not tell.
+
+Found on the way: the generator beside the ledge (`models/map_objects/factory/
+f_gen.md3`, "modelscale_vec" 2.75 2.75 2.5) is drawn 1.5-1.9 times as bright here as
+in the reference, in both new views (0.54 and 0.66 of ours over the pixels off by
+more than 8). No kept view shows it.
