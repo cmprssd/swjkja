@@ -1034,3 +1034,14 @@ stands open puts its closing off; a toggled door waits for the next use. Left ou
 a use while the door moves (the original turns it back part of the way), a locked
 door's unlocking, and the targets a door uses as it moves (11 of the 101 retail
 doors a use opens have them). No reference view needs them yet.
+
+## 2026-10-19: A sky portal's scene is drawn as the original draws it; its entities wait (decided by Claude, pending review)
+
+hevil_ship's sky was t3_hevil's `misc_skyportal`: the original draws the scene from
+the portal behind the view, every frame. This renderer now does the same, with a
+second copy of the per-frame data, at the original's cost (2.7 ms of GPU on
+hevil_ship, whose portal room fills the screen with blended cloud patches). Not
+drawing the portal's scene would have kept the view's own sky box, which is not
+what any retail map with a portal shows. Left for later: the entities the original
+flags as in the portal (only yavin1's room holds one, a model no reference view
+shows), which need the game's trace from the portal.

@@ -526,6 +526,52 @@ captured with scripts running (`SCRIPTS=1 ENTITIES=1`):
   locked door's unlocking, the targets a door uses as it moves (11 of the 101), and
   a runner used again ("count", "wait").
 
+## Sky portals, 2026-10-19
+
+hevil_ship's sky, 23 levels brighter in the reference, was not the lightning: the
+sky there is darker in places too, and t3_hevil has a `misc_skyportal`. On a map
+with one, the original draws the scene from the portal first, with the view's
+angles and field of view (`CG_DrawSkyBoxPortal`, `RDF_SKYBOXPORTAL`), then clears
+the depth and draws the view, whose own sky surfaces draw nothing (`RB_EndSurface`,
+`RB_StageIteratorSky`). Sky portal rooms are small boxes: t3_hevil's holds its sky
+box, two `cloudlayer_test` cloud patches 40 units above the eye and gradient
+walls; t1_danger's, its sky box and a sand patch shaped like distant dunes. 12
+retail maps have one (5 single-player views' maps among them: kor2, t1_danger,
+vjun2, yavin1, t3_hevil; and mp/duel9). Multiplayer's portal does the same; no
+retail map uses its extras (`misc_skyportal_orient`, "onlyfoghere", "fov").
+
+This renderer now does the same: `swjkja_world::sky_portal` finds the last
+`misc_skyportal` spawned, and `WorldRenderer::draw` draws its scene (the world's
+surfaces and skies, from a second copy of the per-frame data), clears the depth,
+then the view without its skies.
+
+| View | Mean difference (main) | Exact pixels (main) |
+|------|------|------|
+| hevil_ship | 0.00 (0.55) | 99.6% (97.5%) |
+| danger_rock | 0.01 (5.19) | 98.4% (94.7%) |
+| kor2_troopers | 0.00 (0.01) | 99.5% (99.5%) |
+
+- danger_rock's two distant peaks (5.19, "as on main" since it was added) were the
+  portal's dunes, which the view's sky box drew over.
+- kor2_troopers changed in 222 pixels of sky; the 46 other views render byte for
+  byte as on main (their maps have no portal, or the view shows no sky).
+- `a_sky_portal_draws_the_sky_from_where_it_stands` (`crates/render/tests/retail.rs`)
+  checks a patch of hevil_ship's sky against the reference's mean colour, within
+  0.01 (24-31 levels darker without the portal).
+- `bench_world` (600 frames, alternating with main, three runs each): hevil_ship
+  9.26-9.35 ms against main's 6.07-6.27, GPU 7.22-7.24 against 4.46-4.52;
+  danger_rock 4.48-4.60 against 3.79-3.88, GPU 3.30-3.36 against 2.71-2.73;
+  ffa3_spawn1 (no portal) 4.96-5.05 against 4.87-5.09. The portal's scene is 15
+  surfaces on t3_hevil and 7 on t1_danger, but fills the screen: the cloud patches'
+  two blended stages each, over the sky box. The original draws the same.
+- Left out: the entities the original flags as in the portal at 1050 ms
+  (`G_PortalifyEntities`: in its PVS with a clear line to it), which the server
+  always sends and the portal's scene draws, and the effects that play there. Of the
+  six maps above, only yavin1's portal room holds one (a `misc_model_breakable`,
+  `yportal.md3`, 60 units from the portal; the others have no drawn entity within
+  1,000 units, counted with Python from the entity text); yavin1_students shows no
+  sky.
+
 ## Scaled models' specular, and a static model culled from solid, 2026-10-19
 
 vjun2_officer's 0.07 was mostly the officer's specular: his armour and gun
