@@ -19,6 +19,9 @@ pub struct Swapchain {
     pub(crate) views: Vec<vk::ImageView>,
     /// Per image: signalled when its frame is rendered; presenting waits for it.
     pub(crate) rendered: Vec<vk::Semaphore>,
+    /// Per image: whether a frame was drawn into it, which the next frame drawn
+    /// straight into it may keep.
+    pub(crate) drawn: Vec<bool>,
     pub extent: vk::Extent2D,
     pub format: vk::Format,
     pub present_mode: vk::PresentModeKHR,
@@ -85,6 +88,7 @@ impl Swapchain {
             images: Vec::new(),
             views: Vec::new(),
             rendered: Vec::new(),
+            drawn: Vec::new(),
             extent: vk::Extent2D::default(),
             format: vk::Format::UNDEFINED,
             present_mode: vk::PresentModeKHR::FIFO,
@@ -163,6 +167,7 @@ impl Swapchain {
         self.views.clear();
         self.rendered.clear();
         self.images = unsafe { self.swapchain_fn.get_swapchain_images(self.swapchain)? };
+        self.drawn = vec![false; self.images.len()];
         for &image in &self.images {
             let view = unsafe {
                 gpu.device.create_image_view(

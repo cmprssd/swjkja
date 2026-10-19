@@ -5,9 +5,16 @@
 //! standing as they do then. A map's first view may give, in its eleventh column,
 //! names the game uses as it runs, as "name@ms" separated by commas (the capture's
 //! `g_swjkjaUse`).
+//! Each view is drawn [`HELD_FRAMES`] times in a row and the last frame saved, as
+//! the capture holds a view still before its screenshot: on a map without a global
+//! fog the colour is not cleared between frames (`WorldRenderer::clear_color`).
 use std::time::Instant;
 
 use swjkja_render::{Camera, Gpu, Target, TextureSet, WorldRenderer};
+
+/// Frames each view is drawn before it is saved. The capture holds a view 200
+/// frames (`wait 200`); a blend over what the last frame left settles within these.
+const HELD_FRAMES: usize = 10;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -68,14 +75,16 @@ fn main() {
                 .get(8)
                 .map_or(0.0, |ms| ms.parse::<f32>().unwrap() / 1000.0);
             let t = Instant::now();
-            target
-                .render(&gpu, renderer.clear_color(), |frame| {
-                    renderer
-                        .draw(frame, &textures, &camera, time, depth_slot)
-                        .unwrap()
-                })
-                .unwrap();
-            let draw = t.elapsed();
+            for _ in 0..HELD_FRAMES {
+                target
+                    .render(&gpu, renderer.clear_color(), |frame| {
+                        renderer
+                            .draw(frame, &textures, &camera, time, depth_slot)
+                            .unwrap()
+                    })
+                    .unwrap();
+            }
+            let draw = t.elapsed() / HELD_FRAMES as u32;
             let rgba = target.read_rgba(&gpu).unwrap();
             let out = std::path::Path::new(out_dir).join(format!("{}.png", l[1]));
             let mut enc = png::Encoder::new(

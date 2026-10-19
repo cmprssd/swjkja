@@ -468,3 +468,85 @@ fn a_sky_portal_draws_the_sky_from_where_it_stands() {
         );
     }
 }
+
+/// Without a global fog, a frame keeps the last frame's colour where nothing opaque
+/// is drawn (`RB_BeginDrawingView` clears only the depth). t1_fatal's power pipe
+/// (`textures/wedge/powerpipe`) lies on the inside of a brush, and its first stage
+/// (`GL_ONE GL_SRC_COLOR`) multiplies its goo by what is there: in a view held still
+/// (fatal_elevator, bench/reference/script-views.txt, without its uses, which move
+/// nothing here) the goo seen through the pipe's slots settles 17-19 levels redder
+/// than over black.
+#[test]
+fn a_blend_over_nothing_takes_what_the_last_frame_left() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let gpu = Gpu::new_headless().unwrap();
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let shaders = swjkja_shader::ShaderText::load(&vfs).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t1_fatal.bsp").unwrap()).unwrap();
+    let world = swjkja_world::World::load(&bsp, &Default::default());
+    let mut textures = TextureSet::new(&gpu).unwrap();
+    let time = 7.0;
+    let mut renderer = WorldRenderer::new(
+        &gpu,
+        &mut textures,
+        &vfs,
+        &shaders,
+        &bsp,
+        &world,
+        "maps/t1_fatal.bsp",
+        time,
+    )
+    .unwrap();
+    assert_eq!(renderer.clear_color(), None);
+    let (width, height) = (1280, 720);
+    let target = Target::new(&gpu, width, height).unwrap();
+    let depth_slot = textures.add_view(target.depth_copy.view);
+    let camera = Camera::new([64.0, -352.0, 5050.0], [89.0, 180.0, 0.0], width, height);
+    // The mean colour of the two slots between the coolant tubes (y 528-555).
+    let slots = |rgba: &[u8]| {
+        [(662, 667), (673, 677)].map(|(x0, x1)| {
+            let mut sum = [0u64; 3];
+            for y in 528..556 {
+                for x in x0..x1 {
+                    let p = (y * width as usize + x) * 4;
+                    for (c, s) in sum.iter_mut().enumerate() {
+                        *s += u64::from(rgba[p + c]);
+                    }
+                }
+            }
+            sum.map(|s| s as f32 / (28 * (x1 - x0)) as f32)
+        })
+    };
+    let mut frame = || {
+        target
+            .render(&gpu, renderer.clear_color(), |frame| {
+                renderer
+                    .draw(frame, &textures, &camera, time, depth_slot)
+                    .unwrap()
+            })
+            .unwrap();
+        slots(&target.read_rgba(&gpu).unwrap())
+    };
+    // The first frame, over the target's black.
+    let first = frame();
+    for _ in 0..8 {
+        frame();
+    }
+    let held = frame();
+    let reference = [[106.793, 75.65, 45.479], [101.625, 82.491, 47.991]];
+    for ((first, held), want) in first.iter().zip(held).zip(reference) {
+        assert!(
+            (first[0] - want[0]).abs() > 15.0,
+            "over black {first:?}, the reference {want:?}"
+        );
+        for (got, want) in held.iter().zip(want) {
+            assert!(
+                (got - want).abs() <= 0.25,
+                "held {held:?}, the reference {want:?}"
+            );
+        }
+    }
+}

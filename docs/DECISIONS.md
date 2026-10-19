@@ -1045,3 +1045,14 @@ drawing the portal's scene would have kept the view's own sky box, which is not
 what any retail map with a portal shows. Left for later: the entities the original
 flags as in the portal (only yavin1's room holds one, a model no reference view
 shows), which need the game's trace from the portal.
+
+## 2026-10-19: Frames keep the last frame's colour without a global fog (decided by Claude, pending review)
+
+The original clears the colour only on a map with a global fog (to its colour) or
+with `r_fastsky`; otherwise a frame draws over the last one, which shows where a
+blend lies over nothing drawn (t1_fatal's power pipe, inside a brush, multiplies
+its goo by it). This renderer now does the same: `WorldRenderer::clear_color` is
+`None` there, the target's colour persists from frame to frame, and a window image
+keeps its last frame. `render_world` draws each view 10 times, as the capture holds
+a view still, so its pictures are the settled ones. The other way, clearing to black
+and drawing such pipes some other way, would match no view held still.
