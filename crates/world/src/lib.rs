@@ -112,6 +112,24 @@ pub fn color_shift(c: [u8; 4], shift: u32) -> [u8; 4] {
     [r as u8, g as u8, b as u8, c[3]]
 }
 
+/// Where the map's sky portal looks from, if it has one: the last `misc_skyportal`'s
+/// origin (each spawned sets `CS_SKYBOXORG`). The sky is then the scene drawn from
+/// there with the view's angles and field of view (`CG_DrawSkyBoxPortal`), and the
+/// view's own sky surfaces draw nothing.
+pub fn sky_portal(entities: &[swjkja_bsp::Entity]) -> Option<Vec3> {
+    entities
+        .iter()
+        .rev()
+        .find(|e| {
+            e.get("classname")
+                .is_some_and(|c| c.eq_ignore_ascii_case("misc_skyportal"))
+        })
+        .map(|e| {
+            e.get("origin")
+                .map_or([0.0; 3], static_model::vector_prefix)
+        })
+}
+
 fn shifted(v: &DrawVert, shift: u32) -> DrawVert {
     let mut v = *v;
     v.color = v.color.map(|c| color_shift(c, shift));

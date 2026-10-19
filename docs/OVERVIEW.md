@@ -187,22 +187,22 @@ difference per channel, 0-255; measured 2026-10-19):
 | Kind | Views | Mean difference |
 |------|------:|------|
 | Multiplayer world (sky, fog, fog volumes, flares, animated stages, curve LOD) | 19 | 0.00-0.03 |
-| Static and brush-entity models, rotating fans and drums | 18 | 0.00-5.19 |
+| Static and brush-entity models, rotating fans and drums | 18 | 0.00-3.75 |
 | Single-player NPCs (spawned, scripted, academy classes, yavin1's shuttle) | 10 | 0.01-0.09 |
-| **All** | **47** | **median 0.01; 43 under 0.5, 45 under 1.0** |
+| **All** | **47** | **median 0.01; 44 under 0.5, 46 under 1.0** |
 
 ```mermaid
 xychart-beta
     title "Views by mean difference (47 views)"
     x-axis ["< 0.25", "0.25-0.5", "0.5-1", "1-2", "> 2"]
     y-axis "views" 0 --> 45
-    bar [41, 2, 2, 0, 2]
+    bar [42, 2, 2, 0, 1]
 ```
 
-The two views above 2 are explained and are not renderer errors: danger_rock
-(5.19) is two distant peaks; ffa5_pipes (3.75) has the original's first-person
-lightsaber, which its `cg_drawGun 0` doesn't hide. dpred_guns (0.97) is the rack
-weapons, which the original turns slightly at random.
+The one view above 2 is explained and is not a renderer error: ffa5_pipes (3.75)
+has the original's first-person lightsaber, which its `cg_drawGun 0` doesn't hide.
+dpred_guns (0.97) is the rack weapons, which the original turns slightly at random.
+danger_rock's distant peaks (5.19 until 2026-10-19) were its sky portal's scene.
 
 How the world views got there, step by step (the worst of the first 11 multiplayer
 views, on 2026-10-07 and 2026-10-10):

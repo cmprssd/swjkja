@@ -294,6 +294,38 @@ impl Frame<'_> {
         };
     }
 
+    /// Clears the depth to the far plane (0), keeping the colour: a second scene
+    /// drawn over the first (the view over its sky portal's).
+    pub fn clear_depth(&mut self) {
+        let extent = self.target.depth.extent;
+        unsafe {
+            self.gpu.device.cmd_clear_attachments(
+                self.cmd,
+                &[vk::ClearAttachment {
+                    aspect_mask: vk::ImageAspectFlags::DEPTH,
+                    color_attachment: 0,
+                    clear_value: vk::ClearValue {
+                        depth_stencil: vk::ClearDepthStencilValue {
+                            depth: 0.0,
+                            stencil: 0,
+                        },
+                    },
+                }],
+                &[vk::ClearRect {
+                    rect: vk::Rect2D {
+                        offset: vk::Offset2D { x: 0, y: 0 },
+                        extent: vk::Extent2D {
+                            width: extent.width,
+                            height: extent.height,
+                        },
+                    },
+                    base_array_layer: 0,
+                    layer_count: 1,
+                }],
+            )
+        }
+    }
+
     /// Pauses rendering, copies the depth buffer to [`Target::depth_copy`] and resumes
     /// with the colour and depth so far, like the original reading the depth buffer
     /// in the middle of a frame.

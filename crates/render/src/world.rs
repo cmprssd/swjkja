@@ -198,6 +198,17 @@ struct DrawMaterial {
 /// surface and the curve error its grid may show (`LodErrorForVolume`), if a patch.
 type VisibleRange = (usize, u32, u32, Option<(usize, f32)>);
 
+/// What one draw of the world shows (`RDF_SKYBOXPORTAL`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scene {
+    /// The view, on a map without a sky portal.
+    View,
+    /// The scene from the sky portal, with its skies: the background of the view.
+    Portal,
+    /// The view over the portal's scene, its own skies left out.
+    OverPortal,
+}
+
 /// Which vertex and index buffers a draw uses.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Bound {
@@ -308,8 +319,11 @@ pub struct WorldRenderer {
     gpu: Arc<Gpu>,
     vertices: Buffer,
     indexes: Buffer,
-    /// What each frame rewrites, one copy per frame in flight ([`Frame::slot`]).
+    /// What each frame rewrites, one copy per frame in flight ([`Frame::slot`]) and
+    /// scene drawn (the view's, then the sky portal's if the map has one).
     per_frame: Vec<PerFrame>,
+    /// Where the map's sky portal looks from ([`swjkja_world::sky_portal`]).
+    sky_portal: Option<[f32; 3]>,
     _stage_buffer: Buffer,
     _fog_buffer: Buffer,
     /// The map's light styles, animated each frame.
@@ -1620,20 +1634,22 @@ impl WorldRenderer {
             vk::BufferUsageFlags::STORAGE_BUFFER,
             bytemuck::cast_slice(&gpu_fogs),
         )?;
+        let sky_portal = swjkja_world::sky_portal(&bsp.entities);
+        let set_count = (FRAMES_IN_FLIGHT * (1 + usize::from(sky_portal.is_some()))) as u32;
         let sizes = [
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
-                descriptor_count: FRAMES_IN_FLIGHT as u32,
+                descriptor_count: set_count,
             },
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: 4 * FRAMES_IN_FLIGHT as u32,
+                descriptor_count: 4 * set_count,
             },
         ];
         let frame_pool = unsafe {
             d.create_descriptor_pool(
                 &vk::DescriptorPoolCreateInfo::default()
-                    .max_sets(FRAMES_IN_FLIGHT as u32)
+                    .max_sets(set_count)
                     .pool_sizes(&sizes),
                 None,
             )?
@@ -1642,10 +1658,10 @@ impl WorldRenderer {
             d.allocate_descriptor_sets(
                 &vk::DescriptorSetAllocateInfo::default()
                     .descriptor_pool(frame_pool)
-                    .set_layouts(&[frame_layout; FRAMES_IN_FLIGHT]),
+                    .set_layouts(&vec![frame_layout; set_count as usize]),
             )?
         };
-        let mut per_frame = Vec::with_capacity(FRAMES_IN_FLIGHT);
+        let mut per_frame = Vec::with_capacity(set_count as usize);
         for frame_set in frame_sets {
             let frame_buffer = Buffer::new(
                 gpu,
@@ -1748,6 +1764,7 @@ impl WorldRenderer {
         Ok(Self {
             gpu: gpu.clone(),
             per_frame,
+            sky_portal,
             vertices: Buffer::with_data(
                 gpu,
                 vk::BufferUsageFlags::VERTEX_BUFFER,
@@ -1805,6 +1822,8 @@ impl WorldRenderer {
 
     /// Records the world for one view at `time` seconds (inside [`crate::Target::render`]).
     /// `depth_slot` is the texture slot of the target's depth copy, for flares.
+    /// On a map with a sky portal, its scene is drawn first, and the view over it
+    /// once the depth is cleared (`CG_DrawSkyBoxPortal`, `RB_BeginDrawingView`).
     pub fn draw(
         &mut self,
         frame: &mut Frame,
@@ -1812,6 +1831,24 @@ impl WorldRenderer {
         camera: &Camera,
         time: f32,
         depth_slot: u32,
+    ) -> Result<()> {
+        let Some(origin) = self.sky_portal else {
+            return self.draw_scene(frame, textures, camera, time, depth_slot, Scene::View);
+        };
+        let portal = Camera { origin, ..*camera };
+        self.draw_scene(frame, textures, &portal, time, depth_slot, Scene::Portal)?;
+        frame.clear_depth();
+        self.draw_scene(frame, textures, camera, time, depth_slot, Scene::OverPortal)
+    }
+
+    fn draw_scene(
+        &mut self,
+        frame: &mut Frame,
+        textures: &TextureSet,
+        camera: &Camera,
+        time: f32,
+        depth_slot: u32,
+        scene: Scene,
     ) -> Result<()> {
         // Game time in whole milliseconds, as cg.time.
         let styles = self
@@ -1835,7 +1872,8 @@ impl WorldRenderer {
             },
             styles: styles.map(|c| c.map(f32::from)),
         };
-        let slot = frame.slot;
+        let scenes = 1 + usize::from(self.sky_portal.is_some());
+        let slot = frame.slot * scenes + usize::from(scene == Scene::Portal);
         self.per_frame[slot]
             .frame_buffer
             .mapped_mut()?
@@ -1926,7 +1964,10 @@ impl WorldRenderer {
         let ms = (f64::from(time) * 1000.0).round() as i32;
         // The brush entities' surfaces this view draws, for their flares.
         let mut brush_shown = Vec::new();
-        for b in &self.brushes {
+        // The portal's scene draws only the entities flagged as in it
+        // (`G_PortalifyEntities`): none here.
+        let entities_shown = scene != Scene::Portal;
+        for b in self.brushes.iter().filter(|_| entities_shown) {
             // One that has slid is linked where it is (by its spawn box moved:
             // one that turns from no angles is not linked by the cube around it).
             let relinked = match &b.turning {
@@ -2113,7 +2154,7 @@ impl WorldRenderer {
         // The NPCs posed for this view, kept for their shadows.
         let mut posed: Vec<Option<Vec<Mat34>>> = vec![None; self.models.instances.len()];
         table[..size_of::<GpuEntity>()].copy_from_slice(bytemuck::bytes_of(&GpuEntity::WORLD));
-        for (n, posed) in posed.iter_mut().enumerate() {
+        for (n, posed) in posed.iter_mut().enumerate().filter(|_| entities_shown) {
             let Some(level) = self
                 .models
                 .visible(n, camera, &frustum, view_cluster, &self.vis, ms)
@@ -2161,15 +2202,19 @@ impl WorldRenderer {
             }
         }
         if let Some(shadows) = &mut self.shadows {
-            let cast = lay_shadows(
-                &self.models,
-                shadows,
-                &self.fog_volumes,
-                camera.origin,
-                |link| self.vis.sends(view_cluster, link),
-                ms,
-                &posed,
-            );
+            let cast = if entities_shown {
+                lay_shadows(
+                    &self.models,
+                    shadows,
+                    &self.fog_volumes,
+                    camera.origin,
+                    |link| self.vis.sends(view_cluster, link),
+                    ms,
+                    &posed,
+                )
+            } else {
+                Vec::new()
+            };
             let pieces = cast
                 .iter()
                 .flat_map(|&n| &shadows.laid[n].as_ref().unwrap().pieces);
@@ -2253,6 +2298,10 @@ impl WorldRenderer {
         let mut buffers_bound: Option<Bound> = None;
         for m in &self.materials {
             if m.index_count == 0 || m.gate.is_some_and(|g| !gate_open[g]) {
+                continue;
+            }
+            // Over a sky portal, the view's skies are not drawn (RB_StageIteratorSky).
+            if scene == Scene::OverPortal && m.gate.is_some() {
                 continue;
             }
             // The original reads the depth buffer for each flare as it draws it; with
