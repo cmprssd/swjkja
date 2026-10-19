@@ -358,7 +358,7 @@ impl View {
         let presented = self
             .frames
             .present(
-                &self.swapchain,
+                &mut self.swapchain,
                 &self.target,
                 renderer.clear_color(),
                 |frame| {
@@ -446,9 +446,9 @@ impl View {
         let presented = self
             .frames
             .present(
-                &self.swapchain,
+                &mut self.swapchain,
                 &self.target,
-                [0.0, 0.0, 0.0, 1.0],
+                Some([0.0, 0.0, 0.0, 1.0]),
                 |frame| {
                     frame.fill(track, [0.2, 0.2, 0.2, 1.0]);
                     frame.fill(filled, [0.8, 0.8, 0.8, 1.0]);

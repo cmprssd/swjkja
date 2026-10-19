@@ -42,7 +42,7 @@ fn renders_offscreen_with_depth_test() {
     ]);
     let vb = Buffer::with_data(&gpu, vk::BufferUsageFlags::VERTEX_BUFFER, &data).unwrap();
     target
-        .render(&gpu, [0.0, 0.0, 1.0, 1.0], |frame| unsafe {
+        .render(&gpu, Some([0.0, 0.0, 1.0, 1.0]), |frame| unsafe {
             let cmd = frame.cmd;
             gpu.device
                 .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
@@ -63,9 +63,31 @@ fn renders_offscreen_with_depth_test() {
     );
 
     // A second render with nothing drawn shows the clear colour everywhere.
-    target.render(&gpu, [0.0, 0.0, 1.0, 1.0], |_| {}).unwrap();
+    target
+        .render(&gpu, Some([0.0, 0.0, 1.0, 1.0]), |_| {})
+        .unwrap();
     let px = target.read_rgba(&gpu).unwrap();
     assert!(px.chunks(4).all(|p| p == [0, 0, 255, 255]));
+
+    // Without a clear colour, a frame keeps the last one's colour where it draws
+    // nothing; its depth is cleared, so the triangles draw as in the first frame.
+    target.render(&gpu, None, |_| {}).unwrap();
+    let px = target.read_rgba(&gpu).unwrap();
+    assert!(px.chunks(4).all(|p| p == [0, 0, 255, 255]));
+    target
+        .render(&gpu, None, |frame| unsafe {
+            let cmd = frame.cmd;
+            gpu.device
+                .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
+            gpu.device
+                .cmd_bind_vertex_buffers(cmd, 0, &[vb.buffer], &[0]);
+            gpu.device.cmd_draw(cmd, 6, 1, 0, 0);
+        })
+        .unwrap();
+    let px = target.read_rgba(&gpu).unwrap();
+    let at = |x: usize, y: usize| -> [u8; 4] { px[(y * 64 + x) * 4..][..4].try_into().unwrap() };
+    assert_eq!(at(32, 32), red);
+    assert_eq!(at(2, 2), green);
 }
 
 #[test]
@@ -120,7 +142,7 @@ fn the_camera_puts_up_at_the_top_and_left_at_the_left() {
     .unwrap();
     let vb = Buffer::with_data(&gpu, vk::BufferUsageFlags::VERTEX_BUFFER, &vertices(&v)).unwrap();
     target
-        .render(&gpu, [0.0, 0.0, 0.0, 1.0], |frame| unsafe {
+        .render(&gpu, Some([0.0, 0.0, 0.0, 1.0]), |frame| unsafe {
             let cmd = frame.cmd;
             gpu.device
                 .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
@@ -195,7 +217,7 @@ fn quake_front_faces_survive_front_sided_culling() {
         )
         .unwrap();
         target
-            .render(&gpu, [0.0, 0.0, 0.0, 1.0], |frame| unsafe {
+            .render(&gpu, Some([0.0, 0.0, 0.0, 1.0]), |frame| unsafe {
                 let cmd = frame.cmd;
                 gpu.device.cmd_bind_pipeline(
                     cmd,
@@ -263,7 +285,7 @@ fn blending_keeps_ten_bits_like_the_original_framebuffer() {
     )
     .unwrap();
     target
-        .render(&gpu, [0.0, 0.0, 0.0, 1.0], |frame| unsafe {
+        .render(&gpu, Some([0.0, 0.0, 0.0, 1.0]), |frame| unsafe {
             let cmd = frame.cmd;
             gpu.device
                 .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);

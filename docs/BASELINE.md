@@ -1863,3 +1863,46 @@ time). On the Intel HD 630, mp/ffa3 in a window:
 - **Single-player**: the SP engine has no `timedemo`; it needs a scripted camera
   path or save-game route.
 - **Linux**: the reference runs on Windows only so far.
+
+## Colour kept between frames, 2026-10-19
+
+fatal_elevator's "red light panel" (409 pixels, up to 29 levels brighter in the
+reference) was not the panel: it is t1_fatal's power pipe (`textures/wedge/powerpipe`,
+z 4224) seen in the slots between the two coolant tubes at the bottom of the shaft.
+The pipe lies on the inside of a brush (the face below it, `vjun/basemetal4`, faces
+down), so nothing is drawn behind it, and its first stage, `ggoo1` blended
+`GL_ONE GL_SRC_COLOR`, multiplies the goo by what is there. The original clears only
+the depth each frame unless the map has a global fog (`RB_BeginDrawingView`,
+`r_fastsky` 0), so "what is there" is the last frame's picture, and in a view held
+still (the capture holds each view 200 frames) the slots settle on their own
+brighter picture. This renderer cleared to black.
+
+Found by elimination: the extra was proportional to the goo's colour, not changed by
+anisotropy (off) or LOD bias (±0.5), nor by leaving out the surfaces under the pipe;
+one extra draw of the pipe's four stages brought the slots from 2.8 to 0.57 mean
+difference, and drawing the view 30 times without clearing the colour to 0.06.
+
+Now `WorldRenderer::clear_color` is `None` without a global fog and frames keep the
+last frame's colour (the target starts black; a window image drawn into keeps its
+last frame); `render_world` draws each view 10 times before saving it (the same
+picture as 30 and 100 frames on every view).
+
+| View | Mean difference (main) | Pixels off by > 2 (main) |
+|------|------|------|
+| fatal_elevator | 0.03 (0.03) | 4,280 (4,690) |
+| rancor_gates | 0.038 (0.043) | 1,770 (1,778) |
+
+- fatal_elevator's slots: mean difference 0.06 (2.8), none off by more than 2.
+- rancor_gates changes in 1,581 pixels around its gates (1,088 closer, 454
+  further), all of them already about 23 levels off (its last spots). The 47 other
+  views render pixel for pixel as on main.
+- `a_blend_over_nothing_takes_what_the_last_frame_left`
+  (`crates/render/tests/retail.rs`) checks the two slots' mean colours against the
+  reference within 0.25 after ten frames (17-19 levels redder than the first frame).
+- The ledge at fatal_elevator's right edge (4,280 pixels, 4-5 levels brighter in the
+  reference) is one floor surface, `textures/factory/darkfloor` (surface 8554, z
+  4264, lightmap 14): the reference is 6-14% brighter across it, more towards +y,
+  and exactly as bright around it. Not a dynamic light (it would cross the
+  surface's edges) and no fx_runner is near; not found yet.
+- Not observed in a window: the viewer keeps colour the same way (a swapchain image
+  keeps the last frame drawn into it); only offscreen targets were checked.

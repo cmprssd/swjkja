@@ -1814,10 +1814,13 @@ impl WorldRenderer {
         })
     }
 
-    /// The colour to clear the view to: the global fog's colour, or black.
-    pub fn clear_color(&self) -> [f32; 4] {
-        self.fog
-            .map_or([0.0, 0.0, 0.0, 1.0], |f| [f.0[0], f.0[1], f.0[2], 1.0])
+    /// The colour to clear the view to: the global fog's colour, or `None` to keep the
+    /// last frame's. Without a global fog the original clears only the depth
+    /// (`RB_BeginDrawingView`, `r_fastsky` 0), so a blend over nothing drawn (the
+    /// inside of a brush seen through t1_fatal's power pipe) takes what the last frame
+    /// left there, and a view held still settles on a picture of its own.
+    pub fn clear_color(&self) -> Option<[f32; 4]> {
+        self.fog.map(|f| [f.0[0], f.0[1], f.0[2], 1.0])
     }
 
     /// Records the world for one view at `time` seconds (inside [`crate::Target::render`]).

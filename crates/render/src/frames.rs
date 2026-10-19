@@ -125,7 +125,7 @@ impl FrameLoop {
     pub fn render(
         &mut self,
         target: &Target,
-        clear: [f32; 4],
+        clear: Option<[f32; 4]>,
         draw: impl FnOnce(&mut crate::Frame),
     ) -> Result<Option<f64>> {
         let slot = self.next;
@@ -144,9 +144,9 @@ impl FrameLoop {
     /// been drawn.
     pub fn present(
         &mut self,
-        swapchain: &Swapchain,
+        swapchain: &mut Swapchain,
         target: &Target,
-        clear: [f32; 4],
+        clear: Option<[f32; 4]>,
         draw: impl FnOnce(&mut crate::Frame),
     ) -> Result<Presented> {
         let slot = self.next;
@@ -178,7 +178,8 @@ impl FrameLoop {
             Err(e) => return Err(e.into()),
         };
         let t2 = Instant::now();
-        self.submit(slot, target, clear, draw, Some((swapchain, image)))?;
+        self.submit(slot, target, clear, draw, Some((&*swapchain, image)))?;
+        swapchain.drawn[image as usize] = true;
         let t3 = Instant::now();
         let waits = [swapchain.rendered[image as usize]];
         let swapchains = [swapchain.swapchain];
@@ -216,7 +217,7 @@ impl FrameLoop {
         &mut self,
         slot: usize,
         target: &Target,
-        clear: [f32; 4],
+        clear: Option<[f32; 4]>,
         draw: impl FnOnce(&mut crate::Frame),
         present: Option<(&Swapchain, u32)>,
     ) -> Result<()> {
@@ -228,7 +229,10 @@ impl FrameLoop {
                     && swapchain.format == Target::COLOR_FORMAT
                     && swapchain.extent == target.color.extent
             })
-            .map(|(swapchain, i)| (swapchain.images[i as usize], swapchain.views[i as usize]));
+            .map(|(swapchain, i)| {
+                let i = i as usize;
+                (swapchain.images[i], swapchain.views[i], swapchain.drawn[i])
+            });
         let copy = present.filter(|_| direct.is_none());
         unsafe {
             d.reset_fences(&[s.fence])?;
