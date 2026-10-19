@@ -15,11 +15,13 @@
 //! `InitBBrush`; cgame's `CG_Mover` adds it after the brushes).
 //!
 //! In single player a door that spawns a trigger opens when an NPC stands in it
-//! ([`touch_doors`]), and stays open while the NPC does; and the map's scripts move
-//! and turn the brush entities they name ([`crate::script::Timelines::movers`]).
+//! ([`touch_doors`]), and stays open while the NPC does; a door used by its name
+//! opens, waits and closes again ([`use_doors`]); and the map's scripts move and
+//! turn the brush entities they name ([`crate::script::Timelines::movers`]).
 
 use swjkja_bsp::{Entity, Model};
 
+use crate::script::{Use, frame_at};
 use crate::static_model::{
     Ghoul2, Rules, StaticModel, angles_to_axis, atof, spawns_at, spawns_in, vector_prefix,
 };
@@ -90,6 +92,14 @@ pub struct Door {
     pub duration: i32,
     /// "delay" (whole seconds), in ms between being used and starting.
     pub delay: i32,
+    /// "wait" (2 when 0), in ms it stays open before closing again; negative: it
+    /// stays open for good.
+    pub wait: i32,
+    /// `MOVER_TOGGLE` (8): it stays open until used again.
+    pub toggle: bool,
+    /// The name it is used by ("targetname"), if a use opens it: not locked (16: a
+    /// use unlocks it), opened by a key (32) or inactive (128).
+    pub targetname: Option<String>,
     /// "team": the doors that open with it, the first in spawn order leading
     /// (`G_FindTeams`).
     pub team: Option<String>,
@@ -158,6 +168,8 @@ const UNTOUCHED: i64 = 2 | 8 | MOVER_LOCKED | 32 | 64 | 128;
 const TRIGGER_REACH: f32 = 120.0;
 /// A door used starts moving 50 ms later (`Use_BinaryMover_Go`).
 const USE_LAG: i32 = 50;
+/// A toggled door used while open starts closing this much later (`FRAMETIME`).
+const TOGGLE_LAG: i32 = 100;
 
 /// The brush entities `entities` spawn under `rules` and cgame draws, in spawn order,
 /// with the map's `models`. Left out: those spawned hidden (a `func_wall` or `func_usable` started off,
@@ -218,10 +230,20 @@ fn spawn(models: &[Model], e: &Entity, rules: Rules) -> Option<BrushEntity> {
                     .map(|i| (pos2[i] - origin[i]) * (pos2[i] - origin[i]))
                     .sum::<f32>()
                     .sqrt();
+                let wait = match e.get("wait").map_or(0.0, atof) {
+                    0.0 => 2.0,
+                    w => w,
+                };
                 door = Some(Door {
                     pos2,
                     duration: ((length * 1000.0 / speed) as i32).max(1),
                     delay: e.get("delay").map_or(0, atoi).saturating_mul(1000) as i32,
+                    wait: (wait * 1000.0) as i32,
+                    toggle: spawnflags & 8 != 0,
+                    targetname: e
+                        .get("targetname")
+                        .filter(|_| spawnflags & (MOVER_LOCKED | 32 | 128) == 0)
+                        .map(str::to_owned),
                     team: e.get("team").map(str::to_owned),
                     touched: spawnflags & UNTOUCHED == 0
                         && e.get("targetname").is_none()
@@ -345,6 +367,127 @@ pub fn touch_doors(entities: &mut [BrushEntity], bodies: &[[Vec3; 2]], at: i32) 
             }];
         }
     }
+}
+
+/// Opens the single-player doors `entities` holds that `used` names (each use at
+/// the level frame it came in; [`crate::script::Timelines::used`]), and closes them
+/// again after their wait (`Use_BinaryMover`, `Reached_BinaryMover`,
+/// `ReturnToPos1`).
+///
+/// A use of any door of a team uses its first in spawn order, which moves the team:
+/// "delay" later (its next think from then), each door starts from 50 ms later over
+/// its own time; the first reaches the end on the first frame at or after its time
+/// runs out, and the team closes on the first frame "wait" after that, each door
+/// over its own time again. A use while it stands open puts its closing off to
+/// "wait" after the use (a toggled door closes 100 ms after it instead of waiting);
+/// one that stays open for good answers no more uses. A use reaches a door before
+/// the door moves in that frame. Left out: a use while it moves (the original turns
+/// it back), and what the door uses as it moves ("target", "opentarget",
+/// "closetarget").
+pub fn use_doors(entities: &mut [BrushEntity], used: &[Use]) {
+    for lead in 0..entities.len() {
+        let Some(door) = &entities[lead].door else {
+            continue;
+        };
+        let in_team = |e: &BrushEntity| {
+            door.team.is_some() && e.door.as_ref().is_some_and(|d| d.team == door.team)
+        };
+        if entities[..lead].iter().any(in_team) {
+            continue;
+        }
+        let team: Vec<usize> = (lead..entities.len())
+            .filter(|&i| i == lead || in_team(&entities[i]))
+            .collect();
+        let names = |i: &usize| entities[*i].door.as_ref()?.targetname.as_deref();
+        let names: Vec<&str> = team.iter().filter_map(names).collect();
+        // When each use goes ahead ("delay" later, on the think from then); in order,
+        // a use before the moves of its frame.
+        let mut goes: Vec<i32> = used
+            .iter()
+            .filter(|u| names.iter().any(|n| n.eq_ignore_ascii_case(&u.name)))
+            .map(|u| match door.delay {
+                0 => u.at,
+                delay => frame_at(u.at + delay),
+            })
+            .collect();
+        if goes.is_empty() {
+            continue;
+        }
+        goes.sort_unstable();
+        let (duration, wait, toggle) = (door.duration, door.wait, door.toggle);
+        // (start, opening) of each move of the team.
+        let mut moves: Vec<(i32, bool)> = Vec::new();
+        let mut state = DoorState::Closed;
+        for go in goes.into_iter().map(Some).chain([None]) {
+            // What happens before this use (or ever after the last).
+            loop {
+                let before = |t: i32| go.is_none_or(|go| t < go);
+                state = match state {
+                    DoorState::Opening { reach } if before(reach) => DoorState::Open {
+                        close: (wait >= 0 && !toggle).then(|| frame_at(reach + wait)),
+                    },
+                    DoorState::Open { close: Some(c) } if before(c) => {
+                        moves.push((c, false));
+                        DoorState::Closing {
+                            closed: frame_at(c + duration),
+                        }
+                    }
+                    DoorState::Closing { closed } if before(closed) => DoorState::Closed,
+                    _ => break,
+                };
+            }
+            let Some(go) = go else { break };
+            state = match state {
+                DoorState::Closed => {
+                    let start = go + USE_LAG;
+                    moves.push((start, true));
+                    DoorState::Opening {
+                        reach: frame_at(start + duration),
+                    }
+                }
+                DoorState::Open { .. } if toggle => DoorState::Open {
+                    close: Some(frame_at(go + TOGGLE_LAG)),
+                },
+                DoorState::Open { close: Some(_) } => DoorState::Open {
+                    close: Some(frame_at(go + wait)),
+                },
+                moving_or_open_for_good => moving_or_open_for_good,
+            };
+        }
+        for i in team {
+            let e = &mut entities[i];
+            let Some(door) = &e.door else { continue };
+            let (pos1, pos2) = (e.origin, door.pos2);
+            for &(start, opening) in &moves {
+                let (from, to) = if opening { (pos1, pos2) } else { (pos2, pos1) };
+                e.slides.push(Slide {
+                    start,
+                    from,
+                    to,
+                    duration: door.duration,
+                    linear: e.linear,
+                });
+            }
+            e.slides.sort_by_key(|s| s.start);
+        }
+    }
+}
+
+/// Where a used door's team stands (`moverState`), with the frame its next change
+/// comes in.
+#[derive(Clone, Copy)]
+enum DoorState {
+    Closed,
+    Opening {
+        reach: i32,
+    },
+    /// Open, closing at `close` (`None`: until used, or for good).
+    Open {
+        close: Option<i32>,
+    },
+    Closing {
+        closed: i32,
+    },
 }
 
 /// `SP_func_rotating`: "speed" degrees a second (100 when 0) about yaw, or roll

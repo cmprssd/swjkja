@@ -1,8 +1,10 @@
 //! Renders views of maps with the stage renderer (materials drawn as the original
 //! does) to PNGs.
 //! Usage: render_world <GameData> <views.txt> <out folder>
-//! Each view renders at its game time (the views file's last column, in ms), NPCs
-//! standing as they do then.
+//! Each view renders at its game time (the views file's ninth column, in ms), NPCs
+//! standing as they do then. A map's first view may give, in its eleventh column,
+//! names the game uses as it runs, as "name@ms" separated by commas (the capture's
+//! `g_swjkjaUse`).
 use std::time::Instant;
 
 use swjkja_render::{Camera, Gpu, Target, TextureSet, WorldRenderer};
@@ -27,7 +29,20 @@ fn main() {
         let bsp = swjkja_bsp::Bsp::parse(&vfs.read(&format!("maps/{map}.bsp")).unwrap()).unwrap();
         let world = swjkja_world::World::load(&bsp, &Default::default());
         let mut textures = TextureSet::new(&gpu).unwrap();
-        let mut renderer = WorldRenderer::new(
+        let first = lines.iter().find(|l| l[0] == map).unwrap();
+        let uses: Vec<swjkja_world::script::Use> = first
+            .get(10)
+            .into_iter()
+            .flat_map(|u| u.split(','))
+            .map(|u| {
+                let (name, at) = u.split_once('@').expect("a use is name@ms");
+                swjkja_world::script::Use {
+                    name: name.to_owned(),
+                    at: at.parse().unwrap(),
+                }
+            })
+            .collect();
+        let mut renderer = WorldRenderer::with_uses(
             &gpu,
             &mut textures,
             &vfs,
@@ -36,11 +51,10 @@ fn main() {
             &world,
             &format!("maps/{map}.bsp"),
             // NPCs stand as they do at the map's first view's time.
-            lines
-                .iter()
-                .find(|l| l[0] == map)
-                .and_then(|l| l.get(8))
+            first
+                .get(8)
                 .map_or(0.0, |ms| ms.parse::<f32>().unwrap() / 1000.0),
+            &uses,
         )
         .unwrap();
         let load = t.elapsed();

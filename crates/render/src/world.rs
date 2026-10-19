@@ -581,6 +581,23 @@ impl WorldRenderer {
         map: &str,
         time: f32,
     ) -> Result<Self> {
+        Self::with_uses(gpu, textures, vfs, shaders, bsp, world, map, time, &[])
+    }
+
+    /// [`WorldRenderer::new`], with `uses` used as the game runs
+    /// ([`StaticModels::load_with_uses`]).
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_uses(
+        gpu: &Arc<Gpu>,
+        textures: &mut TextureSet,
+        vfs: &Vfs,
+        shaders: &ShaderText,
+        bsp: &Bsp,
+        world: &World,
+        map: &str,
+        time: f32,
+        uses: &[swjkja_world::script::Use],
+    ) -> Result<Self> {
         // The global fog (the one without a brush; fog numbers are 1-based) and its
         // parameters, from its shader's fogParms (red at 250 units if it has none, as
         // in R_LoadFogs).
@@ -611,12 +628,13 @@ impl WorldRenderer {
 
         let rules = swjkja_world::static_model::Rules::for_map(map);
         // Game time in whole milliseconds, as cg.time.
-        let mut models = StaticModels::load(
+        let mut models = StaticModels::load_with_uses(
             vfs,
             bsp,
             &fog_volumes,
             map,
             (f64::from(time) * 1000.0).round() as i32,
+            uses,
         );
 
         // Images: decode once, keep the decoded pixels to upload on first use. Every
@@ -662,7 +680,8 @@ impl WorldRenderer {
 
         // The brush entities the map spawns, each surface of their models placed
         // where the entity stands (a model two entities share is drawn by the first),
-        // the doors NPCs stand in opening as they begin.
+        // the doors NPCs stand in opening as they begin, and those used opening and
+        // closing again.
         let surfaces_in = |model: usize| {
             let m = &bsp.models[model];
             m.first_surface.max(0) as usize
@@ -686,6 +705,7 @@ impl WorldRenderer {
             entities[*i].slides = motion.slides.clone();
             entities[*i].turns = motion.turns.clone();
         }
+        swjkja_world::brush_entity::use_doors(&mut entities, &models.used);
         for e in entities {
             let surfaces: Vec<usize> = surfaces_in(e.model)
                 .filter(|i| *i < world.surfaces.len() && !placed.contains_key(i))

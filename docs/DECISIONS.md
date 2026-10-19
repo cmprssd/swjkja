@@ -1011,3 +1011,26 @@ Once `move` makes a breakable a mover (`ET_MOVER`), the original draws it with
 entity's angles plus "modelAngles". Here a moved model keeps its scale, and a turned
 "model2" turns by its entity's angles alone. No reference view shows either
 (t3_hevil's ship is unscaled); retail maps were not surveyed for them.
+
+## 2026-10-19: What triggers and buttons start is pinned as the names they use (decided by Claude, pending review)
+
+The elevators of t1_fatal and hoth2 rise when the player walks into a
+`trigger_multiple` (or presses use in one), which uses a script runner. The player
+does not move here and, in the captures, stands in noclip, which touches no trigger.
+What a trigger or button does is use a name (`G_UseTargets`), so that is what is
+pinned: a level takes uses, each a name and a time, made in the first level frame at
+or after the time, before that frame's entities run (`Level::uses`). The capture
+patch makes the same uses (`g_swjkjaUse`, as the `use` cheat command makes them),
+and a views file gives them in a map's first view's eleventh column. The other way,
+modelling the player's box touching triggers along a path, waits for the player's
+movement (milestone 4); its touches would come to these same uses.
+
+## 2026-10-19: A used door closes after its wait; a use while it moves is left out (decided by Claude, pending review)
+
+Doors used by name (by a script's `use` or a pinned use) open, stand open "wait"
+seconds (2 when 0) and close again, as `Use_BinaryMover`, `Reached_BinaryMover` and
+`ReturnToPos1` have them, a team on its first door's times. A use while the door
+stands open puts its closing off; a toggled door waits for the next use. Left out:
+a use while the door moves (the original turns it back part of the way), a locked
+door's unlocking, and the targets a door uses as it moves (11 of the 101 retail
+doors a use opens have them). No reference view needs them yet.

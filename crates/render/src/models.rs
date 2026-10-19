@@ -194,6 +194,10 @@ pub struct StaticModels {
     /// The moves and turns scripts give the brush entities, by their spawn order
     /// ([`swjkja_world::brush_entity::brush_entities`]), for those that move.
     pub brush_motions: HashMap<usize, Motion>,
+    /// Every name the map's scripts and the pinned uses used, at the frame of each
+    /// ([`script::Timelines::used`]), for the doors they open
+    /// ([`swjkja_world::brush_entity::use_doors`]).
+    pub used: Vec<script::Use>,
     distance_cull: f32,
     rules: Rules,
 }
@@ -317,6 +321,19 @@ impl StaticModels {
     /// ([`animation::cinematic_skeleton`]). NPCs are baked as they stand at game time
     /// `time` (ms).
     pub fn load(vfs: &Vfs, bsp: &Bsp, fogs: &[FogVolume], map: &str, time: i32) -> Self {
+        Self::load_with_uses(vfs, bsp, fogs, map, time, &[])
+    }
+
+    /// [`StaticModels::load`], with `uses` used as the game runs
+    /// ([`script::Level::uses`]; single player only).
+    pub fn load_with_uses(
+        vfs: &Vfs,
+        bsp: &Bsp,
+        fogs: &[FogVolume],
+        map: &str,
+        time: i32,
+        uses: &[script::Use],
+    ) -> Self {
         let rules = Rules::for_map(map);
         let sp = matches!(rules, Rules::SinglePlayer { .. });
         let cinematic = sp.then(|| Cinematic::load(vfs, map)).flatten();
@@ -362,6 +379,7 @@ impl StaticModels {
                 &scripts,
             ));
             level = script::Level::of(bsp, &scripts);
+            level.uses = uses.to_vec();
             // The brush entities, then the breakables: scripts find a name's last
             // spawned, so a breakable named as a brush entity takes the name here
             // whichever spawned last.
@@ -445,6 +463,7 @@ impl StaticModels {
         };
         let scripted = script::timelines(&npcs, &level, &voice);
         let camera = scripted.camera;
+        let used = scripted.used;
         let mut motions = scripted.movers.into_iter();
         let brush_motions: HashMap<usize, Motion> = movable
             .into_iter()
@@ -611,6 +630,7 @@ impl StaticModels {
             bodies,
             camera,
             brush_motions,
+            used,
             distance_cull,
             rules,
         }

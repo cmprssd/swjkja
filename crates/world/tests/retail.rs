@@ -601,7 +601,7 @@ fn npcs_open_the_doors_they_stand_in() {
         .filter(|f| f.ends_with(".bsp") && !f.starts_with("maps/mp/"))
         .collect();
     maps.sort_unstable();
-    let (mut doors, mut touchable) = (0, 0);
+    let (mut doors, mut touchable, mut named) = (0, 0, 0);
     let mut opened = Vec::new();
     for name in &maps {
         let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
@@ -625,6 +625,7 @@ fn npcs_open_the_doors_they_stand_in() {
             let Some(d) = &b.door else { continue };
             doors += 1;
             touchable += usize::from(d.touched);
+            named += usize::from(d.targetname.is_some());
             if !b.slides.is_empty() {
                 opened.push(format!("{name} *{}", b.model));
             }
@@ -632,8 +633,10 @@ fn npcs_open_the_doors_they_stand_in() {
     }
     // Counted independently with Python from the entity text: the func_doors with a
     // model that spawn at the easiest skill, and those without a "targetname",
-    // "health" or a flag that keeps a touch from opening them.
-    assert_eq!((doors, touchable), (458, 280));
+    // "health" or a flag that keeps a touch from opening them; and those with a
+    // "targetname" that are not locked, key-opened or inactive (11 of which use
+    // targets as they move, which is left out).
+    assert_eq!((doors, touchable, named), (458, 280, 101));
     // yavin1's near aisle door, open in the original's yavin1_students view (its far
     // one, *2, has no NPC in its trigger).
     assert_eq!(
@@ -645,4 +648,64 @@ fn npcs_open_the_doors_they_stand_in() {
             "maps/yavin1.bsp *3"
         ]
     );
+}
+
+/// t1_fatal's views of what is used (bench/reference/script-views.txt): its first
+/// reactor elevator, whose runner "elev1_low" is used at 3000, and the door
+/// "Sateliteroom_Door", used at 4500.
+#[test]
+fn t1_fatals_used_elevator_rises_and_its_used_door_closes_again() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let bsp = Bsp::parse(&vfs.read("maps/t1_fatal.bsp").unwrap()).unwrap();
+    let rules = Rules::for_map("maps/t1_fatal.bsp");
+    let mut brushes = swjkja_world::brush_entity::brush_entities(&bsp.entities, &bsp.models, rules);
+    let mut level = script::Level::of(&bsp, &|s| read_script(&vfs, s));
+    let movable: Vec<usize> = (0..brushes.len())
+        .filter(|&i| brushes[i].script_name.is_some())
+        .collect();
+    level.movers = movable
+        .iter()
+        .map(|&i| script::Mover {
+            name: brushes[i].script_name.clone().unwrap(),
+            origin: brushes[i].origin,
+            angles: brushes[i].angles,
+            linear: brushes[i].linear,
+        })
+        .collect();
+    level.uses = [("elev1_low", 3000), ("Sateliteroom_Door", 4500)]
+        .map(|(name, at)| script::Use {
+            name: name.to_owned(),
+            at,
+        })
+        .to_vec();
+    let t = script::timelines(&[], &level, &|_| None);
+    // The runner waits 2.2 s, then the elevator rises to tag_up1 over 4 s; on its
+    // turn there it waits a second and goes back down.
+    let elevator = movable
+        .iter()
+        .position(|&i| brushes[i].script_name.as_deref() == Some("reactor_elevator1"))
+        .unwrap();
+    let slides: Vec<_> = t.movers[elevator]
+        .slides
+        .iter()
+        .map(|s| (s.start, s.from[2], s.to[2], s.duration))
+        .collect();
+    assert_eq!(
+        slides,
+        [(5250, 4294.0, 4792.0, 4000), (10300, 4792.0, 4296.0, 4000)]
+    );
+    // The door rises 122 units in 305 ms, stands open on the frame at 4900 and
+    // closes two seconds later.
+    swjkja_world::brush_entity::use_doors(&mut brushes, &t.used);
+    let door = brushes.iter().find(|b| b.model == 149).unwrap();
+    let slides: Vec<_> = door
+        .slides
+        .iter()
+        .map(|s| (s.start, s.from[2], s.to[2], s.duration))
+        .collect();
+    assert_eq!(slides, [(4550, 0.0, 122.0, 305), (6900, 122.0, 0.0, 305)]);
 }

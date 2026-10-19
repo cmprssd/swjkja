@@ -1,6 +1,7 @@
 use swjkja_bsp::{DrawVert, Entity, Model};
 use swjkja_world::Geometry;
-use swjkja_world::brush_entity::{BrushEntity, brush_entities, touch_doors};
+use swjkja_world::brush_entity::{BrushEntity, brush_entities, touch_doors, use_doors};
+use swjkja_world::script::Use;
 use swjkja_world::static_model::Rules;
 
 const SP: Rules = Rules::SinglePlayer { skill: 0 };
@@ -463,4 +464,126 @@ fn a_team_opens_together_by_its_first_doors_trigger() {
     let mut e = spawn_doors(&pairs);
     touch_doors(&mut e, &[body([0.0, 200.0, 30.0])], 1550);
     assert!(e[0].slides.is_empty() && e[1].slides.is_empty());
+}
+
+fn uses(list: &[(&str, i32)]) -> Vec<Use> {
+    list.iter()
+        .map(|&(name, at)| Use {
+            name: name.to_owned(),
+            at,
+        })
+        .collect()
+}
+
+/// Each slide's start, whether it opens, and its time.
+fn moves(e: &BrushEntity) -> Vec<(i32, bool, i32)> {
+    e.slides
+        .iter()
+        .map(|s| (s.start, s.to != e.origin, s.duration))
+        .collect()
+}
+
+#[test]
+fn a_used_door_opens_waits_two_seconds_and_closes() {
+    let door_d = door(&[("targetname", "d")]);
+    let d = spawn_doors(std::slice::from_ref(&door_d))[0].door.clone().unwrap();
+    assert_eq!(
+        (d.wait, d.toggle, d.targetname.as_deref()),
+        (2000, false, Some("d"))
+    );
+    // Used in the frame at 3000: it starts 50 ms later and takes 145; it reaches
+    // the end on the frame at 3200, closes on the frame at 5200 and is shut at 5345.
+    let mut e = spawn_doors(std::slice::from_ref(&door_d));
+    use_doors(&mut e, &uses(&[("D", 3000), ("other", 3000)]));
+    assert_eq!(moves(&e[0]), [(3050, true, 145), (5200, false, 145)]);
+    assert_eq!(e[0].origin_at(5199), [58.0, 0.0, 0.0]);
+    let at_5258 = e[0].origin_at(5258)[0];
+    let expected = 58.0 - 58.0 * (std::f32::consts::FRAC_PI_2 * 58.0 / 145.0).sin();
+    assert!((at_5258 - expected).abs() < 1e-3, "{at_5258}");
+    assert_eq!(e[0].origin_at(5345), [0.0; 3]);
+    // A use while it stands open puts its closing off; one while it moves is lost;
+    // one once it is shut opens it again.
+    let mut e = spawn_doors(std::slice::from_ref(&door_d));
+    use_doors(
+        &mut e,
+        &uses(&[
+            ("d", 3000),
+            ("d", 3100),
+            ("d", 4000),
+            ("d", 6150),
+            ("d", 6350),
+        ]),
+    );
+    assert_eq!(
+        moves(&e[0]),
+        [
+            (3050, true, 145),
+            (6000, false, 145),
+            (6400, true, 145),
+            (8550, false, 145)
+        ]
+    );
+    // Nothing used: it stays.
+    let mut e = spawn_doors(&[door_d]);
+    use_doors(&mut e, &uses(&[("e", 3000)]));
+    assert_eq!(e[0].slides, []);
+}
+
+#[test]
+fn a_used_doors_wait_delay_and_toggle() {
+    let used = |extra: &[(&str, &str)], list: &[(&str, i32)]| {
+        let mut pairs = vec![("targetname", "d")];
+        pairs.extend_from_slice(extra);
+        let mut e = spawn_doors(&[door(&pairs)]);
+        use_doors(&mut e, &uses(list));
+        moves(&e[0])
+    };
+    // "wait" 5: closes on the frame 5 s after it reaches the end.
+    assert_eq!(
+        used(&[("wait", "5")], &[("d", 3000)]),
+        [(3050, true, 145), (8200, false, 145)]
+    );
+    // "wait" -1: open for good, used no more.
+    assert_eq!(
+        used(&[("wait", "-1")], &[("d", 3000), ("d", 9000)]),
+        [(3050, true, 145)]
+    );
+    // "delay" 1: it goes on its think a second later.
+    assert_eq!(
+        used(&[("delay", "1")], &[("d", 3000)]),
+        [(4050, true, 145), (6200, false, 145)]
+    );
+    // A toggled door stays open until used, then closes 100 ms later.
+    assert_eq!(
+        used(&[("spawnflags", "8")], &[("d", 3000)]),
+        [(3050, true, 145)]
+    );
+    assert_eq!(
+        used(&[("spawnflags", "8")], &[("d", 3000), ("d", 7000)]),
+        [(3050, true, 145), (7100, false, 145)]
+    );
+    // Locked (a use unlocks it), opened by a key, or inactive: a use opens none.
+    for flags in ["16", "32", "128"] {
+        assert_eq!(
+            used(&[("spawnflags", flags)], &[("d", 3000)]),
+            [],
+            "{flags}"
+        );
+    }
+}
+
+#[test]
+fn a_use_of_any_door_of_a_team_moves_the_team_on_its_first_doors_time() {
+    // The second door is slower (60 a second: 966 ms, in whole ms); the first reaches its end on
+    // the frame at 3200 and the team closes on the frame at 5200.
+    let pairs = [
+        door(&[("team", "t")]),
+        door(&[("team", "t"), ("targetname", "b"), ("speed", "60")]),
+    ];
+    let mut e = spawn_doors(&pairs);
+    use_doors(&mut e, &uses(&[("b", 3000)]));
+    assert_eq!(moves(&e[0]), [(3050, true, 145), (5200, false, 145)]);
+    assert_eq!(moves(&e[1]), [(3050, true, 966), (5200, false, 966)]);
+    // The slow door closes from its open end, wherever it had got to.
+    assert_eq!(e[1].slides[1].from, [58.0, 0.0, 0.0]);
 }
