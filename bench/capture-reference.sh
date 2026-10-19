@@ -12,6 +12,9 @@
 # academies' intros) start then, and a cutscene runs on instead of being skipped.
 # A script's random numbers (waits, loop counts) are their range's low end
 # (g_swjkjaScriptRand, a patch addition): the game seeds them from the clock.
+# A map's first view may give, in an eleventh column, names the game uses as it
+# runs, as "name@ms" separated by commas: each is used in the first frame at or
+# after its time (g_swjkjaUse, a patch addition), as the use command uses it.
 # CAPTURE_ARGS adds engine arguments (e.g. "+set g_ICARUSDebug 4" traces scripts;
 # "+set g_swjkjaRand 2000" logs every draw from the game's random numbers up to
 # that time, with its caller, to <map>-npcs.txt: a debugging run only, as the lines
@@ -94,6 +97,8 @@ for map in $maps; do
 	mp/*) ;;
 	*) [ "$scripts" = 1 ] && game+=(+set sv_swjkjaBegin 2000 +set g_swjkjaScriptRand 1) ;;
 	esac
+	uses=$(grep -v '^#' "$views" | awk -v m="$map" '$1 == m {if (NF >= 11) {gsub(/,/, " ", $11); gsub(/@/, " ", $11); print $11}; exit}')
+	[ -n "$uses" ] && game+=(+set g_swjkjaUse "$uses")
 	# Extra engine arguments for a debugging run (e.g. "+set g_ICARUSDebug 3").
 	read -ra extra <<<"${CAPTURE_ARGS:-}"
 	game+=("${extra[@]}")
@@ -105,7 +110,7 @@ for map in $maps; do
 	# The patched cgame logs each NPC's animation timing once per view time, and
 	# its look ("swjkja look") once the view's time is pinned.
 	if [ "$sp" = 1 ]; then
-		get qconsole.log | grep -a "swjkja npc\|swjkja look\|swjkja begin\|swjkja rand" >"$out/$map-npcs.txt" || true
+		get qconsole.log | grep -a "swjkja npc\|swjkja look\|swjkja begin\|swjkja rand\|swjkja use" >"$out/$map-npcs.txt" || true
 	fi
 done
 ls -l "$out"

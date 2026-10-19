@@ -3,7 +3,8 @@ use swjkja_icarus::{Block, Member, Node, id};
 
 use swjkja_world::brush_entity::{BrushEntity, Slide};
 use swjkja_world::script::{
-    Change, FirstPass, Level, Mover, Npc, Runner, first_pass, script_path, timeline, timelines,
+    Change, FirstPass, Level, Mover, Npc, Runner, Use, first_pass, frame_at, script_path, timeline,
+    timelines,
 };
 use swjkja_world::static_model::Pose;
 
@@ -837,4 +838,58 @@ fn a_rotate_completes_as_its_time_runs_out_and_a_move_turns_by_its_angles() {
         ]
     );
     assert_eq!(spans(&motion.slides)[0].0, 3050);
+}
+
+/// hoth2's first elevator (Hoth2/Elevators/elevator1_up), its runner "t810" used
+/// at `at`: it uses "el1_deact", then has the elevator wait a second and rise to
+/// "tag_up1" over 4 s.
+fn elevator_level(at: i32) -> Level {
+    let mut level = intro(vec![
+        command(id::USE, vec![text("el1_deact")]),
+        affect(
+            "elevator1",
+            false,
+            vec![wait(1000.0), move_to_tag("tag_up1", 4000.0)],
+        ),
+    ]);
+    level.runners[0].targetname = Some("t810".to_owned());
+    level.begin.clear();
+    level.tags.insert("tag_up1".to_owned(), [0.0, 0.0, 928.0]);
+    level.movers = vec![Mover {
+        name: "elevator1".to_owned(),
+        origin: [0.0, 0.0, 490.0],
+        angles: [0.0; 3],
+        linear: false,
+    }];
+    level.uses = vec![Use {
+        name: "T810".to_owned(),
+        at,
+    }];
+    level
+}
+
+#[test]
+fn a_pinned_use_runs_its_runner_in_its_frame() {
+    assert_eq!(
+        (
+            frame_at(1550),
+            frame_at(2980),
+            frame_at(3000),
+            frame_at(3001)
+        ),
+        (1550, 3000, 3000, 3050)
+    );
+    // Used in the frame at 3000, before the runner's update: its script runs then,
+    // its use in the same frame; the elevator's wait ends on the first frame past
+    // 4000.
+    let t = timelines(&[], &elevator_level(2980), &|_| None);
+    let used: Vec<(&str, i32)> = t.used.iter().map(|u| (u.name.as_str(), u.at)).collect();
+    assert_eq!(used, [("T810", 3000), ("el1_deact", 3000)]);
+    assert_eq!(
+        spans(&t.movers[0].slides),
+        [(4050, [0.0, 0.0, 490.0], [0.0, 0.0, 928.0], 4000)]
+    );
+    // Nothing is used before the frame after the first.
+    let t = timelines(&[], &elevator_level(0), &|_| None);
+    assert_eq!(t.used[0].at, 1600);
 }

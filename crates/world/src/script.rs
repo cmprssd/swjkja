@@ -16,7 +16,8 @@
 //! look at (`SET_LOOK_TARGET`), whether they are drawn with more light
 //! (`SET_MORELIGHT`), the tasks scripts wait for (an animation's completes
 //! when its timer runs out, a voice line's when it has played), timed waits, loops,
-//! conditions, task groups, signals, `use` of other script runners, `affect`,
+//! conditions, task groups, signals, `use` of other script runners (and the uses
+//! a level pins: what its triggers and buttons would use, [`Level::uses`]), `affect`,
 //! which hands a block to an NPC (`FLUSH` drops the rest of its script, `INSERT`
 //! runs the block first) and runs it at once, and `run`, which runs another script
 //! in place (yavin1's opening runs its intro). The brush entities and breakable
@@ -894,6 +895,23 @@ pub struct Level {
     pub tags: HashMap<String, Vec3>,
     /// In spawn order; the caller fills them ([`Timelines::movers`]).
     pub movers: Vec<Mover>,
+    /// What is used from outside the scripts, each at the first level frame at or
+    /// after its time (after the first), before that frame's entities run (the `use` command, as the
+    /// reference captures pin it: `g_swjkjaUse`); the caller fills them.
+    pub uses: Vec<Use>,
+}
+
+/// A name used (`G_UseTargets2`: every entity with that "targetname") at a level
+/// time (ms).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Use {
+    pub name: String,
+    pub at: i32,
+}
+
+/// The level frame a time falls in: the first at or after it.
+pub fn frame_at(ms: i32) -> i32 {
+    FIRST_FRAME + ((ms - FIRST_FRAME).max(0) + FRAME_MS - 1) / FRAME_MS * FRAME_MS
 }
 
 impl Level {
@@ -1001,6 +1019,7 @@ impl Level {
             runs,
             tags,
             movers: Vec::new(),
+            uses: Vec::new(),
         }
     }
 
@@ -1049,13 +1068,20 @@ struct World<'a> {
     next_task: u32,
     /// When a script first enabled the camera (ms, on the client's clock).
     camera: Option<i32>,
+    /// Every name used, at the level frame it was used in.
+    used: Vec<Use>,
 }
 
 impl<'a> World<'a> {
     /// `target_scriptrunner_use` of the runners named `name` at `level`: each
     /// starts its script `delay` later, on its first think from then (`G_RunThink`
-    /// runs its scripts right after), or with no delay at its next update.
-    fn use_targets(&mut self, name: &str, level: i32) {
+    /// runs its scripts right after), or with no delay at its next update: in this
+    /// frame if `before_frame` (used before the frame's entities run), else the next.
+    fn use_targets(&mut self, name: &str, level: i32, before_frame: bool) {
+        self.used.push(Use {
+            name: name.to_owned(),
+            at: level,
+        });
         for (r, runner) in self.level.runners.iter().enumerate() {
             if runner
                 .targetname
@@ -1065,6 +1091,8 @@ impl<'a> World<'a> {
             {
                 let start = if runner.delay > 0 {
                     level + runner.delay
+                } else if before_frame {
+                    level
                 } else {
                     level + 1
                 };
@@ -1135,7 +1163,7 @@ impl<'a> World<'a> {
                     }
                     id::USE => {
                         let name = text(b, 0).to_owned();
-                        self.use_targets(&name, level);
+                        self.use_targets(&name, level, false);
                     }
                     id::MOVE if a.mover.is_some() => {
                         let task = self.next_task;
@@ -1353,6 +1381,10 @@ pub struct Timelines {
     /// One per mover of the level ([`Level::movers`]), in order: its moves and
     /// turns.
     pub movers: Vec<Motion>,
+    /// Every name the scripts and [`Level::uses`] used, in the order used, at the
+    /// level frame of each (what else answers them, such as doors, is the caller's:
+    /// [`crate::brush_entity::use_doors`]).
+    pub used: Vec<Use>,
 }
 
 /// A camera's field of view as it is enabled (`CAMERA_DEFAULT_FOV`).
@@ -1419,7 +1451,16 @@ pub fn timelines(
         voice,
         next_task: 0,
         camera: None,
+        used: Vec::new(),
     };
+    // The pinned uses, by frame.
+    let mut pinned: Vec<(i32, &str)> = level
+        .uses
+        .iter()
+        .map(|u| (frame_at(u.at).max(FIRST_FRAME + FRAME_MS), u.name.as_str()))
+        .collect();
+    pinned.sort_by_key(|&(frame, _)| frame);
+    let mut pinned = pinned.into_iter().peekable();
     let mut level_time = FIRST_FRAME;
     for i in world.runners..world.actors.len() {
         world.script(i, level_time, 0);
@@ -1433,11 +1474,14 @@ pub fn timelines(
             if next.is_none_or(|n| n >= begin_frame) && level_time < begin_frame {
                 // The player enters the world after frame PLAYER_BEGIN.
                 for name in &level.begin {
-                    world.use_targets(name, PLAYER_BEGIN);
+                    world.use_targets(name, PLAYER_BEGIN, false);
                 }
                 begun = true;
                 next = world.next_event(level_time);
             }
+        }
+        if let Some(&(frame, _)) = pinned.peek() {
+            next = Some(next.map_or(frame, |n| n.min(frame)));
         }
         let Some(next) = next else { break };
         if next > HORIZON {
@@ -1452,6 +1496,9 @@ pub fn timelines(
             }
         }
         level_time = next;
+        while let Some((_, name)) = pinned.next_if(|&(frame, _)| frame == level_time) {
+            world.use_targets(name, level_time, true);
+        }
         world.frame(level_time, FRAME_MS);
     }
     let first = |anim: &str| Change {
@@ -1487,6 +1534,7 @@ pub fn timelines(
         npcs,
         camera: world.camera,
         movers,
+        used: world.used,
     }
 }
 

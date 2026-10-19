@@ -480,6 +480,52 @@ A new view, hevil_ship, looks up at the ship at 6000 ms, 70% of the way down and
   given as a tag, and a breakable no `move` has made a mover turning more than once
   (its server angles stay where it spawned).
 
+## What triggers start, and used doors closing, 2026-10-19
+
+The third piece of the movers' motion. Elevators such as t1_fatal's and hoth2's are
+`func_static`s that scripts move (`common/elevator`, `T1_Fatal/Elevators/*`,
+`Hoth2/Elevators/*`), run by a `target_scriptrunner` that a `trigger_multiple` uses
+when the player walks into it. The player does not move here, so what a trigger or
+button does is pinned as the name it uses: a level takes uses, each made in the
+first frame at or after its time, before that frame's entities run, so a runner
+without a delay runs its script in that frame. The reference capture makes the same
+uses (`g_swjkjaUse`, a patch addition calling what the `use` command calls), and the
+views file gives them in a map's first view's eleventh column.
+
+Doors used by name (by a pinned use or a script's `use`) now open, stand open
+"wait" seconds (2 when 0) and close again: a team on its first door's times, the
+end reached on the first frame at or after the move's time runs out, the close on
+the first frame "wait" after that. A use while it stands open puts the closing off;
+a toggled door waits for the next use; one with a negative wait stays open. Of the
+458 single-player doors, 101 open by use (counted with Python from the entity
+text).
+
+Two new views at 7000 ms, `elev1_low` used at 3000 and `Sateliteroom_Door` at 4500,
+captured with scripts running (`SCRIPTS=1 ENTITIES=1`):
+
+| View | Mean difference (nothing used, as main) | Pixels off by > 16 (main) |
+|------|------|------|
+| fatal_elevator | 0.03 (1.01) | 0.0% (2.6%) |
+| fatal_door | 0.01 (18.44) | 0.0% (32.0%) |
+
+- fatal_elevator looks down the first reactor shaft at `reactor_elevator1`: the
+  runner waits 2.2 s, the elevator rises 498 units over 4 s from 5250 (the
+  original's ICARUS trace gives the same frame for its `move`). 98.6% of pixels are
+  exact. Two spots differ by more than 2: a ledge at the right edge, 4-5 levels
+  brighter in the reference (4,280 pixels; the same with nothing used, so not the
+  motion), and 409 pixels of the platform's red light panel, up to 29 levels
+  brighter in the reference (not examined).
+- fatal_door looks at `Sateliteroom_Door` closing: it rises 122 units in 305 ms
+  from 4550, stands open on the frame at 4900 and closes from 6900; at 7000 it is
+  100 ms into closing. 98.0% of pixels are exact, none off by more than 2.
+- The first capture crashed on the first frame: the patch's parsing of
+  `g_swjkjaUse` needs a parse session in single player (`COM_ParseSession`).
+- The 48 other views render byte for byte as on main (none uses anything).
+- Left out: the player's box touching triggers (milestone 4: its touches come to
+  these same uses), a use of a door while it moves (the original turns it back), a
+  locked door's unlocking, the targets a door uses as it moves (11 of the 101), and
+  a runner used again ("count", "wait").
+
 ## Scaled models' specular, and a static model culled from solid, 2026-10-19
 
 vjun2_officer's 0.07 was mostly the officer's specular: his armour and gun
