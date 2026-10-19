@@ -486,7 +486,10 @@ fn moves(e: &BrushEntity) -> Vec<(i32, bool, i32)> {
 #[test]
 fn a_used_door_opens_waits_two_seconds_and_closes() {
     let door_d = door(&[("targetname", "d")]);
-    let d = spawn_doors(std::slice::from_ref(&door_d))[0].door.clone().unwrap();
+    let d = spawn_doors(std::slice::from_ref(&door_d))[0]
+        .door
+        .clone()
+        .unwrap();
     assert_eq!(
         (d.wait, d.toggle, d.targetname.as_deref()),
         (2000, false, Some("d"))
