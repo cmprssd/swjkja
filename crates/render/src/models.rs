@@ -47,7 +47,7 @@ use swjkja_model::glm::{self, Ghoul2Model};
 use swjkja_model::md3::{Md3, Md3Model};
 use swjkja_model::skin::Skin;
 use swjkja_world::Geometry;
-use swjkja_world::brush_entity::Slide;
+use swjkja_world::brush_entity::{Motion, slid};
 use swjkja_world::collision::Collision;
 use swjkja_world::npc;
 use swjkja_world::script::{self, Timeline};
@@ -132,17 +132,50 @@ pub struct Instance {
     /// The entity's colour (`shaderRGBA`), 0-255: a Ghoul2 model's
     /// ([`swjkja_world::static_model::Ghoul2::color`]), else zero.
     pub color: [u8; 4],
-    /// A brush entity's "model2" that scripts move: its entity's moves. It is drawn,
-    /// culled, linked and lit [`Instance::moved`] from where it spawns.
-    pub slides: Vec<Slide>,
+    /// A model scripts move (a brush entity's "model2", a breakable): its moves and
+    /// turns. It is drawn, culled, linked and lit [`Instance::moved`] from where it
+    /// spawns.
+    pub motion: Motion,
+    /// The angles it spawns at, which its turns start from.
+    pub angles: Vec3,
 }
 
 impl Instance {
-    /// How far its moves have taken it from where it spawns at game time `ms`.
-    pub fn moved(&self, ms: i32) -> Vec3 {
-        let at = swjkja_world::brush_entity::slid(&self.slides, ms).unwrap_or(self.origin);
-        [0, 1, 2].map(|k| at[k] - self.origin[k])
+    /// Where its moves and turns have taken it from where it spawns at game time
+    /// `ms`, as a matrix from the world as it was baked to the world now (turned
+    /// about its origin, then moved), or `None` if they have not. A turned model is
+    /// drawn at `AnglesToAxis` of its angles, its scale kept.
+    pub fn moved(&self, ms: i32) -> Option<Mat34> {
+        let at = slid(&self.motion.slides, ms).unwrap_or(self.origin);
+        let angles = slid(&self.motion.turns, ms).filter(|a| *a != self.angles);
+        if at == self.origin && angles.is_none() {
+            return None;
+        }
+        // Each baked axis, unit length, turns into the same axis now.
+        let now = angles.map_or(self.axes, swjkja_world::static_model::angles_to_axis);
+        let unit = |a: Vec3| {
+            let l = dot(a, a).sqrt();
+            a.map(|x| x / l)
+        };
+        let (was, now) = (self.axes.map(unit), now.map(unit));
+        let turn: [Vec3; 3] = std::array::from_fn(|i| {
+            std::array::from_fn(|j| (0..3).map(|k| now[k][i] * was[k][j]).sum())
+        });
+        Some(std::array::from_fn(|i| {
+            let row = turn[i];
+            [row[0], row[1], row[2], at[i] - dot(row, self.origin)]
+        }))
     }
+
+    /// Where its origin is at game time `ms`.
+    pub fn origin_at(&self, ms: i32) -> Vec3 {
+        slid(&self.motion.slides, ms).unwrap_or(self.origin)
+    }
+}
+
+/// Point `v` moved by matrix `m`.
+pub fn apply(m: &Mat34, v: Vec3) -> Vec3 {
+    std::array::from_fn(|i| m[i][0] * v[0] + m[i][1] * v[1] + m[i][2] * v[2] + m[i][3])
 }
 
 pub struct StaticModels {
@@ -158,9 +191,9 @@ pub struct StaticModels {
     pub bodies: Vec<[Vec3; 2]>,
     /// When the map's scripts first enable a camera (ms; [`script::Timelines`]).
     pub camera: Option<i32>,
-    /// The moves scripts give the brush entities, by their spawn order
+    /// The moves and turns scripts give the brush entities, by their spawn order
     /// ([`swjkja_world::brush_entity::brush_entities`]), for those that move.
-    pub brush_slides: HashMap<usize, Vec<Slide>>,
+    pub brush_motions: HashMap<usize, Motion>,
     distance_cull: f32,
     rules: Rules,
 }
@@ -329,13 +362,18 @@ impl StaticModels {
                 &scripts,
             ));
             level = script::Level::of(bsp, &scripts);
+            // The brush entities, then the breakables: scripts find a name's last
+            // spawned, so a breakable named as a brush entity takes the name here
+            // whichever spawned last.
             level.movers = movable
                 .iter()
                 .map(|&i| script::Mover {
                     name: brushes[i].script_name.clone().unwrap(),
                     origin: brushes[i].origin,
+                    angles: brushes[i].angles,
                     linear: brushes[i].linear,
                 })
+                .chain(placements.iter().filter_map(|p| p.mover.clone()))
                 .collect();
         }
         placements.extend(swjkja_world::static_model::static_models(
@@ -407,10 +445,19 @@ impl StaticModels {
         };
         let scripted = script::timelines(&npcs, &level, &voice);
         let camera = scripted.camera;
-        let brush_slides: HashMap<usize, Vec<Slide>> = movable
+        let mut motions = scripted.movers.into_iter();
+        let brush_motions: HashMap<usize, Motion> = movable
             .into_iter()
-            .zip(scripted.movers)
-            .filter(|(_, s)| !s.is_empty())
+            .zip(motions.by_ref())
+            .filter(|(_, m)| !m.is_empty())
+            .collect();
+        // The breakables', by placement.
+        let mut breakable_motions: Vec<Motion> = placements
+            .iter()
+            .map(|p| match p.mover {
+                Some(_) => motions.next().unwrap_or_default(),
+                None => Motion::default(),
+            })
             .collect();
         let mut timelines = scripted.npcs.into_iter();
         for (n, p) in placements.iter().enumerate() {
@@ -531,11 +578,16 @@ impl StaticModels {
                 lods,
                 rig: None,
                 color: [0; 4],
-                slides: n
-                    .checked_sub(first_model2)
-                    .and_then(|k| brush_slides.get(model2_of.get(k)?))
+                motion: model2_of
+                    .get(n.wrapping_sub(first_model2))
+                    .and_then(|i| brush_motions.get(i))
                     .cloned()
-                    .unwrap_or_default(),
+                    .unwrap_or_else(|| std::mem::take(&mut breakable_motions[n])),
+                angles: match (&p.mover, model2_of.get(n.wrapping_sub(first_model2))) {
+                    (Some(m), _) => m.angles,
+                    (None, Some(&i)) => brushes[i].angles,
+                    (None, None) => [0.0; 3],
+                },
             });
         }
         resolve_looks(&mut instances);
@@ -558,7 +610,7 @@ impl StaticModels {
             shaders,
             bodies,
             camera,
-            brush_slides,
+            brush_motions,
             distance_cull,
             rules,
         }
@@ -712,11 +764,13 @@ impl StaticModels {
     ) -> Option<usize> {
         let m = &self.instances[n];
         let moved = m.moved(ms);
-        let origin = [0, 1, 2].map(|k| m.origin[k] + moved[k]);
+        let origin = m.origin_at(ms);
         let to_view = [0, 1, 2].map(|i| origin[i] - camera.origin[i]);
+        // Linked where it is: a model's box does not turn (`SV_LinkEntity`).
         let relinked = match m.entity_box {
-            Some(b) if moved != [0.0; 3] => {
-                Some(vis.link(b.map(|c| [0, 1, 2].map(|k| c[k] + moved[k]))))
+            Some(b) if moved.is_some() => {
+                let by = [0, 1, 2].map(|k| origin[k] - m.origin[k]);
+                Some(vis.link(b.map(|c| [0, 1, 2].map(|k| c[k] + by[k]))))
             }
             _ => None,
         };
@@ -763,9 +817,13 @@ impl StaticModels {
         if let Some(radius) = m.ghoul2_radius {
             return (!frustum.culls_sphere(origin, radius)).then_some(level);
         }
-        // R_AddMD3Surfaces: the level's sphere and box (R_CullModel).
+        // R_AddMD3Surfaces: the level's sphere and box (R_CullModel), where it is.
+        let place = |v: Vec3| {
+            let baked = transform(m.origin, &m.axes, v);
+            moved.as_ref().map_or(baked, |p| apply(p, baked))
+        };
         let (center, radius) = m.lods[level].sphere;
-        if m.sphere_cull && frustum.culls_sphere(transform(origin, &m.axes, center), radius) {
+        if m.sphere_cull && frustum.culls_sphere(place(center), radius) {
             return None;
         }
         let [mins, maxs] = m.lods[level].bounds;
@@ -775,7 +833,7 @@ impl StaticModels {
                 if i & 2 == 0 { mins[1] } else { maxs[1] },
                 if i & 4 == 0 { mins[2] } else { maxs[2] },
             ];
-            transform(origin, &m.axes, v)
+            place(v)
         });
         (!frustum.culls_points(&corners)).then_some(level)
     }
@@ -1353,7 +1411,8 @@ fn ghoul2_instance(
         lods,
         rig: None,
         color: p.ghoul2.as_ref().map_or([0; 4], |g| g.color),
-        slides: Vec::new(),
+        motion: Motion::default(),
+        angles: [0.0; 3],
     }
 }
 

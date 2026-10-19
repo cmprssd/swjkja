@@ -435,6 +435,51 @@ scripts running (`SCRIPTS=1 ENTITIES=1`):
   what the map's triggers and buttons do later (elevators on t1_fatal, hoth2 and
   others).
 
+## Scripted turns and breakables, 2026-10-19
+
+The second piece of the movers' motion: what scripts turn, and the breakable models
+they move. t3_hevil's player spawn point starts t3_hevil/playerSpawn, whose intro
+ship (`playerIntroShip`, a `misc_model_breakable` drawing `z_95.md3` at yaw 360)
+waits 1500 ms, then turns to yaw 135 over 4 s (`rotate`) and lands on the
+`ref_tag` playerShipIntroLand over 5 s (`move`), both easing out
+(`TR_NONLINEAR_STOP`).
+
+ICARUS's `rotate` (`Lerp2Angles`) is now modelled for the entities scripts move: from
+its angles to the new ones the short way (`AngleSubtract`), its task completing as
+its time runs out (`anglerCallback`, a think). So are `move`'s angles (`Lerp2Pos`
+with angles: `AngleDelta`, in 65536ths of a turn), its task completing as the move
+gets there. A breakable with a "script_targetname" is a mover scripts can name. A
+moving model is drawn by a bone turning it about where it spawned and moving it
+there, culled where it is and lit at its origin; its linked box moves but does not
+turn (`SV_LinkEntity` turns only brush models' boxes). The original's ICARUS trace
+(`g_ICARUSDebug 4`) gives the same times: the ship's `rotate` and `move` at 3600.
+
+A new view, hevil_ship, looks up at the ship at 6000 ms, 70% of the way down and
+109 degrees into its turn. Captured with scripts running (`SCRIPTS=1 ENTITIES=1`):
+
+| View | Mean difference (the ship where it spawns, as main) | Exact pixels |
+|------|------|------|
+| hevil_ship | 0.55 (1.19) | 97.5% (95.8%) |
+
+- The ship itself is exact but for 6 pixels off by more than 2 (a 360 x 200 box
+  around it: 0.018).
+- The rest is the sky, brighter in the reference by about 23 levels (0.540 of the
+  0.544 is in the top 200 rows). This is the first t3_hevil view that shows sky; not
+  examined. The map's two `env/lbolt1` effects (lightning, `fx_runner`s that play
+  from the start) are a candidate.
+- The first capture showed the ship in place but fully turned: the capture patch
+  evaluated a mover's angles at the pinned time only for `TR_LINEAR` turns
+  (func_rotatings), and a script's turn at cgame's real clock, past its end. Every
+  mover's angles now take the pinned time (DECISIONS.md), and the reference engine
+  was rebuilt with it.
+- The 48 other views render pixel for pixel as on main (no other view's scripts
+  move a breakable or turn anything).
+- Left out: a moved breakable's scale (the original's `CG_Mover` drops it), a turned
+  "model2"'s "modelAngles", the linked box of a brush entity that turns from zero
+  angles (the original links it by a cube around it), a rotate's or move's angles
+  given as a tag, and a breakable no `move` has made a mover turning more than once
+  (its server angles stay where it spawned).
+
 ## Scaled models' specular, and a static model culled from solid, 2026-10-19
 
 vjun2_officer's 0.07 was mostly the officer's specular: his armour and gun

@@ -282,7 +282,7 @@ fn t3_stamps_intro_moves_its_cranes_as_the_original() {
     // crane and its crate, each shuttling between two tags. Four cranes and four
     // crates (func_statics) move; four other func_statics share the cranes' names,
     // spawned first, and stay.
-    assert_eq!(models.brush_slides.len(), 8);
+    assert_eq!(models.brush_motions.len(), 8);
     let crane = |origin: [f32; 3]| {
         models
             .instances
@@ -293,14 +293,67 @@ fn t3_stamps_intro_moves_its_cranes_as_the_original() {
     // crane_1's model2, as the original's log has it: back to cp1 at 9100, on to
     // cp2 (6144 units north) over 28 s from 9150.
     let crane_1 = crane([-3584.0, -3120.0, 1148.0]);
-    assert_eq!(crane_1.moved(9000), [0.0; 3]);
-    assert_eq!(crane_1.moved(9150), [0.0, -1344.0, 0.0]);
+    let by = |ms: i32| crane_1.moved(ms).map(|m| [m[0][3], m[1][3], m[2][3]]);
+    assert_eq!(by(9000), None);
+    assert_eq!(by(9150), Some([0.0, -1344.0, 0.0]));
     // In the stamp_cranes view, at 22000 ms: sin(90 degrees x 12850 / 28000).
-    let y = crane_1.moved(22000)[1];
+    let y = by(22000).unwrap()[1];
     let expected = -1344.0 + 6144.0 * (std::f32::consts::FRAC_PI_2 * 12850.0 / 28000.0).sin();
     assert!((y - expected).abs() < 0.01, "{y} {expected}");
     // The one spawned first with crane_1's name stays.
-    assert!(crane([0.0; 3]).slides.is_empty());
+    assert!(crane([0.0; 3]).motion.is_empty());
+}
+
+/// t3_hevil's intro ship (a `misc_model_breakable`, "playerIntroShip") lands on its
+/// tag as t3_hevil/playerSpawn has it, turning to yaw 135 on the way.
+#[test]
+fn t3_hevils_intro_ship_lands_turning_as_the_original() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t3_hevil.bsp").unwrap()).unwrap();
+    let models = StaticModels::load(&vfs, &bsp, &[], "maps/t3_hevil.bsp", 0);
+    let ship = models
+        .instances
+        .iter()
+        .find(|m| m.origin == [633.0, -2404.0, 1760.0])
+        .unwrap();
+    // The intro starts at 2050 and waits 1500 ms; then the ship turns over 4 s and
+    // lands on playerShipIntroLand over 5 s.
+    let turn = &ship.motion.turns[..];
+    assert_eq!(
+        (
+            turn.len(),
+            turn[0].start,
+            turn[0].from,
+            turn[0].to,
+            turn[0].duration
+        ),
+        (1, 3600, [0.0, 360.0, 0.0], [0.0, 495.0, 0.0], 4000)
+    );
+    let slide = &ship.motion.slides[0];
+    assert_eq!(
+        (slide.start, slide.to, slide.duration),
+        (3600, [544.0, -2328.0, -704.0], 5000)
+    );
+    assert_eq!(ship.moved(3600), None);
+    // Landed: at its tag, its forward axis at yaw 135.
+    let m = ship.moved(9000).unwrap();
+    let close = |a: f32, b: f32| (a - b).abs() < 1e-4;
+    let at = [m[0][3], m[1][3], m[2][3]];
+    let origin = [0, 1, 2].map(|i| (0..3).map(|k| m[i][k] * ship.origin[k]).sum::<f32>() + at[i]);
+    assert!(
+        (0..3).all(|i| (origin[i] - [544.0, -2328.0, -704.0][i]).abs() < 1e-3),
+        "{origin:?}"
+    );
+    let forward = [m[0][0], m[1][0], m[2][0]];
+    let half = std::f32::consts::FRAC_1_SQRT_2;
+    assert!(
+        close(forward[0], -half) && close(forward[1], half) && close(forward[2], 0.0),
+        "{forward:?}"
+    );
 }
 
 #[test]

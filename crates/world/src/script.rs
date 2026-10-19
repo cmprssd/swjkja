@@ -19,10 +19,11 @@
 //! conditions, task groups, signals, `use` of other script runners, `affect`,
 //! which hands a block to an NPC (`FLUSH` drops the rest of its script, `INSERT`
 //! runs the block first) and runs it at once, and `run`, which runs another script
-//! in place (yavin1's opening runs its intro). The brush entities scripts name move
-//! where `move` sends them (`Lerp2Pos`: to a `ref_tag` or a point, over its time),
-//! their task completing on the mover's first turn there (its angles, when `move`
-//! gives them too, and `rotate` are left out). Commands that move an NPC
+//! in place (yavin1's opening runs its intro). The brush entities and breakable
+//! models scripts name move where `move` sends them (`Lerp2Pos`: to a `ref_tag` or a
+//! point, over its time, turning to its angles if it gives them), their task
+//! completing on the mover's first turn there, and turn as `rotate` turns them
+//! (`Lerp2Angles`), its task completing as the turn's time runs out. Commands that move an NPC
 //! (`SET_NAVGOAL`, `SET_ORIGIN`, ...) are left out (those that complete later never
 //! do, as with the AI frozen), and so are cameras (but when one is first enabled)
 //! and the other commands. A random number is its range's low end
@@ -34,7 +35,7 @@ use std::collections::HashMap;
 use swjkja_icarus::{Block, Member, Node, id};
 
 use crate::Vec3;
-use crate::brush_entity::Slide;
+use crate::brush_entity::{Motion, Slide, slid};
 use crate::static_model::Pose;
 
 /// The level time (ms) of the server's first frame on a map: four settling frames
@@ -296,20 +297,59 @@ struct Body<'a> {
     slots: [Option<u32>; 3],
 }
 
-/// A brush entity scripts move: where it is and its moves.
+/// An entity scripts move: where it spawns, its moves and turns, and the tasks
+/// waiting on them.
 struct Moving {
     origin: Vec3,
+    angles: Vec3,
     linear: bool,
-    slides: Vec<Slide>,
-    /// The move under way (`TID_MOVE_NAV`): its task and the level time it ends.
-    pending: Option<(u32, i32)>,
+    motion: Motion,
+    /// The move under way: the level time it ends, and whether it turns too
+    /// (`reachedF_moveAndRotateCallback`).
+    moving: Option<(i32, bool)>,
+    /// When a `rotate`'s `anglerCallback` thinks (`nextthink`).
+    think: Option<i32>,
+    /// The tasks waiting on it: `TID_MOVE_NAV` and `TID_ANGLE_FACE`.
+    tasks: [Option<u32>; 2],
 }
+
+/// [`Moving::tasks`]'s slots.
+const MOVE_NAV: usize = 0;
+const ANGLE_FACE: usize = 1;
 
 impl Moving {
     /// `currentOrigin` at level time `level`.
     fn at(&self, level: i32) -> Vec3 {
-        self.slides.last().map_or(self.origin, |s| s.at(level))
+        self.motion
+            .slides
+            .last()
+            .map_or(self.origin, |s| s.at(level))
     }
+
+    /// `currentAngles` at level time `level`.
+    fn angles_at(&self, level: i32) -> Vec3 {
+        slid(&self.motion.turns, level).unwrap_or(self.angles)
+    }
+}
+
+/// `AngleSubtract`: `a1 - a2` in -180..=180.
+fn angle_subtract(a1: f32, a2: f32) -> f32 {
+    let mut a = (a1 - a2) % 360.0;
+    while a > 180.0 {
+        a -= 360.0;
+    }
+    while a < -180.0 {
+        a += 360.0;
+    }
+    a
+}
+
+/// `AngleDelta`: `angle1 - angle2` normalized to -180..=180 in 65536ths of a turn
+/// (`AngleNormalize180`).
+fn angle_delta(angle1: f32, angle2: f32) -> f32 {
+    let a =
+        (360.0f32 / 65536.0) * (((angle1 - angle2) * (65536.0f32 / 360.0)) as i32 & 65535) as f32;
+    if a > 180.0 { a - 360.0 } else { a }
 }
 
 /// An entity that runs scripts (its `CSequencer` and `CTaskManager`): an NPC, with
@@ -601,9 +641,10 @@ impl<'a> Actor<'a> {
 
     /// `Lerp2Pos` for `move` command `b`, as task `task` at level time `level`: it
     /// moves from where it is to the tag or point `b` names, over `b`'s time (1 ms
-    /// at least), slowing at the end unless "linear"; its task (in the current
-    /// group) completes as it gets there, and one it stomps completes now. A tag
-    /// not found fails the task: nothing moves.
+    /// at least), slowing at the end unless "linear", turning by the way to its
+    /// angles if `b` gives them (`AngleDelta`); its task (in the current group)
+    /// completes as it gets there, and those it stomps complete now. A tag not
+    /// found fails the task: nothing moves.
     fn move_to(&mut self, b: &Block, tags: &HashMap<String, Vec3>, task: u32, level: i32) {
         let float = |n: usize| b.members.get(n).and_then(Member::float).unwrap_or(0.0);
         let (to, mut at) = match b.members.first().map(|m| m.id) {
@@ -611,8 +652,12 @@ impl<'a> Actor<'a> {
             Some(id::VECTOR) => (Some([float(1), float(2), float(3)]), 4),
             _ => (None, 0),
         };
-        // Its angles, if given, are left out.
-        if b.members.get(at).is_some_and(|m| m.id == id::VECTOR) {
+        let angles = b
+            .members
+            .get(at)
+            .is_some_and(|m| m.id == id::VECTOR)
+            .then(|| [float(at + 1), float(at + 2), float(at + 3)]);
+        if angles.is_some() {
             at += 4;
         }
         let Some(to) = to else { return };
@@ -624,29 +669,94 @@ impl<'a> Actor<'a> {
             self.groups[g].tasks.push((task, false));
         }
         let m = self.mover.as_mut().unwrap();
-        let from = m.at(level);
         let slide = Slide {
             start: level,
-            from,
+            from: m.at(level),
             to,
             duration,
             linear: m.linear,
         };
-        m.slides.push(slide);
-        if let Some((old, _)) = m.pending.replace((task, level + duration)) {
+        m.motion.slides.push(slide);
+        m.moving = Some((level + duration, angles.is_some()));
+        if let Some(angles) = angles {
+            let from = m.angles_at(level);
+            let turn = Slide {
+                start: level,
+                from,
+                to: [0, 1, 2].map(|k| from[k] + angle_delta(angles[k], from[k])),
+                duration,
+                linear: m.linear,
+            };
+            m.motion.turns.push(turn);
+            self.set_task(ANGLE_FACE, task);
+        }
+        self.set_task(MOVE_NAV, task);
+    }
+
+    /// `Lerp2Angles` for `rotate` command `b`, as task `task` at level time `level`:
+    /// it turns from its angles to those `b` gives (`AngleSubtract`), over `b`'s time
+    /// (1 ms at least), slowing at the end unless "linear"; its task (in the current
+    /// group) completes as its time runs out (`anglerCallback`), and one it stomps
+    /// completes now.
+    fn rotate(&mut self, b: &Block, task: u32, level: i32) {
+        let float = |n: usize| b.members.get(n).and_then(Member::float).unwrap_or(0.0);
+        if b.members.first().map(|m| m.id) != Some(id::VECTOR) {
+            return;
+        }
+        let angles = [float(1), float(2), float(3)];
+        let time = float(4);
+        if let Some(g) = self.current_group() {
+            self.groups[g].tasks.push((task, false));
+        }
+        let m = self.mover.as_mut().unwrap();
+        let from = m.angles_at(level);
+        let turn = Slide {
+            start: level,
+            from,
+            to: [0, 1, 2].map(|k| from[k] + angle_subtract(angles[k], from[k])),
+            duration: if time > 0.0 { time as i32 } else { 1 },
+            linear: m.linear,
+        };
+        m.motion.turns.push(turn);
+        m.think = Some(level + time as i32);
+        self.set_task(ANGLE_FACE, task);
+    }
+
+    /// `Q3_TaskIDSet` on a mover: a task stomped by another completes.
+    fn set_task(&mut self, slot: usize, id: u32) {
+        let m = self.mover.as_mut().unwrap();
+        if let Some(old) = m.tasks[slot].replace(id) {
             self.complete(old);
         }
     }
 
-    /// `G_MoverTeam`'s check on its turn at `level`: a move that has got there
-    /// completes its task.
+    /// `Q3_TaskIDComplete` on a mover: the task in `slot`, if any, completes.
+    fn complete_slot(&mut self, slot: usize) {
+        if let Some(task) = self.mover.as_mut().unwrap().tasks[slot].take() {
+            self.complete(task);
+        }
+    }
+
+    /// A mover's turn at `level`: `G_MoverTeam`'s check, a move that has got there
+    /// completing its tasks (its turn's too, if it turned), then its think, a
+    /// `rotate` whose time has run out completing its task.
     fn reach(&mut self, level: i32) {
-        if let Some(m) = &mut self.mover
-            && let Some((task, end)) = m.pending
+        let Some(m) = &mut self.mover else { return };
+        if let Some((end, turned)) = m.moving
             && end <= level
         {
-            m.pending = None;
-            self.complete(task);
+            m.moving = None;
+            if turned {
+                self.complete_slot(ANGLE_FACE);
+            }
+            self.complete_slot(MOVE_NAV);
+        }
+        let m = self.mover.as_mut().unwrap();
+        if let Some(think) = m.think
+            && think <= level
+        {
+            m.think = None;
+            self.complete_slot(ANGLE_FACE);
         }
     }
 
@@ -679,8 +789,13 @@ impl<'a> Actor<'a> {
         if let Some((_, end)) = self.voice {
             at(frame_from(end));
         }
-        if let Some((_, end)) = self.mover.as_ref().and_then(|m| m.pending) {
-            at(frame_from(end));
+        if let Some(m) = &self.mover {
+            for end in [m.moving.map(|(end, _)| end), m.think]
+                .into_iter()
+                .flatten()
+            {
+                at(frame_from(end));
+            }
         }
         let Some(body) = &self.body else { return next };
         for p in &body.parts {
@@ -756,12 +871,14 @@ pub struct Runner {
     pub delay: i32,
 }
 
-/// A brush entity scripts can move: its name (`script_targetname`), where it
-/// stands, and whether it moves at one speed ("linear").
-#[derive(Debug, Clone)]
+/// An entity scripts can move (a brush entity, a breakable model): its name
+/// (`script_targetname`), where it stands and its angles, and whether it moves at
+/// one speed ("linear").
+#[derive(Debug, Clone, PartialEq)]
 pub struct Mover {
     pub name: String,
     pub origin: Vec3,
+    pub angles: Vec3,
     pub linear: bool,
 }
 
@@ -1025,6 +1142,11 @@ impl<'a> World<'a> {
                         self.next_task += 1;
                         a.move_to(b, &self.level.tags, task, level);
                     }
+                    id::ROTATE if a.mover.is_some() => {
+                        let task = self.next_task;
+                        self.next_task += 1;
+                        a.rotate(b, task, level);
+                    }
                     id::CAMERA => {
                         if b.members.first().and_then(Member::float) == Some(CAMERA_ENABLE) {
                             self.camera.get_or_insert(client_time(level));
@@ -1228,8 +1350,9 @@ pub struct Timelines {
     /// camera then draws the view (`CGCam_RenderScene`), its field of view
     /// [`CAMERA_DEFAULT_FOV`] until a zoom; cameras are not modelled further.
     pub camera: Option<i32>,
-    /// One per mover of the level ([`Level::movers`]), in order: its moves.
-    pub movers: Vec<Vec<Slide>>,
+    /// One per mover of the level ([`Level::movers`]), in order: its moves and
+    /// turns.
+    pub movers: Vec<Motion>,
 }
 
 /// A camera's field of view as it is enabled (`CAMERA_DEFAULT_FOV`).
@@ -1278,9 +1401,12 @@ pub fn timelines(
         let mut actor = Actor::new(Some(&m.name), None, None);
         actor.mover = Some(Moving {
             origin: m.origin,
+            angles: m.angles,
             linear: m.linear,
-            slides: Vec::new(),
-            pending: None,
+            motion: Motion::default(),
+            moving: None,
+            think: None,
+            tasks: [None; 2],
         });
         actors.push(actor);
     }
@@ -1341,7 +1467,7 @@ pub fn timelines(
     };
     let movers = world.actors[first_mover..]
         .iter_mut()
-        .map(|a| std::mem::take(&mut a.mover.as_mut().unwrap().slides))
+        .map(|a| std::mem::take(&mut a.mover.as_mut().unwrap().motion))
         .collect();
     let npcs = world
         .actors

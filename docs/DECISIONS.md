@@ -993,3 +993,21 @@ cranes, 6,144), so a sliding brush entity and its "model2" are now linked where
 they are at the frame's time, once they have moved. yavin1's open door renders as
 before.
 
+
+## 2026-10-19: Captures pin every mover's angles to the view's time (decided by Claude, pending review)
+
+The capture patch evaluated a mover's angles at the pinned time only when they turn
+at one speed (`TR_LINEAR`: the func_rotatings). A script's turn eases out
+(`TR_NONLINEAR_STOP`), and cgame evaluated it at its real clock, which in the first
+hevil_ship capture was past the turn's end: the ship stood fully turned at 6000 ms,
+in the right place. Every mover's angles now take the pinned time, as their positions
+already did. The func_rotatings' captures are unchanged (the same time for them);
+no earlier view shows another turning mover.
+
+## 2026-10-19: A moved model keeps its scale and its "modelAngles" are left out of its turns (decided by Claude, pending review)
+
+Once `move` makes a breakable a mover (`ET_MOVER`), the original draws it with
+`CG_Mover`, which drops its "modelscale"; and a brush entity's "model2" turns by its
+entity's angles plus "modelAngles". Here a moved model keeps its scale, and a turned
+"model2" turns by its entity's angles alone. No reference view shows either
+(t3_hevil's ship is unscaled); retail maps were not surveyed for them.
