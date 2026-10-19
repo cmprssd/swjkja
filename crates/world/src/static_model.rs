@@ -81,6 +81,9 @@ pub struct StaticModel {
     pub entity_box: Option<[Vec3; 2]>,
     /// For a Ghoul2 model (`.glm`), how it is drawn.
     pub ghoul2: Option<Ghoul2>,
+    /// For a breakable a script can move (one with a "script_targetname"), how it
+    /// spawns as one.
+    pub mover: Option<crate::script::Mover>,
 }
 
 /// How a Ghoul2 entity is drawn.
@@ -255,6 +258,7 @@ fn multiplayer(e: &Entity) -> Option<StaticModel> {
         zoffset,
         entity_box: None,
         ghoul2: None,
+        mover: None,
     })
 }
 
@@ -294,6 +298,7 @@ fn single_player(e: &Entity) -> Option<StaticModel> {
         zoffset: e.get("zoffset").map_or(0.0, atof),
         entity_box: None,
         ghoul2: None,
+        mover: None,
     })
 }
 
@@ -378,6 +383,7 @@ fn entity(model: &str, origin: Vec3, angles: Vec3, mins: Vec3, maxs: Vec3) -> St
             [0, 1, 2].map(|i| origin[i] + maxs[i] + 1.0),
         ]),
         ghoul2: None,
+        mover: None,
     }
 }
 
@@ -646,5 +652,13 @@ fn breakable(e: &Entity, world: &mut Collision) -> Option<StaticModel> {
         zoffset: 0.0,
         entity_box: Some(entity_box),
         ghoul2: None,
+        // A script finds it by its "script_targetname" (`G_SpawnGEntityFromSpawnVars`
+        // registers it with ICARUS), and moves it from where it stands.
+        mover: e.get("script_targetname").map(|name| crate::script::Mover {
+            name: name.to_owned(),
+            origin,
+            angles,
+            linear: e.get("linear").map_or(0, atoi) != 0,
+        }),
     })
 }

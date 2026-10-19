@@ -682,18 +682,20 @@ impl WorldRenderer {
             &models.bodies,
             swjkja_world::script::FIRST_FRAME,
         );
-        for (i, slides) in &models.brush_slides {
-            entities[*i].slides = slides.clone();
+        for (i, motion) in &models.brush_motions {
+            entities[*i].slides = motion.slides.clone();
+            entities[*i].turns = motion.turns.clone();
         }
         for e in entities {
             let surfaces: Vec<usize> = surfaces_in(e.model)
                 .filter(|i| *i < world.surfaces.len() && !placed.contains_key(i))
                 .collect();
             let m = &bsp.models[e.model];
-            let turning = (e.spin.is_some() || !e.slides.is_empty()).then(|| {
-                turning_count += 1;
-                turning_count - 1
-            });
+            let turning =
+                (e.spin.is_some() || !e.slides.is_empty() || !e.turns.is_empty()).then(|| {
+                    turning_count += 1;
+                    turning_count - 1
+                });
             for &i in &surfaces {
                 let geometry = &world.surfaces[i].geometry;
                 placed.insert(
@@ -879,7 +881,7 @@ impl WorldRenderer {
             .instances
             .iter()
             .map(|m| {
-                if m.slides.is_empty() {
+                if m.motion.is_empty() {
                     return None;
                 }
                 for piece in m.lods.iter().flat_map(|l| l.pieces.clone()) {
@@ -1905,7 +1907,8 @@ impl WorldRenderer {
         // The brush entities' surfaces this view draws, for their flares.
         let mut brush_shown = Vec::new();
         for b in &self.brushes {
-            // One that has slid is linked where it is.
+            // One that has slid is linked where it is (by its spawn box moved:
+            // one that turns from no angles is not linked by the cube around it).
             let relinked = match &b.turning {
                 Some(t) if t.entity.origin_at(ms) != t.entity.origin => {
                     Some(self.vis.link(t.entity.entity_box_at(ms)))
@@ -1924,9 +1927,9 @@ impl WorldRenderer {
                 None => (b.corners, None, None),
                 Some(t) => {
                     let mut e = t.entity.clone();
-                    e.axes = swjkja_world::static_model::angles_to_axis(
-                        e.angles_at(ms).unwrap_or([0.0; 3]),
-                    );
+                    if let Some(angles) = e.angles_at(ms) {
+                        e.axes = swjkja_world::static_model::angles_to_axis(angles);
+                    }
                     e.origin = e.origin_at(ms);
                     let place: Mat34 = std::array::from_fn(|i| {
                         [e.axes[0][i], e.axes[1][i], e.axes[2][i], e.origin[i]]
@@ -2100,17 +2103,16 @@ impl WorldRenderer {
             let m = &self.models.instances[n];
             let moved = m.moved(ms);
             if let Some(bone) = self.moved_bone[n] {
-                let place: Mat34 = std::array::from_fn(|i| {
+                let place: Mat34 = moved.unwrap_or(std::array::from_fn(|i| {
                     let mut row = [0.0; 4];
                     row[i] = 1.0;
-                    row[3] = moved[i];
                     row
-                });
+                }));
                 let at = bone * size_of::<Mat34>();
                 bone_table[at..at + size_of::<Mat34>()].copy_from_slice(bytemuck::bytes_of(&place));
             }
             let light = self.light_grid.entity_light(
-                [0, 1, 2].map(|k| m.light_origin[k] + moved[k]),
+                moved.map_or(m.light_origin, |p| crate::models::apply(&p, m.light_origin)),
                 &styles,
                 [0.0; 3],
                 self.models.more_light(n, ms),

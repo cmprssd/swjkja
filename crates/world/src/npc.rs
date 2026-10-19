@@ -1254,6 +1254,7 @@ pub fn npc_models(
                     attached,
                     color: look.color,
                 }),
+                mover: None,
             })
         })
         .collect()

@@ -598,13 +598,21 @@ fn a_signal_waits_for_its_receiver_and_a_runner_needs_its_user() {
     );
 }
 
-/// `move(tag(name, ORIGIN), ms)` as the compiler writes it.
-fn move_to_tag(name: &str, ms: f32) -> Node {
+/// `tag(name, ORIGIN)` as the compiler writes it.
+fn move_to_tag_members(name: &str) -> [Member; 3] {
     let marker = Member {
         id: id::TAG,
         data: f32::MAX.to_le_bytes().to_vec(),
     };
-    command(id::MOVE, vec![marker, text(name), float(54.0), float(ms)])
+    [marker, text(name), float(54.0)]
+}
+
+/// `move(tag(name, ORIGIN), ms)` as the compiler writes it.
+fn move_to_tag(name: &str, ms: f32) -> Node {
+    command(
+        id::MOVE,
+        [&move_to_tag_members(name)[..], &[float(ms)]].concat(),
+    )
 }
 
 /// A task group `name` running `nodes`.
@@ -647,6 +655,7 @@ fn crane_level(movers: &[(&str, [f32; 3], bool)]) -> Level {
         .map(|&(name, origin, linear)| Mover {
             name: name.to_owned(),
             origin,
+            angles: [0.0; 3],
             linear,
         })
         .collect();
@@ -668,7 +677,7 @@ fn a_script_moves_a_mover_to_its_tags_each_move_waiting_for_the_last() {
     // the loop moves it back at once.
     let (cp1, cp2) = ([0.0, -1000.0, 0.0], [0.0, 5000.0, 0.0]);
     assert_eq!(
-        slides(&movers[0], 4),
+        slides(&movers[0].slides, 4),
         [
             (9100, [0.0, 200.0, 0.0], cp1, 1),
             (9150, cp1, cp2, 28000),
@@ -676,10 +685,11 @@ fn a_script_moves_a_mover_to_its_tags_each_move_waiting_for_the_last() {
             (37200, cp1, cp2, 28000),
         ]
     );
-    assert!(!movers[0][1].linear);
+    assert!(!movers[0].slides[1].linear);
+    assert_eq!(movers[0].turns, []);
     // Halfway in time, slowing to a stop: sin(45 degrees) of the way.
     let e = BrushEntity {
-        slides: movers[0].clone(),
+        slides: movers[0].slides.clone(),
         ..brush_at([0.0, 200.0, 0.0])
     };
     assert_eq!(e.origin_at(9000), [0.0, 200.0, 0.0]);
@@ -692,7 +702,7 @@ fn a_script_moves_a_mover_to_its_tags_each_move_waiting_for_the_last() {
     let level = crane_level(&[("crane", [0.0; 3], false), ("CRANE", [0.0; 3], true)]);
     let movers = timelines(&[], &level, &|_| None).movers;
     assert!(movers[0].is_empty());
-    assert!(movers[1][1].linear);
+    assert!(movers[1].slides[1].linear);
 }
 
 /// A brush entity standing at `origin`, for its moves.
@@ -700,6 +710,7 @@ fn brush_at(origin: [f32; 3]) -> BrushEntity {
     BrushEntity {
         model: 1,
         origin,
+        angles: [0.0; 3],
         axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         entity_box: [origin, origin],
         broadcast: false,
@@ -710,5 +721,120 @@ fn brush_at(origin: [f32; 3]) -> BrushEntity {
         script_name: None,
         linear: false,
         slides: Vec::new(),
+        turns: Vec::new(),
     }
+}
+
+/// A vector as the compiler writes it: the marker, then its three numbers.
+fn vector(v: [f32; 3]) -> [Member; 4] {
+    let marker = Member {
+        id: id::VECTOR,
+        data: f32::MAX.to_le_bytes().to_vec(),
+    };
+    [marker, float(v[0]), float(v[1]), float(v[2])]
+}
+
+/// `rotate(<angles>, ms)`.
+fn rotate(angles: [f32; 3], ms: f32) -> Node {
+    command(id::ROTATE, [&vector(angles)[..], &[float(ms)]].concat())
+}
+
+/// A level whose intro has the mover "ship" (spawned at yaw 360) run `nodes`.
+fn ship_level(nodes: Vec<Node>) -> Level {
+    let mut level = intro(vec![affect("ship", false, nodes)]);
+    level.tags.insert("land".to_owned(), [0.0, 0.0, -704.0]);
+    level.movers = vec![Mover {
+        name: "ship".to_owned(),
+        origin: [0.0, 0.0, 1760.0],
+        angles: [0.0, 360.0, 0.0],
+        linear: false,
+    }];
+    level
+}
+
+/// Each move's or turn's start, ends and time.
+fn spans(m: &[Slide]) -> Vec<(i32, [f32; 3], [f32; 3], i32)> {
+    m.iter()
+        .map(|s| (s.start, s.from, s.to, s.duration))
+        .collect()
+}
+
+#[test]
+fn t3_hevils_intro_ship_turns_as_it_lands() {
+    // t3_hevil/playerSpawn: after 1500 ms the ship turns to yaw 135 over 4 s and
+    // lands over 5 s, at once; the group then waits 5 s more.
+    let level = ship_level(vec![
+        task(
+            "land",
+            vec![
+                wait(1500.0),
+                rotate([0.0, 135.0, 0.0], 4000.0),
+                move_to_tag("land", 5000.0),
+                wait(5000.0),
+            ],
+        ),
+        command(id::DO, vec![text("land")]),
+        command(id::WAIT, vec![text("land")]),
+        move_to_tag("land", 0.0),
+    ]);
+    let motion = &timelines(&[], &level, &|_| None).movers[0];
+    // From the first frame after 2050 (the intro's first) + 1500. AngleSubtract
+    // turns the short way: 135 - 360 is -225, so +135.
+    assert_eq!(
+        spans(&motion.turns),
+        [(3600, [0.0, 360.0, 0.0], [0.0, 495.0, 0.0], 4000)]
+    );
+    // The group's tasks (the turn, the move, the wait) are done at 8650, the last
+    // wait's first frame after 3600 + 5000; the next move starts then.
+    assert_eq!(
+        spans(&motion.slides),
+        [
+            (3600, [0.0, 0.0, 1760.0], [0.0, 0.0, -704.0], 5000),
+            (8650, [0.0, 0.0, -704.0], [0.0, 0.0, -704.0], 1),
+        ]
+    );
+}
+
+#[test]
+fn a_rotate_completes_as_its_time_runs_out_and_a_move_turns_by_its_angles() {
+    let level = ship_level(vec![
+        task("turn", vec![rotate([0.0, 90.0, 0.0], 1000.0)]),
+        command(id::DO, vec![text("turn")]),
+        command(id::WAIT, vec![text("turn")]),
+        // move(tag, <0 0 0>, 2000): AngleDelta from 450 (-450, in 65536ths of a
+        // turn: 270, so -90).
+        task(
+            "go",
+            vec![command(
+                id::MOVE,
+                [
+                    &move_to_tag_members("land")[..],
+                    &vector([0.0; 3]),
+                    &[float(2000.0)],
+                ]
+                .concat(),
+            )],
+        ),
+        command(id::DO, vec![text("go")]),
+        command(id::WAIT, vec![text("go")]),
+        task("again", vec![rotate([0.0, 0.0, 10.0], 0.0)]),
+        command(id::DO, vec![text("again")]),
+        command(id::WAIT, vec![text("again")]),
+        rotate([0.0, 0.0, 0.0], 500.0),
+    ]);
+    let motion = &timelines(&[], &level, &|_| None).movers[0];
+    // The rotate's think at 2050 + 1000 completes it on the ship's turn then, and
+    // the move starts at once; its turn completes with it, at 5050. A rotate of
+    // no time takes 1 ms and completes on the next frame. Each turns from where
+    // the last left it: yaw 360, which AngleSubtract takes as 0.
+    assert_eq!(
+        spans(&motion.turns),
+        [
+            (2050, [0.0, 360.0, 0.0], [0.0, 450.0, 0.0], 1000),
+            (3050, [0.0, 450.0, 0.0], [0.0, 360.0, 0.0], 2000),
+            (5050, [0.0, 360.0, 0.0], [0.0, 360.0, 10.0], 1),
+            (5100, [0.0, 360.0, 10.0], [0.0, 360.0, 0.0], 500),
+        ]
+    );
+    assert_eq!(spans(&motion.slides)[0].0, 3050);
 }

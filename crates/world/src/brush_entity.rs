@@ -16,7 +16,7 @@
 //!
 //! In single player a door that spawns a trigger opens when an NPC stands in it
 //! ([`touch_doors`]), and stays open while the NPC does; and the map's scripts move
-//! the brush entities they name ([`crate::script::Timelines::movers`]).
+//! and turn the brush entities they name ([`crate::script::Timelines::movers`]).
 
 use swjkja_bsp::{Entity, Model};
 
@@ -33,8 +33,10 @@ pub struct BrushEntity {
     pub model: usize,
     /// Where it is drawn from (cgame's `lerpOrigin`).
     pub origin: Vec3,
-    /// `AnglesToAxis` of its angles (forward, left, up): only a `func_static` keeps
-    /// the angles it spawns with (`G_SetAngles`); the others stand at zero.
+    /// The angles it is drawn at (`currentAngles`): only a `func_static` keeps the
+    /// angles it spawns with (`G_SetAngles`); the others stand at zero.
+    pub angles: Vec3,
+    /// `AnglesToAxis` of `angles` (forward, left, up).
     pub axes: [Vec3; 3],
     /// Its linked box (`absmin`, `absmax`), for the PVS test.
     pub entity_box: [Vec3; 2],
@@ -59,6 +61,23 @@ pub struct BrushEntity {
     /// Its moves, in the order they start (a door opening, a script's moves): it is
     /// drawn from [`BrushEntity::origin_at`], not `origin`, and linked where it is.
     pub slides: Vec<Slide>,
+    /// Its turns, in the order they start (a script's `rotate`, a `move`'s angles):
+    /// it is drawn at [`BrushEntity::angles_at`], not at `axes`.
+    pub turns: Vec<Slide>,
+}
+
+/// What a level's scripts do to a mover: its moves and its turns (`s.pos` and
+/// `s.apos`), each in the order they start; a turn slides its angles.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Motion {
+    pub slides: Vec<Slide>,
+    pub turns: Vec<Slide>,
+}
+
+impl Motion {
+    pub fn is_empty(&self) -> bool {
+        self.slides.is_empty() && self.turns.is_empty()
+    }
 }
 
 /// How a single-player door opens (`SP_func_door`, `InitMoverTrData`).
@@ -82,7 +101,8 @@ pub struct Door {
     pub touched: bool,
 }
 
-/// A mover moving from `from` to `to` over `duration` ms from game time `start`.
+/// A mover moving (or turning: its angles) from `from` to `to` over `duration` ms
+/// from game time `start`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Slide {
     pub start: i32,
@@ -255,6 +275,7 @@ fn spawn(models: &[Model], e: &Entity, rules: Rules) -> Option<BrushEntity> {
     Some(BrushEntity {
         model,
         origin,
+        angles: drawn_angles,
         axes: angles_to_axis(drawn_angles),
         entity_box,
         broadcast,
@@ -265,6 +286,7 @@ fn spawn(models: &[Model], e: &Entity, rules: Rules) -> Option<BrushEntity> {
         script_name: e.get("script_targetname").map(str::to_owned),
         linear: e.get("linear").map_or(0, atoi) != 0,
         slides: Vec::new(),
+        turns: Vec::new(),
     })
 }
 
@@ -409,6 +431,7 @@ fn secondary(
             attached: Vec::new(),
             color: [0; 4],
         }),
+        mover: None,
     })
 }
 
@@ -422,9 +445,13 @@ fn movedir(angles: Vec3) -> Vec3 {
 }
 
 impl BrushEntity {
-    /// Its angles at game time `ms` (`BG_EvaluateTrajectory`'s `TR_LINEAR`, in
-    /// floats as the original), or `None` if it does not turn.
+    /// Its angles at game time `ms`, or `None` if it does not turn: where its last
+    /// turn started by then has them, else its spin (`BG_EvaluateTrajectory`'s
+    /// `TR_LINEAR`, in floats as the original); before its first turn, `angles`.
     pub fn angles_at(&self, ms: i32) -> Option<Vec3> {
+        if !self.turns.is_empty() {
+            return Some(slid(&self.turns, ms).unwrap_or(self.angles));
+        }
         let seconds = ms as f32 * 0.001;
         self.spin.map(|d| d.map(|x| seconds * x))
     }

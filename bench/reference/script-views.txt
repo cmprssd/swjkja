@@ -24,6 +24,8 @@
 # then kills.
 # stamp_cranes looks along t3_stamp's crane line as its intro moves the cranes
 # (t3_stamp/crane_move): crane_1 and its crate 400 units ahead, moving.
+# hevil_ship looks up at t3_hevil's intro ship (a misc_model_breakable,
+# t3_hevil/playerSpawn) landing: 70% of the way down, 109 degrees into its turn.
 academy1  academy1_class   -1400 -1260 790   15 90 0   12345
 academy2  academy2_class   -1400 -1200 780   15 90 0   12345   64
 academy4  academy4_class   -1400 -1200 780   15 90 0   12345   64
@@ -31,3 +33,4 @@ academy6  academy6_class   -1400 -1200 780   15 90 0   12345   64
 yavin1    yavin1_students  3990 -120 30   15 90 0   12345
 vjun2     vjun2_imp_stance 626 1654 3095   20 135 0   3000
 t3_stamp  stamp_cranes     -3584 0 1000   10 270 0   22000
+t3_hevil  hevil_ship       -200 -3300 -600   -25 45 0   6000
