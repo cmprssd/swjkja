@@ -74,8 +74,8 @@ struct Entity {
     // xyz: the direction the light comes from, unit length or zero.
     light_dir: vec4<f32>,
     color: vec4<f32>,
-    // An MD3 model's origin (w 1), for its specular in its own space; w 0 for the
-    // world and Ghoul2 models.
+    // An MD3 model's origin (w 1), for its specular and environment map in its own
+    // space (md3_space); w 0 for the world and Ghoul2 models.
     origin: vec4<f32>,
     // Its unit axes (xyz) and their scales (w).
     axes: array<vec4<f32>, 3>,
@@ -207,7 +207,7 @@ fn sin_table(index: i32) -> f32 {
     return sin(f32(index & 1023) * 360.0 / 1023.0 * PI / 180.0);
 }
 
-fn tc_gen(s: Stage, bundle: u32, xyz: vec3<f32>, normal: vec3<f32>, st: vec2<f32>, lm01: vec4<f32>, lm23: vec4<f32>) -> vec2<f32> {
+fn tc_gen(s: Stage, bundle: u32, xyz: vec3<f32>, normal: vec3<f32>, st: vec2<f32>, lm01: vec4<f32>, lm23: vec4<f32>, e: Entity) -> vec2<f32> {
     let gen = s.tcgen[bundle * 2u];
     let lm_set = s.tcgen[bundle * 2u + 1u];
     switch gen {
@@ -220,14 +220,20 @@ fn tc_gen(s: Stage, bundle: u32, xyz: vec3<f32>, normal: vec3<f32>, st: vec2<f32
             }
         }
         case 2u: {
-            // RB_CalcEnvironmentTexCoords.
-            let viewer = normalize(frame.view_origin.xyz - xyz);
-            let d = dot(normal, viewer);
+            // RB_CalcEnvironmentTexCoords, in an MD3 model's own space (md3_space).
+            var n = normal;
+            var viewer = normalize(frame.view_origin.xyz - xyz);
+            if e.origin.w != 0.0 {
+                let m = md3_space(e, xyz, normal);
+                n = m.normal;
+                viewer = normalize(m.eye - m.xyz);
+            }
+            let d = dot(n, viewer);
             if frame.misc.w == 1u {
                 // Single player's (code/rd-vanilla) differs from multiplayer's.
-                return normal.xy * d - 0.5 * viewer.xy;
+                return n.xy * d - 0.5 * viewer.xy;
             }
-            let reflected = normal * 2.0 * d - viewer;
+            let reflected = n * 2.0 * d - viewer;
             return vec2<f32>(0.5 + reflected.y * 0.5, 0.5 - reflected.z * 0.5);
         }
         case 3u: {
@@ -303,29 +309,42 @@ fn diffuse(e: Entity, normal: vec3<f32>) -> vec3<f32> {
 // RB_CalcSpecularAlpha's light for surfaces of no model (lightOrigin, fixed).
 const SPECULAR_LIGHT_ORIGIN: vec3<f32> = vec3<f32>(-960.0, 1980.0, 96.0);
 
-// RB_CalcSpecularAlpha's light reflected towards the viewer (before the fourth
-// power) for an MD3 model, in its own space as the original reckons it: the unit
-// normal, the light turned into the scaled axes, the vertex unscaled, and the view
-// origin turned into the scaled axes but divided by the first one's length only
+// A vertex of an MD3 model in the model's own space, as the original's tess and
+// backEnd.ori hold it: the unit normal, the vertex unscaled, and the view origin
+// turned into the scaled axes but divided by the first one's length only
 // (R_RotateForEntity), so a scaled model sees the eye from further away than it is.
-fn md3_specular(e: Entity, xyz: vec3<f32>, normal: vec3<f32>) -> f32 {
+struct Md3Space {
+    normal: vec3<f32>,
+    xyz: vec3<f32>,
+    eye: vec3<f32>,
+}
+
+fn md3_space(e: Entity, xyz: vec3<f32>, normal: vec3<f32>) -> Md3Space {
     let at = xyz - e.origin.xyz;
     let eye = frame.view_origin.xyz - e.origin.xyz;
     let first = select(1.0 / e.axes[0].w, 0.0, e.axes[0].w == 0.0);
-    var n: vec3<f32>;
-    var light: vec3<f32>;
-    var v: vec3<f32>;
-    var view: vec3<f32>;
+    var m: Md3Space;
     for (var i = 0; i < 3; i++) {
         let a = e.axes[i];
         let unscale = select(1.0 / a.w, 0.0, a.w == 0.0);
-        n[i] = dot(normal, a.xyz) * unscale;
-        light[i] = dot(e.light_dir.xyz, a.xyz) * a.w;
-        v[i] = dot(at, a.xyz) * unscale;
-        view[i] = dot(eye, a.xyz) * a.w * first;
+        m.normal[i] = dot(normal, a.xyz) * unscale;
+        m.xyz[i] = dot(at, a.xyz) * unscale;
+        m.eye[i] = dot(eye, a.xyz) * a.w * first;
     }
-    let reflected = n * (2.0 * dot(n, light)) - light;
-    let viewer = view - v;
+    return m;
+}
+
+// RB_CalcSpecularAlpha's light reflected towards the viewer (before the fourth
+// power) for an MD3 model, in its own space (md3_space), the light turned into the
+// scaled axes.
+fn md3_specular(e: Entity, xyz: vec3<f32>, normal: vec3<f32>) -> f32 {
+    let m = md3_space(e, xyz, normal);
+    var light: vec3<f32>;
+    for (var i = 0; i < 3; i++) {
+        light[i] = dot(e.light_dir.xyz, e.axes[i].xyz) * e.axes[i].w;
+    }
+    let reflected = m.normal * (2.0 * dot(m.normal, light)) - light;
+    let viewer = m.eye - m.xyz;
     return dot(reflected, viewer) * inverseSqrt(dot(viewer, viewer));
 }
 
@@ -490,12 +509,13 @@ fn vs_main(
     if s.fog.z == 1u && !flare_visible(lm23.xyz) {
         out.position = vec4<f32>(2.0, 2.0, 2.0, 1.0); // outside the view: not drawn
     }
-    out.tc0 = tc_mods(s, 0u, world_xyz, tc_gen(s, 0u, world_xyz, normal, st, lm01, lm23));
-    out.tc1 = tc_mods(s, 1u, world_xyz, tc_gen(s, 1u, world_xyz, normal, st, lm01, lm23));
     var entity = 0u;
     if s.style.y == 1.0 {
         entity = u32(lm23.w);
     }
+    let e = entities[entity];
+    out.tc0 = tc_mods(s, 0u, world_xyz, tc_gen(s, 0u, world_xyz, normal, st, lm01, lm23, e));
+    out.tc1 = tc_mods(s, 1u, world_xyz, tc_gen(s, 1u, world_xyz, normal, st, lm01, lm23, e));
     var vertex = round(color * 255.0);
     if s.style.z == 1.0 {
         // ComputeFinalVertexColor: a vertex-lit surface's colour is the sum over its
@@ -518,7 +538,7 @@ fn vs_main(
         }
         vertex = vec4<f32>(min(floor(sum / 256.0), vec3<f32>(255.0)), vertex.a);
     }
-    var c = colors(s, world_xyz, vertex, normal, entities[entity], entity != 0u);
+    var c = colors(s, world_xyz, vertex, normal, e, entity != 0u);
     // adjustColorsForFog on a fogged surface: fade by the fog's opacity
     // (RB_CalcModulate*ByFog), in bytes as the original.
     let fog_num = s.fog.w & 0xffffu;

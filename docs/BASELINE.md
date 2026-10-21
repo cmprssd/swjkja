@@ -2018,3 +2018,37 @@ throne, its guard statues beside it.
   (`crates/render/tests/retail.rs`) checks it to 0.05.
 - All 53 kept views: median 0.01, the largest ffa5_pipes (3.75), dpred_guns (0.97),
   hevil_fan_west (0.63), dpred_racks (0.50), vjun1_hall (0.43), as before.
+
+## MD3 models' environment maps, 2026-10-21
+
+`RB_CalcEnvironmentTexCoords` reads `tess.xyz` and `tess.normal`, which hold an MD3
+model's vertices and normals in its own space, and `backEnd.ori.viewOrigin`, the eye
+as `R_RotateForEntity` turns it into the scaled axes (the eye the specular sees, see
+"Scaled MD3 models' specular eye" above). Both renderers do (single player's
+`normal.xy * d - viewer.xy / 2`, multiplayer's reflection). This renderer took the
+world's normal and eye, which differ for any turned or scaled model. Now the
+shader reckons an MD3 model's environment map in its space (`md3_space`, shared
+with `md3_specular`, `shaders/world.wgsl`).
+
+Retail maps' turned or scaled MD3 models with an environment map: t3_rift's crystals
+(175: statues, pillars, lamps, scaled 1.4-2), t1_surprise's and vjun3's protocol
+droid parts (23), hoth3's infirmary tubes (9), vjun2's windows (5) and t1_fatal's
+`mech.md3` (1). No kept view showed one: all 53 render pixel for pixel as on main.
+Two new views (`bench/reference/script-views.txt`, captured 2026-10-21) are kept:
+
+| View | Mean difference (main) | Pixels off by > 16 (main) |
+|------|------|------|
+| rift_statues (new) | 0.06 (2.04) | 0.1% (5.6%) |
+| rift_pillars (new) | 0.03 (0.54) | 0.0% (1.8%) |
+
+- rift_statues: a statue's crystal (`statue.md3`, "modelscale" 2). Its mean colour
+  over x 500-739, y 500-699 is 149.31 155.92 223.59 here, 149.63 156.33 223.79 in
+  the reference, 166.90 172.34 227.77 on main.
+  `md3_environment_maps_are_reckoned_in_the_models_space`
+  (`crates/render/tests/retail.rs`) checks it to 0.6. What is left is a thin edge
+  at the crystal's top, not examined (`VectorNormalizeFast`'s precision would be
+  the first thing to try).
+- All 55 kept views: median 0.01, the largest ffa5_pipes (3.75), dpred_guns (0.97),
+  hevil_fan_west (0.63), dpred_racks (0.50), vjun1_hall (0.43), as before.
+- Left out: Ghoul2 models and turning brush entities keep the world's normal and
+  eye for their environment maps, as for their specular.
