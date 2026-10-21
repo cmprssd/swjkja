@@ -1991,3 +1991,30 @@ it, 4,208 of them now match the reference within 2 levels. The diagnosis on
   carry its scale through its bones); `RB_CalcEnvironmentTexCoords` takes the same
   model-space eye and vertex, not done yet (no kept view shows a scaled model
   with an environment map).
+
+## Vertex-lit surfaces' other light styles, 2026-10-21
+
+The original sums a vertex-lit surface's styles (`ComputeFinalVertexColor`): each
+style's colour times the vertex's colour for it, up to the first unused style,
+then shifted down by 8 bits. This renderer drew the first style alone. Each world
+vertex now carries its second to fourth colours (`Vertex::styled`, attributes 6-8)
+and each vertex-lit stage its four styles (`Stage.vertex_styles`,
+`shaders/world.wgsl`).
+
+Such surfaces are on kor1, kor2 and t3_stamp. On kor1 and t3_stamp they are brushes
+whose other colours are mostly 0-4; kor2's statues and braziers take the braziers'
+flicker (style 1) at up to 255. No kept view showed one: kor2_troopers, stamp_barrels,
+stamp_crates and stamp_cranes render pixel for pixel as on main. kor2_hall2
+(`bench/reference/npc-views.txt`, captured 2026-10-21) is new: kor2's hall at the
+throne, its guard statues beside it.
+
+| View | Mean difference (main) | Exact pixels (main) |
+|------|------|------|
+| kor2_hall2 (new) | 0.00 (0.22) | 99.7% (95.5%) |
+
+- The left statue's mean colour over x 500-559, y 220-329 is 66.82 42.17 21.47
+  here and in the reference, 53.36 36.06 19.91 on main.
+  `vertex_lit_surfaces_sum_their_styles_as_the_original`
+  (`crates/render/tests/retail.rs`) checks it to 0.05.
+- All 53 kept views: median 0.01, the largest ffa5_pipes (3.75), dpred_guns (0.97),
+  hevil_fan_west (0.63), dpred_racks (0.50), vjun1_hall (0.43), as before.

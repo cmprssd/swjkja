@@ -346,6 +346,67 @@ fn vertex_lit_surfaces_take_their_style_as_the_original() {
     }
 }
 
+/// ComputeFinalVertexColor sums a vertex-lit surface's styles: each style's colour
+/// times the vertex's colour for it. kor2's guard statues by the throne
+/// (bench/reference/npc-views.txt's kor2_hall2, `statue_guard01`/`02`) are lit by
+/// styles 0 and 1, the braziers' flicker; with the first style alone the left one is
+/// 13.5 darker in red than the reference.
+#[test]
+fn vertex_lit_surfaces_sum_their_styles_as_the_original() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let gpu = Gpu::new_headless().unwrap();
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let shaders = swjkja_shader::ShaderText::load(&vfs).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/kor2.bsp").unwrap()).unwrap();
+    let world = swjkja_world::World::load(&bsp, &Default::default());
+    let mut textures = TextureSet::new(&gpu).unwrap();
+    let time = 12.345;
+    let mut renderer = WorldRenderer::new(
+        &gpu,
+        &mut textures,
+        &vfs,
+        &shaders,
+        &bsp,
+        &world,
+        "maps/kor2.bsp",
+        time,
+    )
+    .unwrap();
+    let (width, height) = (1280, 720);
+    let target = Target::new(&gpu, width, height).unwrap();
+    let depth_slot = textures.add_view(target.depth_copy.view);
+    let camera = Camera::new([14112.0, -100.0, -3080.0], [5.0, 270.0, 0.0], width, height);
+    target
+        .render(&gpu, renderer.clear_color(), |frame| {
+            renderer
+                .draw(frame, &textures, &camera, time, depth_slot)
+                .unwrap()
+        })
+        .unwrap();
+    let rgba = target.read_rgba(&gpu).unwrap();
+    // The left statue's mean colour (x 500-559, y 220-329).
+    let mut sum = [0u64; 3];
+    for y in 220..330 {
+        for x in 500..560 {
+            let p = (y * width as usize + x) * 4;
+            for (c, s) in sum.iter_mut().enumerate() {
+                *s += u64::from(rgba[p + c]);
+            }
+        }
+    }
+    let ours = sum.map(|s| s as f32 / (110.0 * 60.0));
+    let reference = [66.821, 42.166, 21.471];
+    for (got, want) in ours.iter().zip(reference) {
+        assert!(
+            (got - want).abs() <= 0.05,
+            "the statue's mean colour {ours:?}, the reference {reference:?}"
+        );
+    }
+}
+
 /// The original reflects a model's light for its specular stages
 /// (`RB_CalcSpecularAlpha`) in the model's space: a unit normal about the light
 /// turned into the scaled axes, so a model scaled by s reflects s times the unit

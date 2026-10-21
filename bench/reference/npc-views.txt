@@ -8,7 +8,10 @@
 # t3_stamp's breakables (barrels and crates) 350 units away and an ammo rack, with
 # two NPCs behind the wall. They were first captured with every NPC frozen from
 # the first frame (d_npcfreeze 1, no scripts; in model-views.txt until 2026-10-17).
+# kor2_hall2 looks down kor2's hall at the throne, its guard statues and braziers
+# vertex-lit by two light styles (the braziers' flicker).
 t3_stamp  stamp_barrels  352 342 124       10 90 0   12345
 t2_dpred  dpred_troopers -900 -4300 90     5 180 0   12345
 vjun2     vjun2_officer  1264 1800 3300    5 90 0    12345
 kor2      kor2_troopers  8208 1500 -3740   5 90 0    12345
+kor2      kor2_hall2     14112 -100 -3080   5 270 0   12345
