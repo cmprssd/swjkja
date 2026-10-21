@@ -95,6 +95,7 @@ fn every_retail_map_has_a_light_grid_and_spawns_its_static_models() {
         entity_models += swjkja_world::static_model::entity_models(
             &bsp.entities,
             rules,
+            b"",
             &mut Collision::at_spawn(&bsp, rules),
         )
         .len();
@@ -708,4 +709,67 @@ fn t1_fatals_used_elevator_rises_and_its_used_door_closes_again() {
         .map(|s| (s.start, s.from[2], s.to[2], s.duration))
         .collect();
     assert_eq!(slides, [(4550, 0.0, 122.0, 305), (6900, 122.0, 0.0, 305)]);
+}
+
+#[test]
+fn t2_dpreds_rack_goods_spread_as_in_the_original() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let files: Vec<Vec<u8>> = vfs
+        .list("ext_data/sabers", ".sab")
+        .iter()
+        .map(|f| vfs.read(&format!("ext_data/sabers/{f}")).unwrap())
+        .collect();
+    let sabers = npc::join_parms(files.iter().map(Vec::as_slice));
+    let bsp = Bsp::parse(&vfs.read("maps/t2_dpred.bsp").unwrap()).unwrap();
+    let rules = Rules::for_map("t2_dpred");
+    let models = swjkja_world::static_model::entity_models(
+        &bsp.entities,
+        rules,
+        &sabers,
+        &mut Collision::at_spawn(&bsp, rules),
+    );
+    let at = |origin: [f32; 3]| {
+        models
+            .iter()
+            .find(|m| {
+                m.origin
+                    .iter()
+                    .zip(origin)
+                    .all(|(a, b)| (a - b).abs() < 0.01)
+            })
+            .unwrap_or_else(|| panic!("nothing at {origin:?}"))
+    };
+    // Logged by the reference capture (g_swjkjaRand): dpred_guns' middle rack (at
+    // 127 -2106 590, facing +y, its right +x) draws the map's 38th to 52nd numbers,
+    // after 31 stormtroopers' coin flips and the first two racks. Each weapon draws
+    // its spread aside, then forward (up to 2 units), then its pitch, yaw and roll.
+    let logged = [
+        (-9.0, -0.129578, -0.597534, 23.0),
+        (0.0, -0.749939, -0.19397, 24.5),
+        (9.0, 0.542114, 0.356384, 23.0),
+    ];
+    for (right, aside, fwd, up) in logged {
+        at([127.0 + right + aside * 2.0, -2106.0 + fwd * 2.0, 590.0 + up]);
+    }
+    let blaster = at([127.0 - 9.0 - 0.259156, -2106.0 - 1.195068, 613.0]);
+    // Within the log's six digits and a step of the angles' 65536ths of a turn.
+    let turned = swjkja_world::static_model::angles_to_axis([
+        0.9328 * 4.0 - 75.0,
+        270.0 - 0.96582 * 14.0,
+        0.937744 * 4.0,
+    ]);
+    for (a, b) in blaster.axes.iter().flatten().zip(turned.iter().flatten()) {
+        assert!(
+            (a - b).abs() < 1e-3,
+            "{:?} against {turned:?}",
+            blaster.axes
+        );
+    }
+    // The first ammo rack (at -2022 -4346 30, facing +y) places its three blaster
+    // packs 100 ms in, after every gun rack: the first is the 122nd draw.
+    at([-2030.0, -4346.0 - 0.661621 * 0.5, 37.0]);
 }

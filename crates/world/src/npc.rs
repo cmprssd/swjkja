@@ -10,8 +10,9 @@
 //! and scripts.
 //!
 //! What the spawn picks at random is the original's pick: the game's generator
-//! ([`crate::rand`]) is replayed through the spawn functions, the saber items
-//! finishing their spawn, and each NPC's block.
+//! ([`crate::rand`]) is replayed through the spawn functions, the ammo racks
+//! placing their goods, the saber items finishing their spawn, and each NPC's
+//! block.
 
 use swjkja_bsp::Entity;
 use swjkja_shader::text::Cursor;
@@ -21,7 +22,8 @@ use crate::collision::{Collision, MASK_NPCSOLID, MIN_WORLD_COORD};
 use crate::rand::Rand;
 use crate::script::{FIRST_FRAME, FirstPass, first_pass};
 use crate::static_model::{
-    Attached, Ghoul2, Pose, Rules, StaticModel, angles_to_axis, origin_and_angles, spawns_at,
+    Attached, Ghoul2, Pose, Rules, StaticModel, ammo_rack_goods, angles_to_axis, gun_rack_goods,
+    origin_and_angles, spawns_at,
 };
 use crate::style::atoi;
 use std::sync::Arc;
@@ -303,11 +305,8 @@ fn random_jedi(rand: &mut Rand) -> &'static str {
 /// entity order: the spawners not left out by skill and not waiting to be used (no
 /// "targetname").
 ///
-/// The map's spawn functions draw from `rand` in entity order: the NPC spawners'
-/// random types (a waiting spawner's too), and each player start, which reads the
-/// player's saber's block in `sabers` (the `.sab` files' text) to precache it
-/// (`SP_info_player_deathmatch`; not with the stun baton, flag 32). Other entities'
-/// draws are left out.
+/// The map's spawn functions draw from `rand` in entity order ([`spawn_draws`],
+/// and the gun racks' spread). Other entities' draws are left out.
 pub fn npc_spawns(
     entities: &[Entity],
     rules: Rules,
@@ -322,18 +321,11 @@ pub fn npc_spawns(
         let Some(class) = e.get("classname").map(str::to_ascii_lowercase) else {
             continue;
         };
-        let mut flags = e.get("spawnflags").map_or(0, atoi);
-        if matches!(
-            class.as_str(),
-            "info_player_start" | "info_player_deathmatch"
-        ) {
-            if flags & 32 == 0 {
-                draw_saber_colors(sabers, PLAYER_SABER, rand);
-            }
+        if class == "misc_model_gun_rack" {
+            gun_rack_goods(e, rand);
             continue;
         }
-        let message = e.get("message").is_some();
-        let Some(npc_type) = npc_type(&class, &mut flags, e.get("NPC_type"), message, rand) else {
+        let Some((npc_type, flags)) = spawn_draws(e, &class, sabers, rand) else {
             continue;
         };
         if e.get("targetname").is_some() {
@@ -349,13 +341,51 @@ pub fn npc_spawns(
             npc_type,
             origin,
             angles,
-            message,
+            message: e.get("message").is_some(),
             flags,
             spawnscript,
             targetname,
         });
     }
     spawns
+}
+
+/// The draws entity `e` (its class `class`, in lower case) makes from `rand` as it
+/// spawns, but a rack's: an NPC spawner's random type (a waiting spawner's too),
+/// returned with the spawnflags it then has, or a player start's reading the
+/// player's saber's block in `sabers` (the `.sab` files' text) to precache it
+/// (`SP_info_player_deathmatch`; not with the stun baton, flag 32).
+pub(crate) fn spawn_draws(
+    e: &Entity,
+    class: &str,
+    sabers: &[u8],
+    rand: &mut Rand,
+) -> Option<(String, i64)> {
+    let mut flags = e.get("spawnflags").map_or(0, atoi);
+    if matches!(class, "info_player_start" | "info_player_deathmatch") {
+        if flags & 32 == 0 {
+            draw_saber_colors(sabers, PLAYER_SABER, rand);
+        }
+        return None;
+    }
+    let message = e.get("message").is_some();
+    let npc_type = npc_type(class, &mut flags, e.get("NPC_type"), message, rand)?;
+    Some((npc_type, flags))
+}
+
+/// The draws the ammo racks `entities` spawn under `rules` make placing their goods
+/// (`spawn_rack_goods`, 100 ms into the level; in entity order).
+fn ammo_rack_draws(entities: &[Entity], rules: Rules, rand: &mut Rand) {
+    let Rules::SinglePlayer { skill } = rules else {
+        return;
+    };
+    for e in entities.iter().filter(|e| spawns_at(e, skill)) {
+        if e.get("classname")
+            .is_some_and(|c| c.eq_ignore_ascii_case("misc_model_ammo_rack"))
+        {
+            ammo_rack_goods(e, rand);
+        }
+    }
 }
 
 /// The draws the saber items `entities` spawn under `rules` make as they finish
@@ -1188,11 +1218,12 @@ pub fn npc_models(
     world: &Collision,
     scripts: &dyn Fn(&str) -> Option<Vec<Node>>,
 ) -> Vec<StaticModel> {
-    // The spawn functions draw as the map spawns, the saber items as they finish
-    // spawning (1300 ms), then each NPC's block is read in turn as it spawns
+    // The spawn functions draw as the map spawns, the ammo racks as they place
+    // their goods (1100 ms), the saber items as they finish spawning (1300 ms), then each NPC's block is read in turn as it spawns
     // (NPC_Spawn_Go, the frame after 1350 ms), drawn here or not.
     let mut rand = Rand::default();
     let spawns = npc_spawns(entities, rules, sabers, &mut rand);
+    ammo_rack_draws(entities, rules, &mut rand);
     item_saber_draws(entities, rules, sabers, &mut rand);
     let looks: Vec<_> = spawns
         .iter()

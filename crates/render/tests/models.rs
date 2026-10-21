@@ -143,6 +143,7 @@ fn only_one_single_player_model_fog_depends_on_the_view() {
         let mut placements = swjkja_world::static_model::entity_models(
             &bsp.entities,
             rules,
+            b"",
             &mut swjkja_world::collision::Collision::at_spawn(&bsp, rules),
         );
         placements.extend(swjkja_world::static_model::static_models(
@@ -407,13 +408,19 @@ fn t3_stamp_entities_cull_like_the_original() {
     assert!(!sent(elsewhere));
     assert_eq!(drawn(elsewhere), None);
     // The ammo rack ahead (a medpack and a blaster pack): its goods sit 7 and 24
-    // units up, 8 units to its left and 6 to its right (-x and +x at yaw 270).
-    for rack in [
-        [128.0, 762.0, 80.0],
-        [136.0, 762.0, 87.0],
-        [122.0, 762.0, 104.0],
-    ] {
-        assert!(drawn(find(rack)).is_some(), "{rack:?}");
+    // units up, spread at random up to 8 units to a side.
+    assert!(drawn(find([128.0, 762.0, 80.0])).is_some());
+    for z in [87.0, 104.0] {
+        let goods = models
+            .instances
+            .iter()
+            .position(|m| {
+                m.origin[2] == z
+                    && (m.origin[0] - 128.0).abs() <= 8.0
+                    && (m.origin[1] - 762.0).abs() <= 0.5
+            })
+            .unwrap_or_else(|| panic!("nothing {z} units up"));
+        assert!(drawn(goods).is_some(), "{z}");
     }
     let count = |f: &dyn Fn(usize) -> bool| (0..entities).filter(|&n| f(n)).count();
     // 77 breakables, two racks with their goods, and five cranes: four with no origin
@@ -466,18 +473,13 @@ fn t2_dpred_rack_weapons_draw_as_ghoul2_items() {
         })
         .collect();
     // Gun racks at x 127 and 63 (in entity order), weapons 9 units apart along each
-    // rack's right (+x: the racks face +y).
-    assert_eq!(
-        drawn,
-        [
-            (118.0, 0),
-            (127.0, 0),
-            (136.0, 0),
-            (54.0, 0),
-            (63.0, 0),
-            (72.0, 0)
-        ]
-    );
+    // rack's right (+x: the racks face +y), spread aside by the numbers the original
+    // draws (the capture's log).
+    let want = [117.74, 125.5, 137.08, 55.68, 61.39, 70.11];
+    assert_eq!(drawn.len(), want.len(), "{drawn:?}");
+    for (&(x, level), want) in drawn.iter().zip(want) {
+        assert!((x - want).abs() < 0.01 && level == 0, "{drawn:?}");
+    }
 }
 
 /// t2_dpred's stormtroopers near the start (-1100 -4300) spawn with the map: drawn

@@ -2238,3 +2238,35 @@ Only yavin1_students changes; the 54 others render pixel for pixel as on main.
   on, so a script's later updates start then, not on the next frame (this
   renderer runs them from the next). Not checked against the kept views.
 - All 55 kept views: median 0.01, the largest as before.
+
+## Rack goods spread with the original's random numbers, 2026-10-21
+
+dpred_guns' 0.97, the largest after ffa5_pipes, was its weapons' outlines (as the
+2026-10-18 flares section says): the original spreads each rack item with the game
+module's random numbers, and this renderer stood them in the middle of their range.
+Single player never seeds those (see DECISIONS.md, 2026-10-16), and a capture with
+`g_swjkjaRand` logged t2_dpred's draws: up to the ammo racks, only the
+stormtroopers' coin flips (already replayed) and the gun racks draw, five numbers
+per weapon (aside, forward, pitch, yaw, roll); the ammo racks draw at 1100 ms. The
+spawn's replay now draws the racks' numbers too, and the goods stand where the
+original puts them.
+
+| View | Mean difference (main) | Pixels off by > 16 (main) |
+|------|------|------|
+| dpred_guns | 0.01 (0.97) | 0.0% (3.0%) |
+| dpred_racks | 0.00 (0.50) | 0.0% (1.6%) |
+| vjun2_officer | 0.02 (0.04) | 0.0% (0.1%) |
+| stamp_barrels | 0.00 (0.01) | 0.0% (0.0%) |
+
+- Only the four views with rack goods change; the 51 others render pixel for pixel
+  as on main. vjun2_officer's and stamp_barrels' ammo racks, which no log covers,
+  now match too ("its ammo rack's items, turned at random", half of
+  vjun2_officer's 0.04 in the 2026-10-18 section).
+- The mean colour by a blaster on dpred_guns' middle rack (x 290-309, y 290-309) is
+  51.72 16.87 24.31 here, 51.72 16.84 24.32 in the reference, 18.56 15.31 10.74 on
+  main. `rack_weapons_spread_as_the_original_spreads_them`
+  (`crates/render/tests/retail.rs`) checks it to 0.3, and
+  `t2_dpreds_rack_goods_spread_as_in_the_original` (`crates/world/tests/retail.rs`)
+  the goods' places against the logged numbers.
+- All 55 kept views: median 0.01. The largest are ffa5_pipes (3.73), hevil_fan_west
+  (0.63) and vjun1_hall (0.42); none other above 0.2.
