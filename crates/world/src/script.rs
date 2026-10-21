@@ -82,6 +82,10 @@ pub struct Timeline {
     /// Each change of `SCF_MORELIGHT` (`SET_MORELIGHT`), which cgame reads as it
     /// draws: from when (ms, on the client's clock) and whether it is set.
     pub more_light: Vec<(i32, bool)>,
+    /// Each change of whether the NPC holds no weapon (`SET_WEAPON`: "WP_NONE"
+    /// drops every bolted model, `G_RemoveWeaponModels`; another weapon brings one
+    /// back): from when (ms, on the client's clock) and whether it is unarmed.
+    pub unarmed: Vec<(i32, bool)>,
 }
 
 impl Timeline {
@@ -89,6 +93,12 @@ impl Timeline {
     pub fn more_light_at(&self, time: i32) -> bool {
         let after = self.more_light.partition_point(|(start, _)| *start <= time);
         after.checked_sub(1).is_some_and(|i| self.more_light[i].1)
+    }
+
+    /// Whether the NPC holds no weapon at `time`, its bolted models dropped.
+    pub fn unarmed_at(&self, time: i32) -> bool {
+        let after = self.unarmed.partition_point(|(start, _)| *start <= time);
+        after.checked_sub(1).is_some_and(|i| self.unarmed[i].1)
     }
 
     /// The name of what the NPC looks at at `time`, if anything.
@@ -292,6 +302,7 @@ struct Body<'a> {
     changes: [Vec<Change>; 2],
     look: Vec<(i32, Option<String>)>,
     more_light: Vec<(i32, bool)>,
+    unarmed: Vec<(i32, bool)>,
     /// `client->idleTime`.
     idle_time: i32,
     /// The task each animation slot waits on, if any.
@@ -633,6 +644,16 @@ impl<'a> Actor<'a> {
                 let body = self.body.as_mut().unwrap();
                 if body.more_light.last().map(|(_, m)| *m).unwrap_or(false) != on {
                     body.more_light.push((client_time(level), on));
+                }
+                false
+            }
+            "SET_WEAPON" => {
+                // Q3_SetWeapon: "WP_NONE" (G_SetWeapon) and "drop" remove the
+                // weapon's models.
+                let off = text.eq_ignore_ascii_case("WP_NONE") || text.eq_ignore_ascii_case("drop");
+                let body = self.body.as_mut().unwrap();
+                if body.unarmed.last().map(|(_, u)| *u).unwrap_or(false) != off {
+                    body.unarmed.push((client_time(level), off));
                 }
                 false
             }
@@ -1423,6 +1444,7 @@ pub fn timelines(
             changes: [Vec::new(), Vec::new()],
             look: Vec::new(),
             more_light: Vec::new(),
+            unarmed: Vec::new(),
             idle_time: n.stance.still_since,
             slots: [None; 3],
         };
@@ -1527,6 +1549,7 @@ pub fn timelines(
                 torso: start(torso),
                 look: b.look,
                 more_light: b.more_light,
+                unarmed: b.unarmed,
             }
         })
         .collect();
