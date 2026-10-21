@@ -2126,3 +2126,39 @@ difference from the reference, four places:
   `VectorNormalizeFast`'s precision; its cause is not known.
 - fatal_elevator: rounding (+0.0001).
 - All 55 kept views: median 0.01, the largest as before.
+
+## Turning brush entities' environment maps, 2026-10-21
+
+A brush entity is drawn as an entity (`CG_Mover` gives it the inline model as its
+`hModel`), so `R_RotateForEntity` turns the eye into its axes, and `tess.xyz` and
+`tess.normal` hold its surfaces in its model's space. `RB_CalcEnvironmentTexCoords`
+reckons there. This renderer took the world's normal and eye; for a brush entity
+that only slides the two agree, but not for one that turns. Now a turning brush
+entity's environment map turns the normal and the eye back by its bone
+(`bone_unapply`, `shaders/world.wgsl`).
+
+A survey of the retail maps' brush entities (their surfaces' shaders): 373 have a
+`tcGen environment` stage, one an `alphaGen lightingSpecular` stage. Of those with an
+environment map, one turns: t2_rancor's drum (func_rotating `*43`,
+`textures/factory/env_pipe`), in the kept rancor_drum view. The others are doors,
+plats, glass, breakables, statics and t1_rail's rail_movers, which only slide.
+rancor_drum is the only kept view that changes; the 54 others render pixel for pixel
+as on main.
+
+| View | Mean difference (main) | Exact pixels (main) |
+|------|------|------|
+| rancor_drum | 0.0059 (0.0082) | 98.47% (98.03%) |
+
+- rancor_drum: 4,097 pixels change; their summed difference from the reference
+  falls from 6,329 levels to 21. The drum's mean colour over x 630-649, y 540-559
+  is 102.84 90.70 78.92 here, 102.80 90.68 78.90 in the reference, 103.28 91.10
+  79.26 on main. `turning_brush_entities_reckon_their_environment_maps_in_their_space`
+  (`crates/render/tests/retail.rs`) checks it to 0.15.
+- All 55 kept views: median 0.01, the largest as before.
+- Left out: the specular. `RB_CalcSpecularAlpha` takes a brush entity for a model
+  (its `hModel`) and so reads its `lightDir`, which `R_SetupEntityLighting` never
+  fills for one (only for a `misc_bsp` instance): it holds whatever the last lit
+  model in its slot of `backEndData->entities` left, zero if none. The one retail
+  brush entity with a specular stage is t1_fatal's `*85` (func_breakable
+  "objects", `textures/factory/wall10`), some 3,700 units from the kept t1_fatal
+  views; this renderer gives it the world's fixed light.
