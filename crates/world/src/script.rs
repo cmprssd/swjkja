@@ -47,6 +47,12 @@ use crate::static_model::Pose;
 pub const FIRST_FRAME: i32 = 1550;
 /// Milliseconds between server frames.
 pub const FRAME_MS: i32 = 50;
+/// The milliseconds `NPC_Begin`'s movement frame counts the first pass's timers down
+/// by: its command's time is 0, which `ClientThink` raises to the level's time less
+/// 1000 (550 ms), against a `commandTime` of 0, and `Pmove` caps it at 200. Later
+/// frames count 50 ms each (the AI frozen, as in the captures, its commands' times
+/// are 1000 ms behind the level's too).
+const BEGIN_MSEC: i32 = 200;
 /// Milliseconds a part blends from its previous animation into a new one
 /// (`SETANIM_BLEND_DEFAULT`, which `NPC_SetAnim` and the stance's `PM_SetAnim`
 /// pass).
@@ -1267,14 +1273,14 @@ impl<'a> World<'a> {
                         let mut at = 0;
                         let n = value(&b.members, &mut at).and_then(|v| v.float());
                         top.at += 1;
+                        // `CheckLoop` enters the body before it reads the count, so a
+                        // loop of 0 (`random(0, 3)` at its low end) runs once.
                         let n = n.map_or(0, |n| n as i32);
-                        if n != 0 {
-                            a.stack.push(Cursor {
-                                nodes: body,
-                                at: 0,
-                                kind: Kind::Loop(n),
-                            });
-                        }
+                        a.stack.push(Cursor {
+                            nodes: body,
+                            at: 0,
+                            kind: Kind::Loop(n),
+                        });
                         continue;
                     }
                     id::IF => {
@@ -1486,7 +1492,7 @@ pub fn timelines(
     let mut level_time = FIRST_FRAME;
     for i in world.runners..world.actors.len() {
         world.script(i, level_time, 0);
-        world.actors[i].movement(level_time, 0);
+        world.actors[i].movement(level_time, BEGIN_MSEC);
     }
     let mut begun = false;
     loop {

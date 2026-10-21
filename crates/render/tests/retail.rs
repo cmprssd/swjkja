@@ -737,6 +737,68 @@ fn an_npc_put_unarmed_by_a_script_drops_its_saber() {
     }
 }
 
+/// A script's loop of none runs once (`CheckLoop` reads the count only at the body's
+/// end), and `NPC_Begin`'s movement frame counts the first pass's timers down 200 ms.
+/// yavin1's leaning student (`jedi_stud_leaning`, its `random(0, 3)` loops at their
+/// low end) skipped her stands and, a frame late on each animation, stood in the
+/// wrong one (bench/reference/script-views.txt's yavin1_students): her hands 2.3
+/// levels too dark.
+#[test]
+fn a_loop_of_none_runs_once_and_npcs_begin_200_ms_on() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let gpu = Gpu::new_headless().unwrap();
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let shaders = swjkja_shader::ShaderText::load(&vfs).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/yavin1.bsp").unwrap()).unwrap();
+    let world = swjkja_world::World::load(&bsp, &Default::default());
+    let mut textures = TextureSet::new(&gpu).unwrap();
+    let time = 12.345;
+    let mut renderer = WorldRenderer::new(
+        &gpu,
+        &mut textures,
+        &vfs,
+        &shaders,
+        &bsp,
+        &world,
+        "maps/yavin1.bsp",
+        time,
+    )
+    .unwrap();
+    let (width, height) = (1280, 720);
+    let target = Target::new(&gpu, width, height).unwrap();
+    let depth_slot = textures.add_view(target.depth_copy.view);
+    let camera = Camera::new([3990.0, -120.0, 30.0], [15.0, 90.0, 0.0], width, height);
+    target
+        .render(&gpu, renderer.clear_color(), |frame| {
+            renderer
+                .draw(frame, &textures, &camera, time, depth_slot)
+                .unwrap()
+        })
+        .unwrap();
+    let rgba = target.read_rgba(&gpu).unwrap();
+    // The mean colour over her hands (x 484-503, y 240-259).
+    let mut sum = [0u64; 3];
+    for y in 240..260 {
+        for x in 484..504 {
+            let p = (y * width as usize + x) * 4;
+            for (c, s) in sum.iter_mut().enumerate() {
+                *s += u64::from(rgba[p + c]);
+            }
+        }
+    }
+    let ours = sum.map(|s| s as f32 / (20.0 * 20.0));
+    let reference = [43.02, 41.03, 33.18];
+    for (got, want) in ours.iter().zip(reference) {
+        assert!(
+            (got - want).abs() <= 0.3,
+            "the mean colour over her hands {ours:?}, the reference {reference:?}"
+        );
+    }
+}
+
 /// A map with a sky portal (`misc_skyportal`) shows the scene from there as its sky,
 /// with the view's angles, and the view's own sky surfaces draw nothing
 /// (`CG_DrawSkyBoxPortal`). t3_hevil's portal looks from a room with the sky box and

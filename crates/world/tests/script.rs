@@ -174,22 +174,23 @@ fn a_script_holds_its_npc_in_an_animation() {
 
 #[test]
 fn a_held_animation_gives_way_to_the_stance_then_the_idle() {
-    // Held for its 1000 ms: the stance returns on the frame its timer runs out
-    // (2550, drawn from 2500), and the idle comes 5 s after the last frame that held
-    // it (2500 + 5000, the first frame past it 7550).
+    // Held for its 1000 ms, of which `NPC_Begin`'s movement frame counts down 200:
+    // the stance returns on the frame its timer runs out (2350, drawn from 2300),
+    // and the idle comes 5 s after the last frame that held it (2300 + 5000, the
+    // first frame past it 7350).
     let script = vec![set("SET_ANIM_BOTH", "BOTH_CIN_1")];
     let t = timeline(&stance("BOTH_STAND1", "BOTH_STAND1"), Some(&script), &holds);
     assert_eq!(
         changes(&t.legs)[..5],
         [
             ("BOTH_CIN_1", 1550),
-            ("BOTH_STAND1", 2500),
-            ("BOTH_STAND1IDLE1", 7500),
-            ("BOTH_STAND1", 9450),
-            ("BOTH_STAND1IDLE1", 14550),
+            ("BOTH_STAND1", 2300),
+            ("BOTH_STAND1IDLE1", 7300),
+            ("BOTH_STAND1", 9250),
+            ("BOTH_STAND1IDLE1", 14350),
         ]
     );
-    assert_eq!(t.blending_at(0, 2550), Some(("BOTH_CIN_1", 1550, 0.5)));
+    assert_eq!(t.blending_at(0, 2350), Some(("BOTH_CIN_1", 1550, 0.5)));
 }
 
 #[test]
@@ -246,6 +247,42 @@ fn a_looping_script_waits_on_times_and_on_its_animations() {
     assert_eq!(t.blending_at(0, 6075), Some(("BOTH_STAND1", 6050, 0.25)));
     // An hour on, it still runs.
     assert!(t.legs.last().unwrap().start > 3_590_000);
+}
+
+#[test]
+fn a_loop_of_none_runs_once() {
+    // yavin1/jedi_stud_leaning's shape: its inner loops' random(0, 3) at the low end
+    // run their body once (`CheckLoop` reads the count only at the body's end).
+    let task =
+        |name: &str, anim: &str| body(id::TASK, vec![text(name)], vec![set("SET_ANIM_BOTH", anim)]);
+    let play = |name: &str| {
+        vec![
+            command(id::DO, vec![text(name)]),
+            command(id::WAIT, vec![text(name)]),
+        ]
+    };
+    let mut forever = vec![body(id::LOOP, random(0.0, 3.0).to_vec(), play("stand"))];
+    forever.extend(play("talk1"));
+    let script = vec![
+        task("stand", "BOTH_SIT5"),
+        task("talk1", "BOTH_SIT5_TALK1"),
+        body(id::LOOP, vec![float(-1.0)], forever),
+    ];
+    let t = timeline(&stance("BOTH_STAND1", "BOTH_STAND1"), Some(&script), &holds);
+    // Each held its length less a frame (the first 200 ms less: `NPC_Begin`'s
+    // movement frame), the stance coming back on the frame its task completes; then
+    // the talk, and the stand once more.
+    assert_eq!(
+        changes(&t.legs)[..6],
+        [
+            ("BOTH_SIT5", 1550),
+            ("BOTH_STAND1", 2300),
+            ("BOTH_SIT5_TALK1", 2300),
+            ("BOTH_STAND1", 4300),
+            ("BOTH_SIT5", 4300),
+            ("BOTH_STAND1", 5300),
+        ]
+    );
 }
 
 #[test]
