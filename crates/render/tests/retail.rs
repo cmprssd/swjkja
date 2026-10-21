@@ -415,6 +415,9 @@ fn vertex_lit_surfaces_sum_their_styles_as_the_original() {
 /// normal about the unit light made it 0.66 brighter than the reference. A Ghoul2
 /// model reflects in its space as an MD3 model does, seeing the eye from further
 /// away than it is: with the world's eye, a highlight on his chest was 1.36 brighter.
+/// It divides by the viewer's length with `Q_rsqrt` (one Newton step, a little short
+/// of the true value): with the exact inverse square root, the highlight was 0.53
+/// brighter.
 #[test]
 fn scaled_models_reflect_their_light_as_the_original() {
     let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
@@ -483,7 +486,7 @@ fn scaled_models_reflect_their_light_as_the_original() {
     let reference = [92.228, 75.198, 67.598];
     for (got, want) in ours.iter().zip(reference) {
         assert!(
-            (got - want).abs() <= 0.8,
+            (got - want).abs() <= 0.3,
             "the officer's highlight {ours:?}, the reference {reference:?}"
         );
     }

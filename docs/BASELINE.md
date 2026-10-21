@@ -2086,3 +2086,43 @@ Three kept views change, the 52 others render pixel for pixel as on main:
 - All 55 kept views: median 0.01, the largest as before.
 - Ghoul2 environment maps take the same path; no kept view changes by more than
   rounding but the officer's, whose change is his specular.
+
+## The original's fast inverse square root, 2026-10-21
+
+`RB_CalcSpecularAlpha` divides by the viewer's length with `Q_rsqrt`, and
+`RB_CalcEnvironmentTexCoords` (and the specular's fixed light) normalise with
+`VectorNormalizeFast`, which is the vector times its `Q_rsqrt` length. `Q_rsqrt` is
+plain C in both renderers (`shared/qcommon/q_math.c`): one Newton step from
+`0x5f3759df`, up to 0.175% under the true value, and never over it. This shader took
+the exact `inverseSqrt` and `normalize`. Now it has both of the original's helpers
+(`q_rsqrt`, `normalize_fast`, `shaders/world.wgsl`), used where the original uses
+them.
+
+22 kept views change, the 33 others render pixel for pixel as on main. Mean
+difference from the reference, four places:
+
+| View | Here | Main |
+|------|------|------|
+| ffa5_pipes | 3.7337 | 3.7462 |
+| vjun1_hall | 0.4189 | 0.4293 |
+| stamp_cranes | 0.0075 | 0.0091 |
+| ffa5_rings | 0.0006 | 0.0021 |
+| rancor_drum | 0.0082 | 0.0094 |
+| rift_statues | 0.0563 | 0.0553 |
+| fatal_elevator | 0.0085 | 0.0084 |
+
+- 19 views come closer; none changes its count of pixels off by more than 16, except
+  hevil_fan_west (one fewer) and rift_statues (three more).
+- vjun2_officer: his chest's highlight (x 705-724, y 380-399) is 92.46 75.41 67.82
+  here, 92.23 75.20 67.60 in the reference, 92.76 75.68 68.10 on main.
+  `scaled_models_reflect_their_light_as_the_original` now checks it to 0.3 (main
+  fails). What is left (0.2) is not examined.
+- rift_statues: the crystal (`textures/rift/env_crystal`, one additive
+  `tcGen environment` stage) was already darker than the reference where it
+  changes, and comes out darker still (summed over its changed pixels, -0.72 to
+  -1.18 levels a pixel); its mean colour over x 500-739, y 500-699 is 149.27 155.88
+  223.57 (reference 149.63 156.33 223.79). The shorter viewer moves its texture
+  coordinates by about a quarter texel. So the crystal's top edge is not
+  `VectorNormalizeFast`'s precision; its cause is not known.
+- fatal_elevator: rounding (+0.0001).
+- All 55 kept views: median 0.01, the largest as before.
