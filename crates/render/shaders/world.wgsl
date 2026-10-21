@@ -53,7 +53,7 @@ struct Stage {
     tcmod: array<vec4<f32>, 16>,
     // x: the light style for rgbGen lightmapStyle. y: 1 for a model's surfaces:
     // lm23.w holds the entity number (else the entity is the world, 0). z: 1 for a
-    // vertex-lit world surface, whose first vertex style is w.
+    // vertex-lit world surface, whose styles are vertex_styles.
     style: vec4<f32>,
     // x: GL fog for this stage: 0 none, 1 towards the fog colour, 2 black, 3 white.
     // y: 1 for sky geometry: positions are offsets from the viewer, drawn at the far
@@ -63,6 +63,8 @@ struct Stage {
     // w: bits 0-15 the surface's fog number (0 none, else 1-based index into fogs),
     // bits 16-17 adjustColorsForFog (0 none, 1 rgb, 2 alpha, 3 rgba).
     fog: vec4<u32>,
+    // A vertex-lit world surface's four light styles (254 and 255 unused).
+    vertex_styles: vec4<u32>,
 }
 
 // An entity's light (R_SetupEntityLighting) and colour (shaderRGBA), 0-255.
@@ -443,6 +445,10 @@ fn vs_main(
     @location(3) vertex_lm01: vec4<f32>,
     @location(4) vertex_lm23: vec4<f32>,
     @location(5) color: vec4<f32>,
+    // A vertex-lit world surface's colours for its second to fourth styles.
+    @location(6) color1: vec4<f32>,
+    @location(7) color2: vec4<f32>,
+    @location(8) color3: vec4<f32>,
 ) -> VertexOut {
     let s = stages[push.stage];
     var out: VertexOut;
@@ -492,14 +498,25 @@ fn vs_main(
     }
     var vertex = round(color * 255.0);
     if s.style.z == 1.0 {
-        // ComputeFinalVertexColor: a vertex-lit surface's colours are its style's
-        // colour times the vertex's, shifted down by 8 bits (so a style at 255 takes
-        // one level off), none if the style is unused. Its other styles are left out.
-        var style = vec3<f32>(0.0);
-        if s.style.w < 254.0 {
-            style = frame.styles[min(u32(s.style.w), 63u)].rgb;
+        // ComputeFinalVertexColor: a vertex-lit surface's colour is the sum over its
+        // styles, up to the first unused one, of the style's colour times the
+        // vertex's for it, shifted down by 8 bits (so a style at 255 takes one level
+        // off). The alpha is the first style's.
+        let styled = array<vec3<f32>, 4>(
+            vertex.rgb,
+            round(color1.rgb * 255.0),
+            round(color2.rgb * 255.0),
+            round(color3.rgb * 255.0),
+        );
+        var sum = vec3<f32>(0.0);
+        for (var k = 0u; k < 4u; k++) {
+            let style = s.vertex_styles[k];
+            if style >= 254u {
+                break;
+            }
+            sum += styled[k] * frame.styles[min(style, 63u)].rgb;
         }
-        vertex = vec4<f32>(min(floor(vertex.rgb * style / 256.0), vec3<f32>(255.0)), vertex.a);
+        vertex = vec4<f32>(min(floor(sum / 256.0), vec3<f32>(255.0)), vertex.a);
     }
     var c = colors(s, world_xyz, vertex, normal, entities[entity], entity != 0u);
     // adjustColorsForFog on a fogged surface: fade by the fog's opacity

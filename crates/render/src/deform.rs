@@ -16,6 +16,8 @@ pub struct DeformVertex {
     pub st: [f32; 2],
     pub lightmap: [[f32; 2]; 4],
     pub color: [u8; 4],
+    /// A vertex-lit surface's colours for its second to fourth light styles.
+    pub styled: [[u8; 4]; 3],
 }
 
 /// The view, for sprites: forward, left, up axes.
@@ -185,6 +187,7 @@ fn autosprite(verts: &mut Vec<DeformVertex>, indexes: &mut Vec<u32>, view: &View
                     quad[0].lightmap[3],
                 ],
                 color: quad[0].color,
+                styled: quad[0].styled,
             });
         }
         indexes.extend([n, n + 1, n + 3, n + 3, n + 1, n + 2]);
@@ -249,6 +252,7 @@ mod tests {
             st: [0.5, 0.5],
             lightmap: [[0.0; 2]; 4],
             color: [9, 8, 7, 6],
+            styled: [[0; 4]; 3],
         }
     }
 

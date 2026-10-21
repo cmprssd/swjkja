@@ -57,6 +57,9 @@ struct Vertex {
     st: [f32; 2],
     lightmap: [[f32; 2]; 4],
     color: [u8; 4],
+    /// A vertex-lit world surface's colours for its second to fourth light styles
+    /// (`ComputeFinalVertexColor`), else zero.
+    styled: [[u8; 4]; 3],
 }
 
 #[repr(C)]
@@ -80,7 +83,7 @@ struct GpuFog {
     params: [f32; 4],
 }
 
-/// Mirrors `Stage` in shaders/world.wgsl (std430, 480 bytes).
+/// Mirrors `Stage` in shaders/world.wgsl (std430, 496 bytes).
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GpuStage {
@@ -95,6 +98,7 @@ struct GpuStage {
     tcmod: [[f32; 4]; 16],
     style: [f32; 4],
     fog: [u32; 4],
+    vertex_styles: [u32; 4],
 }
 
 /// An entity's light and colour for the shader's `entities` table (see `Entity` in
@@ -395,13 +399,16 @@ struct PerFrame {
 }
 
 /// The vertex attributes of [`Vertex`].
-const ATTRIBUTES: [(u32, vk::Format, u32); 6] = [
+const ATTRIBUTES: [(u32, vk::Format, u32); 9] = [
     (0, vk::Format::R32G32B32_SFLOAT, 0),
     (1, vk::Format::R32G32B32_SFLOAT, 12),
     (2, vk::Format::R32G32_SFLOAT, 24),
     (3, vk::Format::R32G32B32A32_SFLOAT, 32),
     (4, vk::Format::R32G32B32A32_SFLOAT, 48),
     (5, vk::Format::R8G8B8A8_UNORM, 64),
+    (6, vk::Format::R8G8B8A8_UNORM, 68),
+    (7, vk::Format::R8G8B8A8_UNORM, 72),
+    (8, vk::Format::R8G8B8A8_UNORM, 76),
 ];
 
 /// Culling. Quake 3 winds its polygons opposite to OpenGL's default, so "front-sided"
@@ -1175,6 +1182,7 @@ impl WorldRenderer {
                         st,
                         lightmap: [[0.0; 2]; 4],
                         color: [255; 4],
+                        styled: [[0; 4]; 3],
                     }));
                     let first = indexes.len() as u32;
                     indexes.extend(idx.iter().map(|&i| base + i));
@@ -1422,9 +1430,9 @@ impl WorldRenderer {
                     if m >= world_materials {
                         g.style[1] = 1.0; // a model's: lit by its entity
                     } else if material.lightmaps[0] == swjkja_world::LIGHTMAP_BY_VERTEX {
-                        // ComputeFinalVertexColor: vertex-lit by its first style.
+                        // ComputeFinalVertexColor: vertex-lit by its styles.
                         g.style[2] = 1.0;
-                        g.style[3] = f32::from(material.styles[0]);
+                        g.vertex_styles = material.styles.map(u32::from);
                     }
                     g.fog[2] = u32::from(is_flare);
                     g.fog[3] = fog as u32
@@ -1932,6 +1940,7 @@ impl WorldRenderer {
                     st: v.st,
                     lightmap: v.lightmap,
                     color: v.color,
+                    styled: v.styled,
                 })
                 .collect();
             let vstart = dynamic.vertex_offset as usize * size_of::<Vertex>();
@@ -2083,6 +2092,7 @@ impl WorldRenderer {
                     st: v.st,
                     lightmap: v.lightmap,
                     color: v.color,
+                    styled: v.styled,
                 })
                 .collect();
             let vstart = *vertex_offset as usize * size_of::<Vertex>();
@@ -2144,6 +2154,7 @@ impl WorldRenderer {
                         st: ST[k],
                         lightmap: [[0.0; 2]; 4],
                         color: q.color,
+                        styled: [[0; 4]; 3],
                     })
                 })
                 .collect();
@@ -2259,6 +2270,7 @@ impl WorldRenderer {
                     st: v.st,
                     lightmap: [[0.0; 2]; 4],
                     color: [255, 255, 255, v.alpha],
+                    styled: [[0; 4]; 3],
                 }));
                 let fan = (2..piece.len() as u32).flat_map(|k| [base, base + k - 1, base + k]);
                 fans.push((fog, fan.collect()));
@@ -2505,6 +2517,7 @@ fn flare_quads(
                 st,
                 lightmap: [st, [0.0; 2], [origin[0], origin[1]], [origin[2], 0.0]],
                 color: [gray, gray, gray, 255],
+                styled: [[0; 4]; 3],
             });
         }
         indexes.extend([n, n + 1, n + 3, n + 3, n + 1, n + 2]);
@@ -2543,6 +2556,7 @@ fn append_deformable(
         st: v.st,
         lightmap: v.lightmap,
         color: v.color,
+        styled: v.styled,
     }));
 }
 
@@ -2556,6 +2570,7 @@ fn append(geometry: &Geometry, vertices: &mut Vec<Vertex>, indexes: &mut Vec<u32
         st: v.st,
         lightmap: v.lightmap,
         color: v.color[0],
+        styled: [v.color[1], v.color[2], v.color[3]],
     };
     match geometry {
         Geometry::Face {
@@ -2614,6 +2629,7 @@ fn append_skinned(
                 [weight[2], entity as f32],
             ],
             color: [255; 4],
+            styled: [[0; 4]; 3],
         }
     }));
     indexes.extend(surface.indexes.iter().map(|&i| base + i));
