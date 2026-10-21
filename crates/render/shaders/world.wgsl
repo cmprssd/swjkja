@@ -203,6 +203,17 @@ fn wave(func: u32, w: vec4<f32>) -> f32 {
     return w.x + table(func, w.z + frame.params.x * w.w) * w.y;
 }
 
+// Q_rsqrt: one Newton step from 0x5f3759df, up to 0.175% under 1/sqrt(x).
+fn q_rsqrt(x: f32) -> f32 {
+    let y = bitcast<f32>(0x5f3759df - (bitcast<i32>(x) >> 1u));
+    return y * (1.5 - x * 0.5 * y * y);
+}
+
+// VectorNormalizeFast: the vector times its Q_rsqrt length.
+fn normalize_fast(v: vec3<f32>) -> vec3<f32> {
+    return v * q_rsqrt(dot(v, v));
+}
+
 fn sin_table(index: i32) -> f32 {
     return sin(f32(index & 1023) * 360.0 / 1023.0 * PI / 180.0);
 }
@@ -222,11 +233,11 @@ fn tc_gen(s: Stage, bundle: u32, xyz: vec3<f32>, normal: vec3<f32>, st: vec2<f32
         case 2u: {
             // RB_CalcEnvironmentTexCoords, in a model's own space (model_space).
             var n = normal;
-            var viewer = normalize(frame.view_origin.xyz - xyz);
+            var viewer = normalize_fast(frame.view_origin.xyz - xyz);
             if e.origin.w != 0.0 {
                 let m = model_space(e, xyz, normal);
                 n = m.normal;
-                viewer = normalize(m.eye - m.xyz);
+                viewer = normalize_fast(m.eye - m.xyz);
             }
             let d = dot(n, viewer);
             if frame.misc.w == 1u {
@@ -346,7 +357,7 @@ fn model_specular(e: Entity, xyz: vec3<f32>, normal: vec3<f32>) -> f32 {
     }
     let reflected = m.normal * (2.0 * dot(m.normal, light)) - light;
     let viewer = m.eye - m.xyz;
-    return dot(reflected, viewer) * inverseSqrt(dot(viewer, viewer));
+    return dot(reflected, viewer) * q_rsqrt(dot(viewer, viewer));
 }
 
 // ComputeColors, in 0-255 like the original's byte colours, for a vertex at `xyz`
@@ -402,10 +413,10 @@ fn colors(s: Stage, xyz: vec3<f32>, vertex: vec4<f32>, normal: vec3<f32>, e: Ent
             if e.origin.w != 0.0 {
                 l = model_specular(e, xyz, normal);
             } else {
-                let light = normalize(SPECULAR_LIGHT_ORIGIN - xyz);
+                let light = normalize_fast(SPECULAR_LIGHT_ORIGIN - xyz);
                 let reflected = normal * (2.0 * dot(normal, light)) - light;
                 let viewer = frame.view_origin.xyz - xyz;
-                l = dot(reflected, viewer) * inverseSqrt(dot(viewer, viewer));
+                l = dot(reflected, viewer) * q_rsqrt(dot(viewer, viewer));
             }
             c.a = select(min(floor(l * l * l * l * 255.0), 255.0), 0.0, l < 0.0);
         }
