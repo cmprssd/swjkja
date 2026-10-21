@@ -1960,7 +1960,7 @@ is as far from the origin as it is in the world while the vertex is 2.75 times
 closer, which turns the viewer's direction most for an eye close to the model.
 This renderer took the viewer from the drawn vertex.
 Now each MD3 model's entity carries its origin, unit axes and scales, and the
-shader reflects in the model's space as the original does (`md3_specular`,
+shader reflects in the model's space as the original does (`model_specular`,
 `shaders/world.wgsl`): the unit normal, the light turned into the scaled axes (each
 axis by its own scale), the vertex unscaled. Ghoul2 models keep the earlier path
 (vjun2_officer's test).
@@ -2027,8 +2027,8 @@ as `R_RotateForEntity` turns it into the scaled axes (the eye the specular sees,
 "Scaled MD3 models' specular eye" above). Both renderers do (single player's
 `normal.xy * d - viewer.xy / 2`, multiplayer's reflection). This renderer took the
 world's normal and eye, which differ for any turned or scaled model. Now the
-shader reckons an MD3 model's environment map in its space (`md3_space`, shared
-with `md3_specular`, `shaders/world.wgsl`).
+shader reckons an MD3 model's environment map in its space (`model_space`, shared
+with `model_specular`, `shaders/world.wgsl`).
 
 Retail maps' turned or scaled MD3 models with an environment map: t3_rift's crystals
 (175: statues, pillars, lamps, scaled 1.4-2), t1_surprise's and vjun3's protocol
@@ -2052,3 +2052,37 @@ Two new views (`bench/reference/script-views.txt`, captured 2026-10-21) are kept
   hevil_fan_west (0.63), dpred_racks (0.50), vjun1_hall (0.43), as before.
 - Left out: Ghoul2 models and turning brush entities keep the world's normal and
   eye for their environment maps, as for their specular.
+
+## Ghoul2 models' specular and environment maps, 2026-10-21
+
+A Ghoul2 model's bones carry no scale: the original scales it by its axes
+(`ScaleModelAxis`, `nonNormalizedAxes`), as an MD3 model, and `RB_SurfaceGhoul`
+fills `tess.xyz` and `tess.normal` in the model's space. So `RB_CalcSpecularAlpha`
+and `RB_CalcEnvironmentTexCoords` see a Ghoul2 model as they see an MD3 one: the
+unit normal, the vertex unscaled, the light turned into the scaled axes, and the eye
+divided by the first axis's length only. This renderer reflected a Ghoul2 model's
+light in the world, about the world's eye. Now every model's entity carries its
+origin and axes, and the shader reckons both in the model's space (`model_space`,
+`model_specular`, `shaders/world.wgsl`).
+
+Three kept views change, the 52 others render pixel for pixel as on main:
+
+| View | Mean difference (main) | Exact pixels (main) |
+|------|------|------|
+| vjun2_officer | 0.037 (0.038) | 95.53% (95.49%) |
+
+- vjun2_officer: the officer (`stofficeralt.npc`, scaled 105, his armour and gun
+  specular). 1,239 pixels change by up to 3 levels; their summed difference from
+  the reference falls from 3,315 to 1,716 (940 closer, 264 further). His chest's
+  highlight, mean colour over x 705-724, y 380-399, is 92.76 75.68 68.10 here,
+  92.23 75.20 67.60 in the reference, 93.59 76.50 68.93 on main.
+  `scaled_models_reflect_their_light_as_the_original`
+  (`crates/render/tests/retail.rs`) now checks it to 0.8 too.
+- dpred_troopers and kor2_troopers: 29 and 10 pixels by one level, as many closer
+  as further (rounding).
+- What is left of the highlight (0.5 brighter) is not examined. A first thing to
+  try: `RB_CalcSpecularAlpha` divides by the viewer's length with `Q_rsqrt` (one
+  Newton step, a little short of the true value), which this shader does not.
+- All 55 kept views: median 0.01, the largest as before.
+- Ghoul2 environment maps take the same path; no kept view changes by more than
+  rounding but the officer's, whose change is his specular.

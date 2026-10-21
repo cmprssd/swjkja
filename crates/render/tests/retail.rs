@@ -412,7 +412,9 @@ fn vertex_lit_surfaces_sum_their_styles_as_the_original() {
 /// turned into the scaled axes, so a model scaled by s reflects s times the unit
 /// reflection. vjun2's alternate officer (bench/reference/npc-views.txt's
 /// vjun2_officer) is scaled 105, its armour and gun specular; reflecting its scaled
-/// normal about the unit light made it 0.66 brighter than the reference.
+/// normal about the unit light made it 0.66 brighter than the reference. A Ghoul2
+/// model reflects in its space as an MD3 model does, seeing the eye from further
+/// away than it is: with the world's eye, a highlight on his chest was 1.36 brighter.
 #[test]
 fn scaled_models_reflect_their_light_as_the_original() {
     let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
@@ -465,6 +467,24 @@ fn scaled_models_reflect_their_light_as_the_original() {
         assert!(
             (got - want).abs() <= 0.1,
             "the officer's mean colour {ours:?}, the reference {reference:?}"
+        );
+    }
+    // The chest's highlight (x 705-724, y 380-399).
+    let mut sum = [0u64; 3];
+    for y in 380..400 {
+        for x in 705..725 {
+            let p = (y * width as usize + x) * 4;
+            for (c, s) in sum.iter_mut().enumerate() {
+                *s += u64::from(rgba[p + c]);
+            }
+        }
+    }
+    let ours = sum.map(|s| s as f32 / 400.0);
+    let reference = [92.228, 75.198, 67.598];
+    for (got, want) in ours.iter().zip(reference) {
+        assert!(
+            (got - want).abs() <= 0.8,
+            "the officer's highlight {ours:?}, the reference {reference:?}"
         );
     }
 }

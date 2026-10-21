@@ -74,8 +74,8 @@ struct Entity {
     // xyz: the direction the light comes from, unit length or zero.
     light_dir: vec4<f32>,
     color: vec4<f32>,
-    // An MD3 model's origin (w 1), for its specular and environment map in its own
-    // space (md3_space); w 0 for the world and Ghoul2 models.
+    // A model's origin (w 1), for its specular and environment map in its own space
+    // (model_space); w 0 for the world.
     origin: vec4<f32>,
     // Its unit axes (xyz) and their scales (w).
     axes: array<vec4<f32>, 3>,
@@ -220,11 +220,11 @@ fn tc_gen(s: Stage, bundle: u32, xyz: vec3<f32>, normal: vec3<f32>, st: vec2<f32
             }
         }
         case 2u: {
-            // RB_CalcEnvironmentTexCoords, in an MD3 model's own space (md3_space).
+            // RB_CalcEnvironmentTexCoords, in a model's own space (model_space).
             var n = normal;
             var viewer = normalize(frame.view_origin.xyz - xyz);
             if e.origin.w != 0.0 {
-                let m = md3_space(e, xyz, normal);
+                let m = model_space(e, xyz, normal);
                 n = m.normal;
                 viewer = normalize(m.eye - m.xyz);
             }
@@ -309,21 +309,22 @@ fn diffuse(e: Entity, normal: vec3<f32>) -> vec3<f32> {
 // RB_CalcSpecularAlpha's light for surfaces of no model (lightOrigin, fixed).
 const SPECULAR_LIGHT_ORIGIN: vec3<f32> = vec3<f32>(-960.0, 1980.0, 96.0);
 
-// A vertex of an MD3 model in the model's own space, as the original's tess and
-// backEnd.ori hold it: the unit normal, the vertex unscaled, and the view origin
+// A vertex of a model in its own space, as the original's tess and backEnd.ori
+// hold it (a Ghoul2 model's bones carry no scale, its axes do as an MD3 model's):
+// the unit normal, the vertex unscaled, and the view origin
 // turned into the scaled axes but divided by the first one's length only
 // (R_RotateForEntity), so a scaled model sees the eye from further away than it is.
-struct Md3Space {
+struct ModelSpace {
     normal: vec3<f32>,
     xyz: vec3<f32>,
     eye: vec3<f32>,
 }
 
-fn md3_space(e: Entity, xyz: vec3<f32>, normal: vec3<f32>) -> Md3Space {
+fn model_space(e: Entity, xyz: vec3<f32>, normal: vec3<f32>) -> ModelSpace {
     let at = xyz - e.origin.xyz;
     let eye = frame.view_origin.xyz - e.origin.xyz;
     let first = select(1.0 / e.axes[0].w, 0.0, e.axes[0].w == 0.0);
-    var m: Md3Space;
+    var m: ModelSpace;
     for (var i = 0; i < 3; i++) {
         let a = e.axes[i];
         let unscale = select(1.0 / a.w, 0.0, a.w == 0.0);
@@ -335,10 +336,10 @@ fn md3_space(e: Entity, xyz: vec3<f32>, normal: vec3<f32>) -> Md3Space {
 }
 
 // RB_CalcSpecularAlpha's light reflected towards the viewer (before the fourth
-// power) for an MD3 model, in its own space (md3_space), the light turned into the
+// power) for a model, in its own space (model_space), the light turned into the
 // scaled axes.
-fn md3_specular(e: Entity, xyz: vec3<f32>, normal: vec3<f32>) -> f32 {
-    let m = md3_space(e, xyz, normal);
+fn model_specular(e: Entity, xyz: vec3<f32>, normal: vec3<f32>) -> f32 {
+    let m = model_space(e, xyz, normal);
     var light: vec3<f32>;
     for (var i = 0; i < 3; i++) {
         light[i] = dot(e.light_dir.xyz, e.axes[i].xyz) * e.axes[i].w;
@@ -349,8 +350,8 @@ fn md3_specular(e: Entity, xyz: vec3<f32>, normal: vec3<f32>) -> f32 {
 }
 
 // ComputeColors, in 0-255 like the original's byte colours, for a vertex at `xyz`
-// in the world, of a model (an entity other than the world) or not.
-fn colors(s: Stage, xyz: vec3<f32>, vertex: vec4<f32>, normal: vec3<f32>, e: Entity, model: bool) -> vec4<f32> {
+// in the world, of entity `e`.
+fn colors(s: Stage, xyz: vec3<f32>, vertex: vec4<f32>, normal: vec3<f32>, e: Entity) -> vec4<f32> {
     let identity_light = frame.params.y;
     let identity_byte = floor(255.0 * identity_light);
     var c = vec4<f32>(identity_byte);
@@ -395,23 +396,14 @@ fn colors(s: Stage, xyz: vec3<f32>, vertex: vec4<f32>, normal: vec3<f32>, e: Ent
         case 5u: { c.a = 255.0 - vertex.a; }
         case 6u: {
             // RB_CalcSpecularAlpha: the light reflected about the normal, towards the
-            // viewer, to the fourth power. A model's light comes from its light
-            // direction, anything else's from a fixed point. An MD3 model reflects in
-            // its own space (md3_specular). A Ghoul2 model's normal carries its scale
-            // s (this normal's length), and the original reflects s times the unit
-            // reflection.
+            // viewer, to the fourth power. A model reflects its light direction in its
+            // own space (model_specular), anything else a fixed point's.
             var l: f32;
             if e.origin.w != 0.0 {
-                l = md3_specular(e, xyz, normal);
+                l = model_specular(e, xyz, normal);
             } else {
-                var light = e.light_dir.xyz;
-                var scale = 1.0;
-                if model {
-                    scale = select(length(normal), 1.0, all(normal == vec3<f32>(0.0)));
-                } else {
-                    light = normalize(SPECULAR_LIGHT_ORIGIN - xyz);
-                }
-                let reflected = normal * (2.0 * dot(normal, light) / scale) - light * scale;
+                let light = normalize(SPECULAR_LIGHT_ORIGIN - xyz);
+                let reflected = normal * (2.0 * dot(normal, light)) - light;
                 let viewer = frame.view_origin.xyz - xyz;
                 l = dot(reflected, viewer) * inverseSqrt(dot(viewer, viewer));
             }
@@ -538,7 +530,7 @@ fn vs_main(
         }
         vertex = vec4<f32>(min(floor(sum / 256.0), vec3<f32>(255.0)), vertex.a);
     }
-    var c = colors(s, world_xyz, vertex, normal, e, entity != 0u);
+    var c = colors(s, world_xyz, vertex, normal, e);
     // adjustColorsForFog on a fogged surface: fade by the fog's opacity
     // (RB_CalcModulate*ByFog), in bytes as the original.
     let fog_num = s.fog.w & 0xffffu;
