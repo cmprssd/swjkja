@@ -271,6 +271,31 @@ fn a_script_draws_its_npc_with_more_light() {
 }
 
 #[test]
+fn a_script_puts_its_npcs_weapon_away() {
+    // Put away in the first pass, again (no change), then armed after a 1000 ms
+    // wait.
+    let script = vec![
+        set("SET_WEAPON", "WP_NONE"),
+        set("SET_WEAPON", "wp_none"),
+        command(id::WAIT, vec![float(1000.0)]),
+        set("SET_WEAPON", "WP_SABER"),
+    ];
+    let t = timeline(&stance("BOTH_STAND1", "BOTH_STAND1"), Some(&script), &holds);
+    assert_eq!(t.unarmed, [(1550, true), (2550, false)]);
+    assert!(!t.unarmed_at(1549));
+    assert!(t.unarmed_at(1550));
+    assert!(t.unarmed_at(2549));
+    assert!(!t.unarmed_at(2550));
+    // "drop" puts it away too.
+    let script = vec![set("SET_WEAPON", "drop")];
+    let t = timeline(&stance("BOTH_STAND1", "BOTH_STAND1"), Some(&script), &holds);
+    assert_eq!(t.unarmed, [(1550, true)]);
+    // Without a script, armed.
+    let t = timeline(&stance("BOTH_STAND1", "BOTH_STAND1"), None, &holds);
+    assert!(!t.unarmed_at(12345));
+}
+
+#[test]
 fn a_script_sets_and_clears_what_its_npc_looks_at() {
     // The look target is set in the first pass, set again (no change), then
     // cleared after a 1000 ms wait and set anew after another.

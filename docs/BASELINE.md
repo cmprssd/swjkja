@@ -2162,3 +2162,39 @@ as on main.
   brush entity with a specular stage is t1_fatal's `*85` (func_breakable
   "objects", `textures/factory/wall10`), some 3,700 units from the kept t1_fatal
   views; this renderer gives it the world's fixed light.
+
+## A weapon put away by another script's affect block, 2026-10-21
+
+yavin1_students' largest difference (mean 0.04) sat in two places. One was a thin
+dark wedge standing up behind Rosh's hair (x 293-333, y 450-512), drawn here and not
+in the original: his training saber's hilt, in his hands clasped behind his head.
+yavin1's intro puts it away from an `affect` block on `npc_roshintro1`
+(`SET_WEAPON WP_NONE`: `G_SetWeapon` calls `G_RemoveWeaponModels`), but this
+renderer only dropped an NPC's bolted models when its own spawnscript's first pass
+did it. Now each NPC's script timeline records when `SET_WEAPON` puts its weapon
+away ("WP_NONE" or "drop") or brings one back (any other weapon), from whichever
+script runs it, and an NPC draws no bolted models while unarmed
+(`StaticModels::piece_shown`). A weapon brought back shows the models it spawned
+with, not the named weapon's.
+
+Two kept views change; the 53 others render pixel for pixel as on main.
+
+| View | Mean difference (main) | Exact pixels (main) |
+|------|------|------|
+| yavin1_students | 0.0360 (0.0380) | 93.70% (93.69%) |
+| academy4_class | 0.0619 (0.0696) | 96.82% (96.80%) |
+
+- yavin1_students: 104 pixels change; their summed difference from the reference
+  falls from 5,704 levels to 22. The mean colour over x 300-319, y 444-463 is
+  20.85 20.60 19.97 here, 20.86 20.60 19.93 in the reference, 18.13 17.97 17.42 on
+  main. `an_npc_put_unarmed_by_a_script_drops_its_saber`
+  (`crates/render/tests/retail.rs`) checks it to 0.15.
+- academy4_class: Kyle's hilt, held through his crossed arms, is gone as in the
+  reference; 149 pixels change, their summed difference falling from 21,411 levels
+  to 3.
+- What is left of yavin1_students: about a fifth is `jedi_student01` (the leaning
+  student at the back, x 480-520, y 200-280), whose hands and head stand a pixel or
+  two from the original's (`yavin1/jedi_stud_leaning` loops `BOTH_STAND10` and its
+  two talks a random number of times); not examined further. The rest is spread
+  thin, a level here and there.
+- All 55 kept views: median 0.01, the largest as before.

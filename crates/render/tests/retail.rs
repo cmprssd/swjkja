@@ -676,6 +676,67 @@ fn turning_brush_entities_reckon_their_environment_maps_in_their_space() {
     }
 }
 
+/// An NPC whose script puts its weapon away draws no bolted models from then on
+/// (`SET_WEAPON WP_NONE`: `G_RemoveWeaponModels`), also when another script's
+/// `affect` block does it. yavin1's intro puts Rosh's training saber away; seated
+/// with his hands behind his head, its hilt stood up behind his hair here
+/// (bench/reference/script-views.txt's yavin1_students), 2.7 levels too dark.
+#[test]
+fn an_npc_put_unarmed_by_a_script_drops_its_saber() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let gpu = Gpu::new_headless().unwrap();
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let shaders = swjkja_shader::ShaderText::load(&vfs).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/yavin1.bsp").unwrap()).unwrap();
+    let world = swjkja_world::World::load(&bsp, &Default::default());
+    let mut textures = TextureSet::new(&gpu).unwrap();
+    let time = 12.345;
+    let mut renderer = WorldRenderer::new(
+        &gpu,
+        &mut textures,
+        &vfs,
+        &shaders,
+        &bsp,
+        &world,
+        "maps/yavin1.bsp",
+        time,
+    )
+    .unwrap();
+    let (width, height) = (1280, 720);
+    let target = Target::new(&gpu, width, height).unwrap();
+    let depth_slot = textures.add_view(target.depth_copy.view);
+    let camera = Camera::new([3990.0, -120.0, 30.0], [15.0, 90.0, 0.0], width, height);
+    target
+        .render(&gpu, renderer.clear_color(), |frame| {
+            renderer
+                .draw(frame, &textures, &camera, time, depth_slot)
+                .unwrap()
+        })
+        .unwrap();
+    let rgba = target.read_rgba(&gpu).unwrap();
+    // The mean colour behind Rosh's hair (x 300-319, y 444-463).
+    let mut sum = [0u64; 3];
+    for y in 444..464 {
+        for x in 300..320 {
+            let p = (y * width as usize + x) * 4;
+            for (c, s) in sum.iter_mut().enumerate() {
+                *s += u64::from(rgba[p + c]);
+            }
+        }
+    }
+    let ours = sum.map(|s| s as f32 / (20.0 * 20.0));
+    let reference = [20.86, 20.60, 19.93];
+    for (got, want) in ours.iter().zip(reference) {
+        assert!(
+            (got - want).abs() <= 0.15,
+            "the mean colour behind Rosh's hair {ours:?}, the reference {reference:?}"
+        );
+    }
+}
+
 /// A map with a sky portal (`misc_skyportal`) shows the scene from there as its sky,
 /// with the view's angles, and the view's own sky surfaces draw nothing
 /// (`CG_DrawSkyBoxPortal`). t3_hevil's portal looks from a room with the sky box and

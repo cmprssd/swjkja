@@ -2230,6 +2230,9 @@ impl WorldRenderer {
                 *posed = Some(pose);
             }
             for piece in m.lods[level].pieces.clone() {
+                if !self.models.piece_shown(n, piece, ms) {
+                    continue;
+                }
                 if let Some((m, start, count)) = self.surface_draw[self.first_model_surface + piece]
                 {
                     ranges.push((m, start, count, None));

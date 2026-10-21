@@ -658,6 +658,18 @@ impl StaticModels {
             .is_some_and(|rig| rig.timeline.more_light_at(time))
     }
 
+    /// Whether piece `piece` of instance `n` is drawn at `time`: not a bolted
+    /// model's once the NPC's script has put its weapon away (`SET_WEAPON
+    /// WP_NONE`: `G_RemoveWeaponModels`).
+    pub fn piece_shown(&self, n: usize, piece: usize, time: i32) -> bool {
+        let bolted = self.pieces[piece].source.is_some_and(|s| s.part > 0);
+        !bolted
+            || !self.instances[n]
+                .rig
+                .as_ref()
+                .is_some_and(|rig| rig.timeline.unarmed_at(time))
+    }
+
     pub fn bones(&self, n: usize, time: i32) -> Vec<Mat34> {
         let m = &self.instances[n];
         let Some(rig) = &m.rig else {
@@ -1598,6 +1610,7 @@ mod tests {
             ]),
             look: Vec::new(),
             more_light: Vec::new(),
+            unarmed: Vec::new(),
         };
         let (at, stopped) = switches(&timeline, skeleton);
         assert_eq!(at, [(1550, 1), (9000, 0)]);
@@ -1616,6 +1629,7 @@ mod tests {
             ]),
             look: Vec::new(),
             more_light: Vec::new(),
+            unarmed: Vec::new(),
         };
         let (at, stopped) = switches(&timeline, skeleton);
         assert_eq!(at, [(1550, 1)]);
@@ -1630,6 +1644,7 @@ mod tests {
             torso: changes(&[("BOTH_STAND1", 0)]),
             look: Vec::new(),
             more_light: Vec::new(),
+            unarmed: Vec::new(),
         };
         let (at, stopped) = switches(&timeline, skeleton);
         assert_eq!(at, [(0, 1)]);
