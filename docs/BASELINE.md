@@ -2198,3 +2198,43 @@ Two kept views change; the 53 others render pixel for pixel as on main.
   two talks a random number of times); not examined further. The rest is spread
   thin, a level here and there.
 - All 55 kept views: median 0.01, the largest as before.
+
+## A loop of none, and the first pass's timers at NPC_Begin, 2026-10-21
+
+About a fifth of yavin1_students' difference was `jedi_student01`, the leaning
+student at the back (x 480-520, y 200-280): her hands and head a pixel or two from
+the original's. Her script (`yavin1/jedi_stud_leaning`) loops forever over a
+`random(0, 3)` loop of `BOTH_STAND10`, `BOTH_STAND10_TALK1`, another such loop and
+`BOTH_STAND10_TALK2`, each a `do` and a `wait`. Two causes, both ours:
+
+- **A loop of none runs once.** `CheckLoop` enters a loop's body before it reads
+  the count, and only ends it at the body's end when the count is 0; the captures
+  pin `random(0, 3)` to 0. Here a count of 0 skipped the body, so she never stood
+  between her talks.
+- **`NPC_Begin`'s movement frame counts the first pass's timers down 200 ms.** It
+  runs `ClientThink` with a zeroed command, whose time `ClientThink` raises to the
+  level's less 1000 (550 ms) against a `commandTime` of 0, and `Pmove` caps the
+  550 at 200. Later frames count 50 ms each (the AI frozen, as in the captures, the
+  commands' times stay 1000 ms behind the level's), so an animation the first pass
+  starts runs out 200 ms early, and every one chained after it too. Here they
+  counted 0 there.
+
+The capture log has her in `BOTH_STAND10_TALK1` from 10,802 ms (the log numbers this
+range's animations two below `anims.h`'s order, as its timings for the other
+students show); she starts it at 10,800 here (11,000 with the loop fixed alone).
+
+Only yavin1_students changes; the 54 others render pixel for pixel as on main.
+
+| View | Mean difference (main) | Exact pixels (main) |
+|------|------|------|
+| yavin1_students | 0.0297 (0.0360) | 93.78% (93.70%) |
+
+- yavin1_students: 914 pixels change; their summed difference from the reference
+  falls from 17,929 levels to 563. The mean colour over her hands (x 484-503, y
+  240-259) is 43.22 41.17 33.28 here, 43.02 41.03 33.18 in the reference, 40.77
+  39.97 32.78 on main. `a_loop_of_none_runs_once_and_npcs_begin_200_ms_on`
+  (`crates/render/tests/retail.rs`) checks it to 0.3.
+- Not modelled: `NPC_Begin` sets the first `NPC_Think` 100 ms plus `Q_irand(0, 100)`
+  on, so a script's later updates start then, not on the next frame (this
+  renderer runs them from the next). Not checked against the kept views.
+- All 55 kept views: median 0.01, the largest as before.
