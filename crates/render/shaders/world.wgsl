@@ -110,6 +110,17 @@ fn bone_apply(b: Bone, v: vec4<f32>) -> vec3<f32> {
     return vec3<f32>(dot(b.rows[0], v), dot(b.rows[1], v), dot(b.rows[2], v));
 }
 
+// The inverse of bone_apply for a rigid bone: `v` (a point with w 1, a direction
+// with w 0) turned back into the bone's space.
+fn bone_unapply(b: Bone, v: vec4<f32>) -> vec3<f32> {
+    let d = v.xyz - v.w * vec3<f32>(b.rows[0].w, b.rows[1].w, b.rows[2].w);
+    return vec3<f32>(
+        dot(d, vec3<f32>(b.rows[0].x, b.rows[1].x, b.rows[2].x)),
+        dot(d, vec3<f32>(b.rows[0].y, b.rows[1].y, b.rows[2].y)),
+        dot(d, vec3<f32>(b.rows[0].z, b.rows[1].z, b.rows[2].z)),
+    );
+}
+
 // RB_CalcFogTexCoords (fog.rs fog_tex_coords) for fog number `n`.
 fn fog_tex_coords(n: u32, v: vec3<f32>) -> vec2<f32> {
     let fog = fogs[n];
@@ -238,6 +249,12 @@ fn tc_gen(s: Stage, bundle: u32, xyz: vec3<f32>, normal: vec3<f32>, st: vec2<f32
                 let m = model_space(e, xyz, normal);
                 n = m.normal;
                 viewer = normalize_fast(m.eye - m.xyz);
+            } else if push.bones >= 2u {
+                // A turning brush entity's: in its model's space, the eye turned into
+                // its axes (R_RotateForEntity).
+                let b = bones[push.bones - 2u];
+                n = bone_unapply(b, vec4<f32>(normal, 0.0));
+                viewer = normalize_fast(bone_unapply(b, vec4<f32>(frame.view_origin.xyz - xyz, 0.0)));
             }
             let d = dot(n, viewer);
             if frame.misc.w == 1u {

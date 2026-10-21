@@ -615,6 +615,67 @@ fn md3_environment_maps_are_reckoned_in_the_models_space() {
     }
 }
 
+/// A turning brush entity's environment map is reckoned in its model's space
+/// (`RB_CalcEnvironmentTexCoords` after `R_RotateForEntity`): its own normal and the
+/// eye turned into its axes. t2_rancor's drum (a func_rotating, `textures/factory/
+/// env_pipe`), seen through its grate (bench/reference/model-views.txt's
+/// rancor_drum), took the world's normal and eye, half a level too bright here.
+#[test]
+fn turning_brush_entities_reckon_their_environment_maps_in_their_space() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let gpu = Gpu::new_headless().unwrap();
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let shaders = swjkja_shader::ShaderText::load(&vfs).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t2_rancor.bsp").unwrap()).unwrap();
+    let world = swjkja_world::World::load(&bsp, &Default::default());
+    let mut textures = TextureSet::new(&gpu).unwrap();
+    let time = 12.345;
+    let mut renderer = WorldRenderer::new(
+        &gpu,
+        &mut textures,
+        &vfs,
+        &shaders,
+        &bsp,
+        &world,
+        "maps/t2_rancor.bsp",
+        time,
+    )
+    .unwrap();
+    let (width, height) = (1280, 720);
+    let target = Target::new(&gpu, width, height).unwrap();
+    let depth_slot = textures.add_view(target.depth_copy.view);
+    let camera = Camera::new([-896.0, 2300.0, 1792.0], [0.0, 90.0, 0.0], width, height);
+    target
+        .render(&gpu, renderer.clear_color(), |frame| {
+            renderer
+                .draw(frame, &textures, &camera, time, depth_slot)
+                .unwrap()
+        })
+        .unwrap();
+    let rgba = target.read_rgba(&gpu).unwrap();
+    // The drum's mean colour (x 630-649, y 540-559).
+    let mut sum = [0u64; 3];
+    for y in 540..560 {
+        for x in 630..650 {
+            let p = (y * width as usize + x) * 4;
+            for (c, s) in sum.iter_mut().enumerate() {
+                *s += u64::from(rgba[p + c]);
+            }
+        }
+    }
+    let ours = sum.map(|s| s as f32 / (20.0 * 20.0));
+    let reference = [102.80, 90.68, 78.90];
+    for (got, want) in ours.iter().zip(reference) {
+        assert!(
+            (got - want).abs() <= 0.15,
+            "the drum's mean colour {ours:?}, the reference {reference:?}"
+        );
+    }
+}
+
 /// A map with a sky portal (`misc_skyportal`) shows the scene from there as its sky,
 /// with the view's angles, and the view's own sky surfaces draw nothing
 /// (`CG_DrawSkyBoxPortal`). t3_hevil's portal looks from a room with the sky box and
