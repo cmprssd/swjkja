@@ -106,6 +106,11 @@ struct GpuEntity {
     directed: [f32; 4],
     light_dir: [f32; 4],
     color: [f32; 4],
+    /// An MD3 model's origin (w 1), for its specular in its own space; w 0 for the
+    /// world and Ghoul2 models.
+    origin: [f32; 4],
+    /// Its unit axes (xyz) and their scales (w).
+    axes: [[f32; 4]; 3],
 }
 
 impl GpuEntity {
@@ -115,6 +120,8 @@ impl GpuEntity {
         directed: [0.0; 4],
         light_dir: [0.0; 4],
         color: [255.0; 4],
+        origin: [0.0; 4],
+        axes: [[0.0; 4]; 3],
     };
 }
 
@@ -2182,11 +2189,26 @@ impl WorldRenderer {
                 self.models.more_light(n, ms),
             );
             let v4 = |v: [f32; 3]| [v[0], v[1], v[2], 0.0];
+            // Its axes and origin now: turned and moved as its vertices are.
+            let axes = m.axes.map(|a| {
+                moved.map_or(a, |p| {
+                    std::array::from_fn(|i| (0..3).map(|j| p[i][j] * a[j]).sum())
+                })
+            });
+            let axes = axes.map(|a| {
+                let s = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+                let u = if s == 0.0 { a } else { a.map(|x| x / s) };
+                [u[0], u[1], u[2], s]
+            });
+            let origin = moved.map_or(m.origin, |p| crate::models::apply(&p, m.origin));
+            let md3 = if m.ghoul2_radius.is_none() { 1.0 } else { 0.0 };
             let entity = GpuEntity {
                 ambient: v4(light.ambient),
                 directed: v4(light.directed),
                 light_dir: v4(light.dir),
                 color: m.color.map(f32::from),
+                origin: [origin[0], origin[1], origin[2], md3],
+                axes,
             };
             let at = (n + 1) * size_of::<GpuEntity>();
             table[at..at + size_of::<GpuEntity>()].copy_from_slice(bytemuck::bytes_of(&entity));

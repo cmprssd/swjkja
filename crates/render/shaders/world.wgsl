@@ -72,6 +72,11 @@ struct Entity {
     // xyz: the direction the light comes from, unit length or zero.
     light_dir: vec4<f32>,
     color: vec4<f32>,
+    // An MD3 model's origin (w 1), for its specular in its own space; w 0 for the
+    // world and Ghoul2 models.
+    origin: vec4<f32>,
+    // Its unit axes (xyz) and their scales (w).
+    axes: array<vec4<f32>, 3>,
 }
 
 // A posed model's bone in world space: three rows of rotation and translation.
@@ -296,6 +301,32 @@ fn diffuse(e: Entity, normal: vec3<f32>) -> vec3<f32> {
 // RB_CalcSpecularAlpha's light for surfaces of no model (lightOrigin, fixed).
 const SPECULAR_LIGHT_ORIGIN: vec3<f32> = vec3<f32>(-960.0, 1980.0, 96.0);
 
+// RB_CalcSpecularAlpha's light reflected towards the viewer (before the fourth
+// power) for an MD3 model, in its own space as the original reckons it: the unit
+// normal, the light turned into the scaled axes, the vertex unscaled, and the view
+// origin turned into the scaled axes but divided by the first one's length only
+// (R_RotateForEntity), so a scaled model sees the eye from further away than it is.
+fn md3_specular(e: Entity, xyz: vec3<f32>, normal: vec3<f32>) -> f32 {
+    let at = xyz - e.origin.xyz;
+    let eye = frame.view_origin.xyz - e.origin.xyz;
+    let first = select(1.0 / e.axes[0].w, 0.0, e.axes[0].w == 0.0);
+    var n: vec3<f32>;
+    var light: vec3<f32>;
+    var v: vec3<f32>;
+    var view: vec3<f32>;
+    for (var i = 0; i < 3; i++) {
+        let a = e.axes[i];
+        let unscale = select(1.0 / a.w, 0.0, a.w == 0.0);
+        n[i] = dot(normal, a.xyz) * unscale;
+        light[i] = dot(e.light_dir.xyz, a.xyz) * a.w;
+        v[i] = dot(at, a.xyz) * unscale;
+        view[i] = dot(eye, a.xyz) * a.w * first;
+    }
+    let reflected = n * (2.0 * dot(n, light)) - light;
+    let viewer = view - v;
+    return dot(reflected, viewer) * inverseSqrt(dot(viewer, viewer));
+}
+
 // ComputeColors, in 0-255 like the original's byte colours, for a vertex at `xyz`
 // in the world, of a model (an entity other than the world) or not.
 fn colors(s: Stage, xyz: vec3<f32>, vertex: vec4<f32>, normal: vec3<f32>, e: Entity, model: bool) -> vec4<f32> {
@@ -344,20 +375,25 @@ fn colors(s: Stage, xyz: vec3<f32>, vertex: vec4<f32>, normal: vec3<f32>, e: Ent
         case 6u: {
             // RB_CalcSpecularAlpha: the light reflected about the normal, towards the
             // viewer, to the fourth power. A model's light comes from its light
-            // direction, anything else's from a fixed point. The original reflects in
-            // the model's space, a unit normal about the light turned into the scaled
-            // axes: for axes scaled by s (this normal's length), s times the unit
+            // direction, anything else's from a fixed point. An MD3 model reflects in
+            // its own space (md3_specular). A Ghoul2 model's normal carries its scale
+            // s (this normal's length), and the original reflects s times the unit
             // reflection.
-            var light = e.light_dir.xyz;
-            var scale = 1.0;
-            if model {
-                scale = select(length(normal), 1.0, all(normal == vec3<f32>(0.0)));
+            var l: f32;
+            if e.origin.w != 0.0 {
+                l = md3_specular(e, xyz, normal);
             } else {
-                light = normalize(SPECULAR_LIGHT_ORIGIN - xyz);
+                var light = e.light_dir.xyz;
+                var scale = 1.0;
+                if model {
+                    scale = select(length(normal), 1.0, all(normal == vec3<f32>(0.0)));
+                } else {
+                    light = normalize(SPECULAR_LIGHT_ORIGIN - xyz);
+                }
+                let reflected = normal * (2.0 * dot(normal, light) / scale) - light * scale;
+                let viewer = frame.view_origin.xyz - xyz;
+                l = dot(reflected, viewer) * inverseSqrt(dot(viewer, viewer));
             }
-            let reflected = normal * (2.0 * dot(normal, light) / scale) - light * scale;
-            let viewer = frame.view_origin.xyz - xyz;
-            let l = dot(reflected, viewer) * inverseSqrt(dot(viewer, viewer));
             c.a = select(min(floor(l * l * l * l * 255.0), 255.0), 0.0, l < 0.0);
         }
         case 7u: { c.a = floor(255.0 * clamp(wave(s.funcs.y, s.alpha_wave), 0.0, 1.0)); }

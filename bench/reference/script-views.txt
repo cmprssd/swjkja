@@ -30,7 +30,8 @@
 # fatal_elevator looks down t1_fatal's first reactor shaft at its elevator
 # (reactor_elevator1), rising from 5250 ms since "elev1_low" was used at 3000;
 # fatal_door at "Sateliteroom_Door", used at 4500, open from 4900 and 100 ms into
-# closing again.
+# closing again. fatal_ledge looks straight down from 236 units on the ledge beside
+# the shaft and its generator (f_gen.md3, scaled 2.75 2.75 2.5).
 academy1  academy1_class   -1400 -1260 790   15 90 0   12345
 academy2  academy2_class   -1400 -1200 780   15 90 0   12345   64
 academy4  academy4_class   -1400 -1200 780   15 90 0   12345   64
@@ -41,3 +42,4 @@ t3_stamp  stamp_cranes     -3584 0 1000   10 270 0   22000
 t3_hevil  hevil_ship       -200 -3300 -600   -25 45 0   6000
 t1_fatal  fatal_elevator   64 -352 5050      89 180 0   7000   128   elev1_low@3000,Sateliteroom_Door@4500
 t1_fatal  fatal_door       192 100 4864      0 90 0     7000
+t1_fatal  fatal_ledge      90 190 4500       89 180 0   7000   128
