@@ -408,6 +408,68 @@ fn scaled_models_reflect_their_light_as_the_original() {
     }
 }
 
+/// An MD3 model reflects its light in its own space (`RB_CalcSpecularAlpha`): the
+/// vertex unscaled, and the eye turned into the scaled axes but divided by the
+/// first one's length only, so a scaled model sees the eye from further away than
+/// it is. t1_fatal's generator (`f_gen.md3`, "modelscale_vec" 2.75 2.75 2.5), seen
+/// from 236 units above (bench/reference/script-views.txt's fatal_ledge), was 1.75
+/// times as bright as the reference with the eye taken from the drawn vertex.
+#[test]
+fn scaled_md3_models_see_the_eye_as_the_original() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let gpu = Gpu::new_headless().unwrap();
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let shaders = swjkja_shader::ShaderText::load(&vfs).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t1_fatal.bsp").unwrap()).unwrap();
+    let world = swjkja_world::World::load(&bsp, &Default::default());
+    let mut textures = TextureSet::new(&gpu).unwrap();
+    let time = 7.0;
+    let mut renderer = WorldRenderer::new(
+        &gpu,
+        &mut textures,
+        &vfs,
+        &shaders,
+        &bsp,
+        &world,
+        "maps/t1_fatal.bsp",
+        time,
+    )
+    .unwrap();
+    let (width, height) = (1280, 720);
+    let target = Target::new(&gpu, width, height).unwrap();
+    let depth_slot = textures.add_view(target.depth_copy.view);
+    let camera = Camera::new([90.0, 190.0, 4500.0], [89.0, 180.0, 0.0], width, height);
+    target
+        .render(&gpu, renderer.clear_color(), |frame| {
+            renderer
+                .draw(frame, &textures, &camera, time, depth_slot)
+                .unwrap()
+        })
+        .unwrap();
+    let rgba = target.read_rgba(&gpu).unwrap();
+    // The generator's mean colour (x 300-419, y 460-679).
+    let mut sum = [0u64; 3];
+    for y in 460..680 {
+        for x in 300..420 {
+            let p = (y * width as usize + x) * 4;
+            for (c, s) in sum.iter_mut().enumerate() {
+                *s += u64::from(rgba[p + c]);
+            }
+        }
+    }
+    let ours = sum.map(|s| s as f32 / (220.0 * 120.0));
+    let reference = [69.691, 65.969, 63.137];
+    for (got, want) in ours.iter().zip(reference) {
+        assert!(
+            (got - want).abs() <= 0.1,
+            "the generator's mean colour {ours:?}, the reference {reference:?}"
+        );
+    }
+}
+
 /// A map with a sky portal (`misc_skyportal`) shows the scene from there as its sky,
 /// with the view's angles, and the view's own sky surfaces draw nothing
 /// (`CG_DrawSkyBoxPortal`). t3_hevil's portal looks from a room with the sky box and

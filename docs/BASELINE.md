@@ -633,6 +633,7 @@ ffa5_pipes' eye, 2216 -1080 664) see door `*13` but not `*12`. Rendered without
 - Left out: a non-uniformly scaled model's specular uses the normal's length, not
   each axis's scale; and the original's viewer for a scaled model points from the
   unscaled vertex (origin plus the turned model-space point), not the drawn one.
+  Both done for MD3 models, 2026-10-21 ("Scaled MD3 models' specular eye" below).
 
 ## Vertex-lit surfaces through their light style, 2026-10-18
 
@@ -1904,7 +1905,7 @@ picture as 30 and 100 frames on every view).
 - Not observed in a window: the viewer keeps colour the same way (a swapchain image
   keeps the last frame drawn into it); only offscreen targets were checked.
 
-## fatal_elevator's ledge, 2026-10-19 (not found)
+## fatal_elevator's ledge, 2026-10-19 (found 2026-10-21: the generator's specular)
 
 The 4,280 pixels at fatal_elevator's right edge (mean difference 0.03 over the view,
 4-5 levels on the ledge) are what the reference draws brighter there; the cause is
@@ -1943,3 +1944,50 @@ Found on the way: the generator beside the ledge (`models/map_objects/factory/
 f_gen.md3`, "modelscale_vec" 2.75 2.75 2.5) is drawn 1.5-1.9 times as bright here as
 in the reference, in both new views (0.54 and 0.66 of ours over the pixels off by
 more than 8). No kept view shows it.
+
+Both were the generator's specular: see "Scaled MD3 models' specular eye" below.
+
+## Scaled MD3 models' specular eye, 2026-10-21
+
+t1_fatal's generator (`f_gen.md3`, a `misc_model_static` at 224 32 4264,
+"modelscale_vec" 2.75 2.75 2.5) was 1.75 times as bright here as in the reference,
+and it was also fatal_elevator's ledge. Each of its four shaders ends in a
+`detail` stage with `alphaGen lightingSpecular`, added over the rest
+(`blendFunc GL_SRC_ALPHA GL_ONE`). `RB_CalcSpecularAlpha` works in the model's own
+space: `tess.xyz` is the MD3's vertex, unscaled, and `R_RotateForEntity` turns the
+eye into the scaled axes but divides it by the first axis's length only, so the eye
+is as far from the origin as it is in the world while the vertex is 2.75 times
+closer, which turns the viewer's direction most for an eye close to the model.
+This renderer took the viewer from the drawn vertex.
+Now each MD3 model's entity carries its origin, unit axes and scales, and the
+shader reflects in the model's space as the original does (`md3_specular`,
+`shaders/world.wgsl`): the unit normal, the light turned into the scaled axes (each
+axis by its own scale), the vertex unscaled. Ghoul2 models keep the earlier path
+(vjun2_officer's test).
+
+The ledge: the generator lies over fatal_elevator's ledge from that eye. Left out
+of the branch's render, the ledge's 4,280 pixels come out 28 levels darker; with
+it, 4,208 of them now match the reference within 2 levels. The diagnosis on
+2026-10-19 cast rays through the map's surfaces, not its models.
+
+| View | Mean difference (main) | Pixels off by > 2 (main) |
+|------|------|------|
+| fatal_ledge (new) | 0.05 (6.70) | 0.0% > 16 (10.4%) |
+| fatal_elevator | 0.008 (0.03) | 137 (4,280) |
+| fatal_elev_low (not kept) | 0.03 (0.65) | 0.1% > 16 (1.2%) |
+
+- fatal_ledge (`bench/reference/script-views.txt`, captured 2026-10-19 for the
+  ledge with normal settings) is kept: the generator's top in its lower left. Its
+  mean colour over x 300-419, y 460-679 is 69.70 65.97 63.14 here, 69.69 65.97
+  63.14 in the reference, 142.2 134.9 129.3 on main.
+  `scaled_md3_models_see_the_eye_as_the_original` (`crates/render/tests/retail.rs`)
+  checks it to 0.1.
+- The 49 other kept views render pixel for pixel as main did (PR #89's full
+  render, the last code change): none shows a scaled
+  MD3 model's specular, and an unscaled one comes out the same either way.
+- All 52 kept views: median 0.01, the largest ffa5_pipes (3.75), dpred_guns (0.97),
+  hevil_fan_west (0.63), dpred_racks (0.50), vjun1_hall (0.43), as before.
+- Left out: a Ghoul2 model's specular keeps the world-space viewer (its vertices
+  carry its scale through its bones); `RB_CalcEnvironmentTexCoords` takes the same
+  model-space eye and vertex, not done yet (no kept view shows a scaled model
+  with an environment map).
