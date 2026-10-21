@@ -531,6 +531,67 @@ fn scaled_md3_models_see_the_eye_as_the_original() {
     }
 }
 
+/// An MD3 model's environment map is reckoned in its own space too
+/// (`RB_CalcEnvironmentTexCoords`): its unit normal, its vertex unscaled and the
+/// eye as its specular sees it. A statue's crystal in t3_rift (`statue.md3`,
+/// "modelscale" 2), seen from 340 units (bench/reference/script-views.txt's
+/// rift_statues), was 17 levels too bright with the world-space normal and eye.
+#[test]
+fn md3_environment_maps_are_reckoned_in_the_models_space() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let gpu = Gpu::new_headless().unwrap();
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let shaders = swjkja_shader::ShaderText::load(&vfs).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t3_rift.bsp").unwrap()).unwrap();
+    let world = swjkja_world::World::load(&bsp, &Default::default());
+    let mut textures = TextureSet::new(&gpu).unwrap();
+    let time = 12.345;
+    let mut renderer = WorldRenderer::new(
+        &gpu,
+        &mut textures,
+        &vfs,
+        &shaders,
+        &bsp,
+        &world,
+        "maps/t3_rift.bsp",
+        time,
+    )
+    .unwrap();
+    let (width, height) = (1280, 720);
+    let target = Target::new(&gpu, width, height).unwrap();
+    let depth_slot = textures.add_view(target.depth_copy.view);
+    let camera = Camera::new([-896.0, 3200.0, 860.0], [5.0, 90.0, 0.0], width, height);
+    target
+        .render(&gpu, renderer.clear_color(), |frame| {
+            renderer
+                .draw(frame, &textures, &camera, time, depth_slot)
+                .unwrap()
+        })
+        .unwrap();
+    let rgba = target.read_rgba(&gpu).unwrap();
+    // The crystal's mean colour (x 500-739, y 500-699).
+    let mut sum = [0u64; 3];
+    for y in 500..700 {
+        for x in 500..740 {
+            let p = (y * width as usize + x) * 4;
+            for (c, s) in sum.iter_mut().enumerate() {
+                *s += u64::from(rgba[p + c]);
+            }
+        }
+    }
+    let ours = sum.map(|s| s as f32 / (200.0 * 240.0));
+    let reference = [149.627, 156.326, 223.788];
+    for (got, want) in ours.iter().zip(reference) {
+        assert!(
+            (got - want).abs() <= 0.6,
+            "the crystal's mean colour {ours:?}, the reference {reference:?}"
+        );
+    }
+}
+
 /// A map with a sky portal (`misc_skyportal`) shows the scene from there as its sky,
 /// with the view's angles, and the view's own sky surfaces draw nothing
 /// (`CG_DrawSkyBoxPortal`). t3_hevil's portal looks from a room with the sky box and

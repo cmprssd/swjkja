@@ -110,8 +110,8 @@ struct GpuEntity {
     directed: [f32; 4],
     light_dir: [f32; 4],
     color: [f32; 4],
-    /// An MD3 model's origin (w 1), for its specular in its own space; w 0 for the
-    /// world and Ghoul2 models.
+    /// An MD3 model's origin (w 1), for its specular and environment map in its own
+    /// space; w 0 for the world and Ghoul2 models.
     origin: [f32; 4],
     /// Its unit axes (xyz) and their scales (w).
     axes: [[f32; 4]; 3],
