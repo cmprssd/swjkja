@@ -143,6 +143,7 @@ fn only_one_single_player_model_fog_depends_on_the_view() {
         let mut placements = swjkja_world::static_model::entity_models(
             &bsp.entities,
             rules,
+            b"",
             &mut swjkja_world::collision::Collision::at_spawn(&bsp, rules),
         );
         placements.extend(swjkja_world::static_model::static_models(

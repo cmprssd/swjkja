@@ -339,8 +339,21 @@ impl StaticModels {
         let cinematic = sp.then(|| Cinematic::load(vfs, map)).flatten();
         let mut world = Collision::at_spawn(bsp, rules);
         let mut level = script::Level::default();
+        let text = |folder: &str, ext: &str| {
+            let files: Vec<Vec<u8>> = vfs
+                .list(folder, ext)
+                .iter()
+                .filter_map(|f| vfs.read(&format!("{folder}/{f}")).ok())
+                .collect();
+            npc::join_parms(files.iter().map(Vec::as_slice))
+        };
+        let sabers = if sp {
+            text("ext_data/sabers", ".sab")
+        } else {
+            Vec::new()
+        };
         let mut placements =
-            swjkja_world::static_model::entity_models(&bsp.entities, rules, &mut world);
+            swjkja_world::static_model::entity_models(&bsp.entities, rules, &sabers, &mut world);
         let brushes = swjkja_world::brush_entity::brush_entities(&bsp.entities, &bsp.models, rules);
         // Placement first_model2 + k is the model2 of brush entity model2_of[k].
         let first_model2 = placements.len();
@@ -352,18 +365,7 @@ impl StaticModels {
             .filter(|&i| brushes[i].script_name.is_some())
             .collect();
         if sp {
-            let text = |folder: &str, ext: &str| {
-                let files: Vec<Vec<u8>> = vfs
-                    .list(folder, ext)
-                    .iter()
-                    .filter_map(|f| vfs.read(&format!("{folder}/{f}")).ok())
-                    .collect();
-                npc::join_parms(files.iter().map(Vec::as_slice))
-            };
-            let (parms, sabers) = (
-                text("ext_data/npcs", ".npc"),
-                text("ext_data/sabers", ".sab"),
-            );
+            let parms = text("ext_data/npcs", ".npc");
             let scripts = |name: &str| {
                 let bytes = vfs.read(&script::script_path(name)?).ok()?;
                 swjkja_icarus::parse(&bytes)

@@ -5,7 +5,7 @@ use swjkja_world::static_model::{Rules, StaticModel, angles_to_axis, static_mode
 
 /// The entity models, with no world to drop onto.
 fn entity_models(entities: &[Entity], rules: Rules) -> Vec<StaticModel> {
-    swjkja_world::static_model::entity_models(entities, rules, &mut Collision::default())
+    swjkja_world::static_model::entity_models(entities, rules, b"", &mut Collision::default())
 }
 
 fn entity(pairs: &[(&str, &str)]) -> Entity {
@@ -350,6 +350,18 @@ fn racks_draw_their_own_model_linked_by_a_point() {
     assert_eq!(models[0].entity_box, gun_rack.entity_box);
 }
 
+/// Whether `a` is within `spread` of `b` on each axis.
+fn within(a: [f32; 3], b: [f32; 3], spread: [f32; 3]) -> bool {
+    (0..3).all(|i| (a[i] - b[i]).abs() <= spread[i] + 1e-4)
+}
+
+/// How far `m` stands to the right of a rack at 100 200 50 facing +y (along +x),
+/// if it is 4 to `max` units aside.
+fn aside(m: &StaticModel, max: f32) -> Option<f32> {
+    let d = m.origin[0] - 100.0;
+    (4.0..=max).contains(&d.abs()).then_some(d)
+}
+
 #[test]
 fn an_ammo_rack_fills_its_shelf_with_the_first_ammo() {
     let models = entity_models(&[rack("misc_model_ammo_rack", &[])], SP);
@@ -357,24 +369,23 @@ fn an_ammo_rack_fills_its_shelf_with_the_first_ammo() {
         panic!("{models:?}")
     };
     // No ammo checked: blaster packs, 8 units apart along the rack's right (+x at
-    // yaw 90), 7 units up, turned 90 degrees from the rack.
-    let origins: Vec<_> = goods.iter().map(|m| m.origin).collect();
-    assert_eq!(
-        origins,
-        [
-            [92.0, 200.0, 57.0],
-            [100.0, 200.0, 57.0],
-            [108.0, 200.0, 57.0]
-        ]
-    );
-    for m in goods {
+    // yaw 90), up to half a unit forward, 7 units up, turned 90 degrees from the
+    // rack and up to 4 more.
+    assert_eq!(goods.len(), 3);
+    for (m, x) in goods.iter().zip([92.0, 100.0, 108.0]) {
         assert_eq!(m.model, "models/items/energy_cell.md3");
-        assert!(close(m.axes[0], [-1.0, 0.0, 0.0]), "{:?}", m.axes);
+        assert!(
+            within(m.origin, [x, 200.0, 57.0], [0.0, 0.5, 0.0]),
+            "{:?}",
+            m.origin
+        );
+        assert!(m.axes[0][0] < -4f32.to_radians().cos(), "{:?}", m.axes);
+        let [x, y, z] = m.origin;
+        assert_eq!(
+            m.entity_box,
+            Some([[x - 9.0, y - 9.0, z - 1.0], [x + 9.0, y + 9.0, z + 17.0]])
+        );
     }
-    assert_eq!(
-        goods[0].entity_box,
-        Some([[83.0, 191.0, 56.0], [101.0, 209.0, 74.0]])
-    );
 }
 
 #[test]
@@ -386,32 +397,36 @@ fn an_ammo_rack_places_checked_ammo_then_a_medpack_beside_the_weapon() {
         )
         .into_iter()
         .skip(1)
-        .map(|m| (m.model, m.origin))
         .collect::<Vec<_>>()
     };
-    let bolts = || "models/items/metallic_bolts.md3".to_owned();
-    let medpac = || "models/items/medpac.md3".to_owned();
-    // Metal bolts, health, no fill: one pack, and the medpack on the right, higher.
+    // Metal bolts, health, no fill: one pack, and the medpack 4 to 8 units to a
+    // side, higher.
+    let goods = models("82");
+    let [bolts, medpac] = &goods[..] else {
+        panic!("{goods:?}")
+    };
+    assert_eq!(bolts.model, "models/items/metallic_bolts.md3");
+    assert!(within(bolts.origin, [92.0, 200.0, 57.0], [0.0, 0.5, 0.0]));
+    assert_eq!(medpac.model, "models/items/medpac.md3");
+    assert!(aside(medpac, 8.0).is_some(), "{:?}", medpac.origin);
+    assert_eq!(medpac.origin[2], 74.0);
+    // With a weapon (a repeater) 4 to 10 units to a side, the medpack goes to the
+    // other one.
+    let goods = models("90");
+    let [repeater, medpac] = &goods[1..] else {
+        panic!("{goods:?}")
+    };
     assert_eq!(
-        models("82"),
-        [
-            (bolts(), [92.0, 200.0, 57.0]),
-            (medpac(), [106.0, 200.0, 24.0 + 50.0])
-        ]
+        repeater.model,
+        "models/weapons2/heavy_repeater/heavy_repeater_w.glm"
     );
-    // With a weapon (a repeater) on the right, the medpack goes left.
-    let repeater = "models/weapons2/heavy_repeater/heavy_repeater_w.glm".to_owned();
-    assert_eq!(
-        models("90")[1..],
-        [
-            (repeater, [107.0, 200.0, 77.0]),
-            (medpac(), [94.0, 200.0, 74.0])
-        ]
-    );
-    // A power cell's rack takes no weapon, so the medpack stays right.
-    assert_eq!(models("120")[1].1, [106.0, 200.0, 74.0]);
+    assert_eq!((repeater.origin[2], medpac.origin[2]), (77.0, 74.0));
+    let (gun, med) = (aside(repeater, 10.0).unwrap(), aside(medpac, 8.0).unwrap());
+    assert!(gun * med < 0.0, "{gun} and {med}");
+    // A power cell's rack takes no weapon.
+    assert!(aside(&models("120")[1], 8.0).is_some());
     // Every ammo type, in the original's order: one each.
-    let all: Vec<_> = models("103").into_iter().map(|(m, _)| m).collect();
+    let all: Vec<_> = models("103").into_iter().map(|m| m.model).collect();
     assert_eq!(
         all,
         [
@@ -435,30 +450,34 @@ fn a_gun_rack_stands_its_weapons_up_turned_around() {
             .collect::<Vec<_>>()
     };
     // Nothing checked: three blasters, 9 units apart along the rack's right (+x at
-    // yaw 90), 23 units up.
+    // yaw 90), up to 2 units aside and forward, 23 units up.
     let blasters = goods("0");
-    let placed: Vec<_> = blasters
-        .iter()
-        .map(|m| (m.model.as_str(), m.origin))
-        .collect();
-    assert_eq!(
-        placed,
-        [
-            (blaster, [91.0, 200.0, 73.0]),
-            (blaster, [100.0, 200.0, 73.0]),
-            (blaster, [109.0, 200.0, 73.0])
-        ]
-    );
-    // Facing yaw 270 and pitched 75 degrees up: forward mostly up, a little toward
-    // -y; up mostly toward +y.
-    let (s, c) = 75f32.to_radians().sin_cos();
-    let m = &blasters[0];
-    assert!(close(m.axes[0], [0.0, -c, s]), "{:?}", m.axes);
-    assert!(close(m.axes[2], [0.0, s, c]), "{:?}", m.axes);
-    assert_eq!(
-        m.entity_box,
-        Some([[80.0, 189.0, 70.0], [102.0, 211.0, 86.0]])
-    );
+    assert_eq!(blasters.len(), 3);
+    for (m, x) in blasters.iter().zip([91.0, 100.0, 109.0]) {
+        assert_eq!(m.model, blaster);
+        assert!(
+            within(m.origin, [x, 200.0, 73.0], [2.0, 2.0, 0.0]),
+            "{:?}",
+            m.origin
+        );
+        // Facing yaw 270, up to 14 degrees off, and pitched 75 degrees up, up to 4
+        // degrees off: forward mostly up, a little toward -y.
+        let [fx, fy, fz] = m.axes[0];
+        assert!(fz > 71f32.to_radians().sin() && fz < 79f32.to_radians().sin());
+        assert!(
+            fy < 0.0 && fx.abs() < -fy * 14f32.to_radians().tan(),
+            "{:?}",
+            m.axes
+        );
+        let [x, y, z] = m.origin;
+        assert_eq!(
+            m.entity_box,
+            Some([
+                [x - 11.0, y - 11.0, z - 3.0],
+                [x + 11.0, y + 11.0, z + 13.0]
+            ])
+        );
+    }
     // Each checked weapon at its own height, the first filling the shelf.
     let placed: Vec<_> = goods("6")
         .iter()
@@ -479,7 +498,12 @@ fn an_ammo_rack_weapon_with_no_ammo_checked_sits_at_the_rack_height() {
     let models = entity_models(&[rack("misc_model_ammo_rack", &[("spawnflags", "8")])], SP);
     let weapon = models.last().unwrap();
     assert_eq!(weapon.model, "models/weapons2/blaster_r/blaster_w.glm");
-    assert_eq!(weapon.origin, [107.0, 200.0, 50.0]);
+    assert!(aside(weapon, 10.0).is_some(), "{:?}", weapon.origin);
+    assert!(within(
+        weapon.origin,
+        [100.0, 200.0, 50.0],
+        [10.0, 2.0, 0.0]
+    ));
 }
 
 #[test]
@@ -553,7 +577,7 @@ fn a_solid_breakable_is_in_the_way_of_what_spawns_after_it() {
         ])
     };
     let mut world = Collision::default();
-    entity_models_in(&[crate_at("1")], SP, &mut world);
+    entity_models_in(&[crate_at("1")], SP, b"", &mut world);
     // Its default box, -16..16 around its origin: its top is at 32.
     assert_eq!(
         world.drop_to_floor([0.0, 0.0, 100.0], [-1.0; 3], [1.0; 3], MASK_NPCSOLID),
@@ -561,7 +585,7 @@ fn a_solid_breakable_is_in_the_way_of_what_spawns_after_it() {
     );
     // Not solid: only shots stop at it.
     let mut world = Collision::default();
-    entity_models_in(&[crate_at("0")], SP, &mut world);
+    entity_models_in(&[crate_at("0")], SP, b"", &mut world);
     assert_eq!(
         world.drop_to_floor([0.0, 0.0, 100.0], [-1.0; 3], [1.0; 3], MASK_NPCSOLID),
         None
@@ -582,6 +606,7 @@ fn a_gravity_breakable_drops_onto_what_is_below() {
             ("gravity", "1"),
         ])],
         SP,
+        b"",
         &mut world,
     );
     assert_eq!(models[0].origin, [8.0, 8.0, 0.125]);

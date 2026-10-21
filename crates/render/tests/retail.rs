@@ -941,3 +941,63 @@ fn a_blend_over_nothing_takes_what_the_last_frame_left() {
         }
     }
 }
+
+/// The rack weapons are spread and turned with the game's random numbers, replayed
+/// through the spawn: t2_dpred's middle rack in bench/reference/model-views.txt's
+/// dpred_guns stood its weapons in the middle of their range, so a blaster's barrel
+/// showed a little off its reference, 33 levels too dark on its red lamp.
+#[test]
+fn rack_weapons_spread_as_the_original_spreads_them() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let gpu = Gpu::new_headless().unwrap();
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let shaders = swjkja_shader::ShaderText::load(&vfs).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/t2_dpred.bsp").unwrap()).unwrap();
+    let world = swjkja_world::World::load(&bsp, &Default::default());
+    let mut textures = TextureSet::new(&gpu).unwrap();
+    let time = 12.345;
+    let mut renderer = WorldRenderer::new(
+        &gpu,
+        &mut textures,
+        &vfs,
+        &shaders,
+        &bsp,
+        &world,
+        "maps/t2_dpred.bsp",
+        time,
+    )
+    .unwrap();
+    let (width, height) = (1280, 720);
+    let target = Target::new(&gpu, width, height).unwrap();
+    let depth_slot = textures.add_view(target.depth_copy.view);
+    let camera = Camera::new([95.0, -2030.0, 625.0], [15.0, 270.0, 0.0], width, height);
+    target
+        .render(&gpu, renderer.clear_color(), |frame| {
+            renderer
+                .draw(frame, &textures, &camera, time, depth_slot)
+                .unwrap()
+        })
+        .unwrap();
+    let rgba = target.read_rgba(&gpu).unwrap();
+    // The mean colour over x 290-309, y 290-309 (main: 18.56 15.31 10.74).
+    let mut sum = [0u64; 3];
+    for y in 290..310 {
+        for x in 290..310 {
+            let p = (y * width as usize + x) * 4;
+            for (c, s) in sum.iter_mut().enumerate() {
+                *s += u64::from(rgba[p + c]);
+            }
+        }
+    }
+    let ours = sum.map(|s| s as f32 / (20.0 * 20.0));
+    let reference = [51.72, 16.84, 24.32];
+    for (got, want) in ours.iter().zip(reference) {
+        assert!(
+            (got - want).abs() <= 0.3,
+            "the mean colour by the blaster {ours:?}, the reference {reference:?}"
+        );
+    }
+}

@@ -302,11 +302,11 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   medpacks, turned 90 degrees from the rack and linked by their `items.dat` boxes.
   The weapons (blaster, repeater, rocket launcher) are Ghoul2 models and wait for
   Ghoul2; gun racks hold only weapons, so they show empty for now.
-- **No random spread**: the original jitters each item (up to 2 units and 14 degrees
-  for weapons, 0.5 units and 4 degrees for ammo, a medpack 4 to 8 units aside) with
-  the game module's random numbers, whose sequence depends on everything that ran
-  before. Items sit in the middle of their range, and a medpack takes the right
-  side unless a weapon took it (the original picks a side at random).
+- **The original's random spread**: the original jitters each item (up to 2 units
+  and 14 degrees for weapons, 0.5 units and 4 degrees for ammo, a medpack 4 to 8
+  units aside) with the game module's random numbers. First left out (items in the
+  middle of their range); since 2026-10-21 replayed (see "Rack goods spread with the
+  replayed random numbers").
 - **Ammo racks' goods come after every map entity**: the original spawns them
   100 ms into the level, after the map's entities.
 - **Beacons and planted bombs with a "targetname" are not drawn**, waiting to be
@@ -328,10 +328,10 @@ equals the same frame rendered alone (it fails if the frames share one slot).
   fog picked from the same sphere (`R_GCullModel`, `G2_ComputeLOD`,
   `R_GComputeFogNum`), lit at their origin. Surfaces are drawn as the hierarchy walk
   reaches them; tags and surfaces off by default are not.
-- **Weapons sit in the middle of their random range, like the other rack items**: a
-  gun rack's three 9 units apart, an ammo rack's 7 units to the right (the medpack
-  then on the left), turned around and pitched 75 degrees up (cgame's `CG_Item` for a
-  VERTICAL item). An ammo rack with a weapon and no ammo checked places a blaster at
+- **Weapons stand as the rack places them**: a gun rack's three 9 units apart, an
+  ammo rack's 4 to 10 units to a side, turned around and pitched 75 degrees up
+  (cgame's `CG_Item` for a VERTICAL item), each spread at random as the other rack
+  items (first in the middle of its range). An ammo rack with a weapon and no ammo checked places a blaster at
   the rack's own height, as the original does (its height variable stays 0).
 
 ## 2026-10-10: Single player's NPCs, as they spawn (decided by Claude, pending review)
@@ -769,9 +769,9 @@ equals the same frame rendered alone (it fails if the frames share one slot).
 
 ## 2026-10-16: What the replay leaves out (decided by Claude, pending review)
 
-- **Other entities' spawn draws** (ammo racks' spread, effects, breakables and
-  the like) are left out: none of the academies' entities draw before their NPCs,
-  but a map whose do would shift every NPC pick after them.
+- **Other entities' spawn draws** (effects, breakables and the like) are left out:
+  none of the academies' entities draw before their NPCs, but a map whose do would
+  shift every NPC pick after them. The racks' draws are replayed (2026-10-21).
 - **Draws after the spawn are not replayed**: once the client runs, cgame draws from
   the same generator every frame it draws, so what the game draws then depends on
   frame timing. Scripts' random numbers do not come from it (see 2026-10-16,
@@ -1056,3 +1056,21 @@ its goo by it). This renderer now does the same: `WorldRenderer::clear_color` is
 keeps its last frame. `render_world` draws each view 10 times, as the capture holds
 a view still, so its pictures are the settled ones. The other way, clearing to black
 and drawing such pipes some other way, would match no view held still.
+
+## 2026-10-21: Rack goods spread with the replayed random numbers (decided by Claude, pending review)
+
+- **Found**: a capture with `g_swjkjaRand` logged t2_dpred's draws to 2000 ms. Up
+  to the ammo racks only two callers draw: the stormtroopers' coin flip and the
+  gun racks (`GunRackAddItem`'s spread and turn); then the ammo racks at 1100 ms.
+  The capture's build evaluates a call's arguments right to left (`Q_flrand(0, 1)`
+  before `Q_flrand(-1, 1)` in the ammo rack's calls), so a spread draws aside before
+  forward.
+- **Chosen: replay them**: `entity_models` walks the spawn with its own generator,
+  drawing the gun racks' goods in entity order and the other entities' draws
+  (`npc::spawn_draws`, the NPC spawners and player starts), then the ammo racks'
+  goods. `npc_models`' walk draws the racks' numbers too (discarding the goods), so
+  the NPCs' blocks read on from the same state. The angles are normalized as the
+  original's (`AngleNormalize180`, 65536ths of a turn).
+- **A retail test** pins dpred_guns' middle rack and t2_dpred's first ammo rack to
+  the logged numbers; the other maps' racks are checked only by their views
+  (stamp_barrels, vjun2_officer).
