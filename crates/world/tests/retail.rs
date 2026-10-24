@@ -773,3 +773,47 @@ fn t2_dpreds_rack_goods_spread_as_in_the_original() {
     // packs 100 ms in, after every gun rack: the first is the 122nd draw.
     at([-2030.0, -4346.0 - 0.661621 * 0.5, 37.0]);
 }
+
+/// Every single-player map's world effects, and its outside scan. Prints them
+/// (run with `--nocapture`): which maps rain, and where (t3_hevil's fan pit and
+/// vjun1's hall show streaks the original draws).
+#[test]
+fn every_single_player_maps_weather_reads_and_scans() {
+    use swjkja_world::weather::{Command, Outside, commands};
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let mut maps: Vec<&str> = vfs
+        .files()
+        .filter(|f| f.ends_with(".bsp") && !f.starts_with("maps/mp/"))
+        .collect();
+    maps.sort_unstable();
+    let mut weather = 0;
+    for name in maps {
+        let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
+        let cmds = commands(&bsp.entities, &bsp.models, 0);
+        if cmds.is_empty() {
+            continue;
+        }
+        weather += 1;
+        let parsed: Vec<Command> = cmds.iter().filter_map(|c| Command::parse(c)).collect();
+        assert_eq!(parsed.len(), cmds.len(), "{name}: {cmds:?}");
+        let zones: Vec<_> = parsed
+            .iter()
+            .filter_map(|c| match *c {
+                Command::Zone { mins, maxs } => Some((mins, maxs)),
+                _ => None,
+            })
+            .collect();
+        let world = bsp.models[0];
+        let outside = Outside::scan(&Collision::new(&bsp), &zones, (world.mins, world.maxs));
+        eprintln!(
+            "{name}: {cmds:?}, scan {:?}",
+            outside.as_ref().map(|_| "ok")
+        );
+        assert!(outside.is_ok(), "{name}");
+    }
+    eprintln!("{weather} single-player maps with world effects");
+}

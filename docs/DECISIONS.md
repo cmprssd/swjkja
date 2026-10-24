@@ -1074,3 +1074,29 @@ and drawing such pipes some other way, would match no view held still.
 - **A retail test** pins dpred_guns' middle rack and t2_dpred's first ammo rack to
   the logged numbers; the other maps' racks are checked only by their views
   (stamp_barrels, vjun2_officer).
+
+## 2026-10-24: Rain is compared with world effects off on both sides (chosen by the owner)
+
+- **Found**: the original places rain particles with the renderer's own random
+  numbers (`CParticleCloud`, `Q_flrand` in the renderer module) and moves them by
+  each frame's real time (`backEnd.refdef.frametime`), from the map's first frame
+  on; its wind changes with the C library's `rand()`. The capture loads the map,
+  waits and moves the camera between views, so where a reference shot's streaks
+  fall cannot be reproduced. Rain drawn at other places than the reference's
+  would add its own streaks to the ones missing: hevil_fan_west's 0.63 would grow.
+- **Chosen: world effects off in comparisons.** The reference patch gets a switch
+  that leaves world effects undrawn, and `render_world` leaves them out too, so the
+  kept views compare without rain (pixel for pixel, as before). Rain itself is
+  checked by its numbers (particles, size, colour, speed, where it counts as
+  outside) against the original's code, and by eye. The rain views need one
+  recapture with the switch (asking first).
+- **The other way**, rain drawn in the kept views and judged by statistics (the
+  frame's added brightness, its streak pixels), would keep no view comparable pixel
+  for pixel.
+- **First slice (world)**: `weather::commands` gives the `CS_WORLD_FX` strings the
+  single-player spawners add (`fx_rain`, `fx_snow`, `fx_wind`, `fx_wind_zone`,
+  `misc_weather_zone`), `Command::parse` reads them as the renderer, and `Outside`
+  is the renderer's outside cache (`COutside`), scanned from the world brushes'
+  contents (`Collision::point_contents`). Left out: `fx_puff`, multiplayer's
+  spawners, and heavy rain's lightning (`fx_rain_think`, which also draws from the
+  game's random numbers and so could shift later picks on such a map).
