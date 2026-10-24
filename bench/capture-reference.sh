@@ -2,7 +2,7 @@
 # Captures reference screenshots with the reference OpenJK (built with the
 # cg_swjkjaView/cg_swjkjaTime patch by bench/build-openjk.sh): every view in
 # reference/views.txt (or the views file given) at its pinned game time,
-# world only (r_drawentities 0, no HUD), full-quality textures, 1280x720.
+# world only (r_drawentities 0, no HUD, no rain), full-quality textures, 1280x720.
 # With ENTITIES=1, entities are drawn too (the static models of
 # reference/model-views.txt; those views keep items and movers out of sight).
 # With SCRIPTS=1, single player's NPCs run their scripts (only their AI is frozen)
@@ -73,7 +73,9 @@ for map in $maps; do
 		fi
 		if [ "$sp" = 1 ]; then echo "noclip"; fi
 		# No console notify lines (the patched cgame logs NPC timing to the console).
-		echo "set cg_draw2D 0; set r_drawentities $entities; set cg_drawGun 0; set con_notifytime 0"
+		# No world effects (rain, r_swjkjaNoWeather, a patch addition): where their
+		# particles fall cannot be reproduced, so the new renderer leaves them out too.
+		echo "set cg_draw2D 0; set r_drawentities $entities; set cg_drawGun 0; set con_notifytime 0; set r_swjkjaNoWeather 1"
 		echo "wait 300"
 		grep -v '^#' "$views" | awk -v m="$map" -v sp="$sp" '$1 == m {
 			back = NF >= 10 ? $10 : 128

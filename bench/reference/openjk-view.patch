@@ -313,6 +313,22 @@ index a349d4f..2368b69 100644
  
  	//ResetTeamCounters();
  	NAV::DecayDangerSenses();
+diff --git a/code/rd-vanilla/tr_WorldEffects.cpp b/code/rd-vanilla/tr_WorldEffects.cpp
+index 5464b70..75a2869 100644
+--- a/code/rd-vanilla/tr_WorldEffects.cpp
++++ b/code/rd-vanilla/tr_WorldEffects.cpp
+@@ -1596,7 +1596,10 @@ void RB_RenderWorldEffects(void)
+ 		(tr.refdef.rdflags & RDF_NOWORLDMODEL) ||
+ 		(backEnd.refdef.rdflags & RDF_SKYBOXPORTAL) ||
+ 		!mParticleClouds.size() ||
+-		ri.CL_IsRunningInGameCinematic())
++		ri.CL_IsRunningInGameCinematic() ||
++		// swjkja reference capture: world effects (rain) left out, as where their
++		// particles fall cannot be reproduced.
++		ri.Cvar_VariableString("r_swjkjaNoWeather")[0])
+ 	{	//  no world rendering or no world or no particle clouds
+ 		return;
+ 	}
 diff --git a/code/rd-vanilla/tr_surfacesprites.cpp b/code/rd-vanilla/tr_surfacesprites.cpp
 index f0c210a..032959a 100644
 --- a/code/rd-vanilla/tr_surfacesprites.cpp
