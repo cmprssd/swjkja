@@ -1101,3 +1101,13 @@ and drawing such pipes some other way, would match no view held still.
   out: `fx_puff`, multiplayer's spawners, and heavy rain's lightning
   (`fx_rain_think`, which also draws from the game's random numbers and so could
   shift later picks on such a map).
+- **Second slice (render)**: `weather::Weather` runs the rain clouds and winds
+  (`CParticleCloud`, `CWindZone`) once a frame from the time since the last one
+  (1 to 1000 ms; the first frame only caches, as the original's), and
+  `WorldRenderer` draws every cloud's triangles after the scene in one draw: added
+  to the frame, depth tested but not written, unfogged, not in the sky portal's
+  scene. The renderer module's numbers come from a `Rand` of its own and the
+  winds' lulls from MSVC's `rand()` unseeded: numbers of the right kind, not the
+  capture's. `WorldRenderer::draw_weather` (on by default) is off in
+  `render_world`. Left out: snow, space dust, fog clouds, puffs, in-game
+  cinematics (no world effects during one), and the rain image's nearest filter.
