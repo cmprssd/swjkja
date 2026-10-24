@@ -1097,6 +1097,7 @@ and drawing such pipes some other way, would match no view held still.
   single-player spawners add (`fx_rain`, `fx_snow`, `fx_wind`, `fx_wind_zone`,
   `misc_weather_zone`), `Command::parse` reads them as the renderer, and `Outside`
   is the renderer's outside cache (`COutside`), scanned from the world brushes'
-  contents (`Collision::point_contents`). Left out: `fx_puff`, multiplayer's
-  spawners, and heavy rain's lightning (`fx_rain_think`, which also draws from the
-  game's random numbers and so could shift later picks on such a map).
+  contents (`PointContents`, through the BSP tree as `CM_PointContents`). Left
+  out: `fx_puff`, multiplayer's spawners, and heavy rain's lightning
+  (`fx_rain_think`, which also draws from the game's random numbers and so could
+  shift later picks on such a map).
