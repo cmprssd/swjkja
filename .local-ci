@@ -16,7 +16,10 @@ step "shell syntax"; for f in bench/*.sh scripts/*.sh .local-ci; do bash -n "$f"
 step "committed tree builds"
 tree=$(mktemp -d)
 trap 'rm -rf "$tree"' EXIT
-git archive HEAD | tar -x -C "$tree"
+# Extracted with the current time (-m): with the archive's commit times, sources
+# older than the shared target's last build (another branch's run) made cargo reuse
+# that build's crates and check against them.
+git archive HEAD | tar -x -m -C "$tree"
 CARGO_TARGET_DIR="$PWD/target" cargo check --manifest-path "$tree/Cargo.toml" --workspace --all-targets --locked --quiet
 
 linux() {
