@@ -779,7 +779,7 @@ fn t2_dpreds_rack_goods_spread_as_in_the_original() {
 /// vjun1's hall show streaks the original draws).
 #[test]
 fn every_single_player_maps_weather_reads_and_scans() {
-    use swjkja_world::weather::{Command, Outside, commands};
+    use swjkja_world::weather::{Command, Outside, PointContents, commands};
     let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
         eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
         return;
@@ -808,7 +808,8 @@ fn every_single_player_maps_weather_reads_and_scans() {
             })
             .collect();
         let world = bsp.models[0];
-        let outside = Outside::scan(&Collision::new(&bsp), &zones, (world.mins, world.maxs));
+        let contents = PointContents::new(&bsp);
+        let outside = Outside::scan(|p| contents.at(p), &zones, (world.mins, world.maxs));
         eprintln!(
             "{name}: {cmds:?}, scan {:?}",
             outside.as_ref().map(|_| "ok")

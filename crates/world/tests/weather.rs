@@ -146,7 +146,7 @@ fn courtyard(contents: i32) -> (Collision, ([f32; 3], [f32; 3])) {
 #[test]
 fn outside_brushes_mark_where_particles_fall() {
     let (world, bounds) = courtyard(CONTENTS_OUTSIDE);
-    let outside = Outside::scan(&world, &[], bounds).unwrap();
+    let outside = Outside::scan(|p| world.point_contents(p), &[], bounds).unwrap();
     assert!(outside.point([100.0, 0.0, 0.0]));
     assert!(!outside.point([-100.0, 0.0, 0.0]));
     // A cell is outside by its centre: x 0-32's centre is in the brush.
@@ -159,7 +159,7 @@ fn outside_brushes_mark_where_particles_fall() {
 #[test]
 fn inside_brushes_mark_where_they_do_not() {
     let (world, bounds) = courtyard(CONTENTS_INSIDE);
-    let outside = Outside::scan(&world, &[], bounds).unwrap();
+    let outside = Outside::scan(|p| world.point_contents(p), &[], bounds).unwrap();
     assert!(!outside.point([100.0, 0.0, 0.0]));
     assert!(outside.point([-100.0, 0.0, 0.0]));
     assert!(outside.point([600.0, 0.0, 0.0]));
@@ -168,7 +168,7 @@ fn inside_brushes_mark_where_they_do_not() {
 #[test]
 fn a_map_without_either_is_all_outside() {
     let (world, bounds) = courtyard(CONTENTS_SOLID);
-    let outside = Outside::scan(&world, &[], bounds).unwrap();
+    let outside = Outside::scan(|p| world.point_contents(p), &[], bounds).unwrap();
     assert!(outside.point([100.0, 0.0, 0.0]) && outside.point([-100.0, 0.0, 0.0]));
 }
 
@@ -176,14 +176,22 @@ fn a_map_without_either_is_all_outside() {
 fn both_kinds_stop_the_load() {
     let (mut world, bounds) = courtyard(CONTENTS_OUTSIDE);
     world.add_box([-512.0; 3], [-256.0; 3], CONTENTS_INSIDE);
-    assert_eq!(Outside::scan(&world, &[], bounds), Err(MixedBrushes));
+    assert_eq!(
+        Outside::scan(|p| world.point_contents(p), &[], bounds),
+        Err(MixedBrushes)
+    );
 }
 
 #[test]
 fn zones_limit_the_scan() {
     let (world, bounds) = courtyard(CONTENTS_OUTSIDE);
     // One zone over x 256-512 only: points beyond it count as inside.
-    let outside = Outside::scan(&world, &[([256.0, -512.0, -512.0], [512.0; 3])], bounds).unwrap();
+    let outside = Outside::scan(
+        |p| world.point_contents(p),
+        &[([256.0, -512.0, -512.0], [512.0; 3])],
+        bounds,
+    )
+    .unwrap();
     assert!(outside.point([300.0, 0.0, 0.0]));
     assert!(!outside.point([100.0, 0.0, 0.0]));
 }

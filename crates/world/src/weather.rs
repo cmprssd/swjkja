@@ -17,10 +17,9 @@
 //! Left out: `fx_puff` (`SP_CreatePuffSystem`), multiplayer's spawners, and the
 //! cached `.weather` file (it holds what the scan finds).
 
-use swjkja_bsp::{Entity, Model};
+use swjkja_bsp::{Bsp, Entity, Model};
 
 use crate::Vec3;
-use crate::collision::Collision;
 use crate::static_model::{angles_to_axis, atof, spawns_at, vector_prefix};
 use crate::style::atoi;
 
@@ -309,12 +308,90 @@ pub struct Outside {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MixedBrushes;
 
+/// The world brushes' contents at a point, found through the map's BSP tree
+/// (`CM_PointContents` with model 0): the brushes of the leaf holding the point.
+pub struct PointContents {
+    nodes: Vec<(Vec3, f32, [i32; 2])>,
+    /// Per leaf: its brushes' indexes into `brushes`.
+    leaves: Vec<Vec<usize>>,
+    /// Per brush: its contents and planes.
+    brushes: Vec<(i32, Vec<(Vec3, f32)>)>,
+}
+
+impl PointContents {
+    pub fn new(bsp: &Bsp) -> Self {
+        let range = |first: i32, n: i32| first.max(0) as usize..(first.max(0) + n.max(0)) as usize;
+        let plane = |i: i32| {
+            let p = bsp.planes[i as usize];
+            (p.normal, p.dist)
+        };
+        Self {
+            nodes: bsp
+                .nodes
+                .iter()
+                .map(|n| {
+                    let (normal, dist) = plane(n.plane);
+                    (normal, dist, n.children)
+                })
+                .collect(),
+            leaves: bsp
+                .leafs
+                .iter()
+                .map(|l| {
+                    bsp.leaf_brushes[range(l.first_leaf_brush, l.num_leaf_brushes)]
+                        .iter()
+                        .map(|&b| b as usize)
+                        .collect()
+                })
+                .collect(),
+            brushes: bsp
+                .brushes
+                .iter()
+                .map(|b| {
+                    let planes = bsp.brush_sides[range(b.first_side, b.num_sides)]
+                        .iter()
+                        .map(|s| plane(s.plane))
+                        .collect();
+                    (bsp.shaders[b.shader as usize].content_flags, planes)
+                })
+                .collect(),
+        }
+    }
+
+    /// The contents of the brushes holding `p` in its leaf, on their faces
+    /// included; 0 for a map without nodes.
+    pub fn at(&self, p: Vec3) -> i32 {
+        if self.nodes.is_empty() {
+            return 0;
+        }
+        // `CM_PointLeafnum_r`: in front of a node's plane (or on it) goes to its
+        // first child.
+        let mut num = 0i32;
+        while num >= 0 {
+            let (normal, dist, children) = self.nodes[num as usize];
+            let d = normal[0] * p[0] + normal[1] * p[1] + normal[2] * p[2] - dist;
+            num = if d < 0.0 { children[1] } else { children[0] };
+        }
+        let Some(leaf) = self.leaves.get((-1 - num) as usize) else {
+            return 0;
+        };
+        leaf.iter()
+            .filter_map(|&b| self.brushes.get(b))
+            .filter(|(_, planes)| {
+                planes
+                    .iter()
+                    .all(|&(n, d)| n[0] * p[0] + n[1] * p[1] + n[2] * p[2] <= d)
+            })
+            .fold(0, |c, (contents, _)| c | contents)
+    }
+}
+
 impl Outside {
-    /// Scans the map's world brushes (`CM_PointContents` at each cell's centre)
-    /// over `zones` (the `zone` commands' boxes, [`MAX_WEATHER_ZONES`] at most), or
-    /// over `world_bounds` (the world model's) when there are none.
+    /// Scans the world brushes' `contents` at each cell's centre over `zones` (the
+    /// `zone` commands' boxes, [`MAX_WEATHER_ZONES`] at most), or over
+    /// `world_bounds` (the world model's) when there are none.
     pub fn scan(
-        collision: &Collision,
+        contents: impl Fn(Vec3) -> i32,
         zones: &[(Vec3, Vec3)],
         world_bounds: (Vec3, Vec3),
     ) -> Result<Self, MixedBrushes> {
@@ -336,7 +413,7 @@ impl Outside {
                                 y as f32 * CELL_SIZE + base[1],
                                 ((z << 5) + q) as f32 * CELL_SIZE + base[2],
                             ];
-                            let contents = collision.point_contents(p);
+                            let contents = contents(p);
                             if contents & (CONTENTS_INSIDE | CONTENTS_OUTSIDE) == 0 {
                                 continue;
                             }
@@ -421,5 +498,38 @@ mod tests {
         assert_eq!(snap(-49.5), -64.0);
         assert_eq!(snap(-16.0), 0.0);
         assert_eq!(snap(-17.0), -32.0);
+    }
+
+    /// A box from `mins` to `maxs`, its sides in the compiler's order.
+    fn block(contents: i32, mins: Vec3, maxs: Vec3) -> (i32, Vec<(Vec3, f32)>) {
+        let mut planes = Vec::new();
+        for i in 0..3 {
+            let mut n = [0.0; 3];
+            n[i] = -1.0;
+            planes.push((n, -mins[i]));
+            n[i] = 1.0;
+            planes.push((n, maxs[i]));
+        }
+        (contents, planes)
+    }
+
+    #[test]
+    fn point_contents_are_the_brushes_of_the_points_leaf() {
+        // One node splitting at x = 0: leaf 0 in front holds an outside brush,
+        // leaf 1 behind an inside brush (also reaching into the front: not in its
+        // leaf, so not seen from there).
+        let contents = PointContents {
+            nodes: vec![([1.0, 0.0, 0.0], 0.0, [-1, -2])],
+            leaves: vec![vec![0], vec![1]],
+            brushes: vec![
+                block(CONTENTS_OUTSIDE, [0.0, -64.0, -64.0], [100.0, 64.0, 64.0]),
+                block(CONTENTS_INSIDE, [-100.0, -64.0, -64.0], [50.0, 64.0, 64.0]),
+            ],
+        };
+        assert_eq!(contents.at([25.0, 0.0, 0.0]), CONTENTS_OUTSIDE);
+        assert_eq!(contents.at([-50.0, 0.0, 0.0]), CONTENTS_INSIDE);
+        assert_eq!(contents.at([150.0, 0.0, 0.0]), 0);
+        // On the node's plane: in front; on the brush's face: inside it.
+        assert_eq!(contents.at([0.0, 0.0, 64.0]), CONTENTS_OUTSIDE);
     }
 }
