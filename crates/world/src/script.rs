@@ -13,7 +13,10 @@
 //! until one waits. Frames in which nothing can change are skipped.
 //!
 //! What scripts do to NPCs is modelled: their animations and hold times, what they
-//! look at (`SET_LOOK_TARGET`), whether they are drawn with more light
+//! look at (`SET_LOOK_TARGET`), the way they turn (`SET_DYAW`, `SET_DPITCH`,
+//! `SET_VIEWTARGET`, at `SET_YAWSPEED`: `NPC_UpdateAngles` turns their view a step
+//! a frame, which a frozen AI's think still does, and the task completes the frame
+//! it finds the view there), whether they are drawn with more light
 //! (`SET_MORELIGHT`), the tasks scripts wait for (an animation's completes
 //! when its timer runs out, a voice line's when it has played), timed waits, loops,
 //! conditions, task groups, signals, `use` of other script runners (and the uses
@@ -37,7 +40,7 @@ use swjkja_icarus::{Block, Member, Node, id};
 
 use crate::Vec3;
 use crate::brush_entity::{Motion, Slide, slid};
-use crate::static_model::Pose;
+use crate::static_model::{Pose, angle_normalize180, atof, vectoangles};
 
 /// The level time (ms) of the server's first frame on a map: four settling frames
 /// from 1000 ms 100 ms apart and one more at 1400 ms leave the clock at 1500, and
@@ -83,7 +86,7 @@ pub struct Change {
 
 /// The legs' and the torso's animations over time, from the first frame, and what
 /// the NPC looks at.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Timeline {
     pub legs: Vec<Change>,
     pub torso: Vec<Change>,
@@ -98,6 +101,9 @@ pub struct Timeline {
     /// drops every bolted model, `G_RemoveWeaponModels`; another weapon brings one
     /// back): from when (ms, on the client's clock) and whether it is unarmed.
     pub unarmed: Vec<(i32, bool)>,
+    /// Its yaw (`ps.viewangles`) after each level frame that turns it: the level
+    /// time and the yaw (degrees, -180..180).
+    pub yaw: Vec<(i32, f32)>,
 }
 
 impl Timeline {
@@ -111,6 +117,29 @@ impl Timeline {
     pub fn unarmed_at(&self, time: i32) -> bool {
         let after = self.unarmed.partition_point(|(start, _)| *start <= time);
         after.checked_sub(1).is_some_and(|i| self.unarmed[i].1)
+    }
+
+    /// Its turns, for an NPC that begins facing `yaw`, as cgame draws them: from
+    /// each frame's yaw to the next over the 50 ms between their snapshots
+    /// (`CG_InterpolateEntityPosition`'s `LerpAngle`, the shorter way round), as
+    /// angles (pitch and roll 0: its legs, `CG_G2PlayerAngles`).
+    pub fn turns(&self, yaw: f32) -> Vec<Slide> {
+        let mut from = yaw;
+        self.yaw
+            .iter()
+            .map(|&(level, to)| {
+                let to = from + angle_subtract(to, from);
+                let slide = Slide {
+                    start: level - FRAME_MS,
+                    from: [0.0, from, 0.0],
+                    to: [0.0, to, 0.0],
+                    duration: FRAME_MS,
+                    linear: true,
+                };
+                from = to;
+                slide
+            })
+            .collect()
     }
 
     /// The name of what the NPC looks at at `time`, if anything.
@@ -149,6 +178,14 @@ pub type Holds<'a> = &'a dyn Fn(&str) -> Option<(i32, i32)>;
 const BOTH: usize = 0;
 const LOWER: usize = 1;
 const UPPER: usize = 2;
+/// The slot a turn's completion is kept in (`TID_ANGLE_FACE`).
+const FACE: usize = 3;
+
+/// `MIN_ANGLE_ERROR`: a view this close to where it is turning to is there.
+const MIN_ANGLE_ERROR: f32 = 0.01;
+/// How far a script may pitch an NPC's view (`Q3_SetDPitch`: one degree inside
+/// its head's range, `headPitchRangeUp` and `Down`, 45 unless its block says).
+const PITCH_RANGE: f32 = 44.0;
 
 /// `PM_StandingAnim`.
 fn standing(anim: &str) -> bool {
@@ -171,20 +208,18 @@ fn idle_for(anim: &str) -> Option<&'static str> {
 }
 
 /// The `set` commands whose task the game completes later (those `Set` returns from
-/// without calling back) and that nothing here completes: they move or turn the NPC.
+/// without calling back) and that nothing here completes: they move the NPC or
+/// wait on its AI.
 fn never_completes(name: &str) -> bool {
     matches!(
         name,
         "SET_ANIMFRAME"
             | "SET_BEHAVIOR_STATE"
-            | "SET_DPITCH"
-            | "SET_DYAW"
             | "SET_ENDFRAME"
             | "SET_LOCATION"
             | "SET_NAVGOAL"
             | "SET_TELEPORT_DEST"
             | "SET_TEMP_BSTATE"
-            | "SET_VIEWTARGET"
             | "SET_WIDTH"
     )
 }
@@ -317,8 +352,15 @@ struct Body<'a> {
     unarmed: Vec<(i32, bool)>,
     /// `client->idleTime`.
     idle_time: i32,
-    /// The task each animation slot waits on, if any.
-    slots: [Option<u32>; 3],
+    /// The task each slot (the animations', the turn's) waits on, if any.
+    slots: [Option<u32>; 4],
+    /// Its view's pitch and yaw (`ps.viewangles`) and where it turns them to
+    /// (`NPCInfo->desiredPitch`, `desiredYaw`).
+    view: [f32; 2],
+    desired: [f32; 2],
+    /// `stats.yawSpeed`.
+    yaw_speed: f32,
+    yaw: Vec<(i32, f32)>,
 }
 
 /// An entity scripts move: where it spawns, its moves and turns, and the tasks
@@ -405,6 +447,57 @@ fn client_time(level: i32) -> i32 {
 }
 
 impl<'a> Body<'a> {
+    /// Whether its view is where it turns to (`NPC_UpdateAngles`' `exact`).
+    fn exact(&self) -> bool {
+        (0..2).all(|k| angle_delta(self.view[k], self.desired[k]).abs() <= MIN_ANGLE_ERROR)
+    }
+
+    /// `NPC_UpdateAngles` and the movement frame's `PM_UpdateViewAngles` in level
+    /// frame `level`: each angle off by more than [`MIN_ANGLE_ERROR`] turns toward
+    /// where it is going by `(60 + 3 yawSpeed) / 20` degrees (pitch at the same
+    /// speed), the view kept in 65536ths of a turn (the command's angles, a
+    /// `short`); a yaw it turns is kept. Returns whether it was already there.
+    fn update_angles(&mut self, level: i32) -> bool {
+        let exact = self.exact();
+        let yaw = self.view[1];
+        let decay = (60.0 + self.yaw_speed * 3.0) * (50.0 / 1000.0);
+        for k in 0..2 {
+            let target = self.desired[k];
+            let mut error = angle_delta(self.view[k], target);
+            if error.abs() > MIN_ANGLE_ERROR {
+                error = if error < 0.0 {
+                    (error + decay).min(0.0)
+                } else {
+                    (error - decay).max(0.0)
+                };
+            }
+            // ANGLE2SHORT, then SHORT2ANGLE of the short.
+            let short = ((target + error) * 65536.0 / 360.0) as i32 as i16;
+            self.view[k] = short as f32 * (360.0 / 65536.0);
+        }
+        if !exact && self.view[1] != yaw {
+            self.yaw.push((level, self.view[1]));
+        }
+        exact
+    }
+
+    /// `Q3_SetDYaw` (no NPC here has an enemy).
+    fn set_yaw(&mut self, yaw: f32) {
+        self.desired[1] = yaw;
+    }
+
+    /// `Q3_SetDPitch`: within [`PITCH_RANGE`] of level.
+    fn set_pitch(&mut self, pitch: f32) {
+        let pitch = angle_normalize180(pitch);
+        self.desired[0] = if pitch < -1.0 {
+            pitch.max(-PITCH_RANGE)
+        } else if pitch > 1.0 {
+            pitch.min(PITCH_RANGE)
+        } else {
+            pitch
+        };
+    }
+
     fn play(&mut self, part: usize, anim: &str, level: i32) {
         let start = client_time(level);
         let p = &mut self.parts[part];
@@ -669,7 +762,49 @@ impl<'a> Actor<'a> {
                 }
                 false
             }
+            "SET_DYAW" | "SET_DPITCH" => {
+                let angle = atof(&text);
+                let body = self.body.as_mut().unwrap();
+                if name == "SET_DYAW" {
+                    body.set_yaw(angle);
+                } else {
+                    body.set_pitch(angle);
+                }
+                self.slot(FACE, task);
+                true
+            }
+            "SET_YAWSPEED" => {
+                self.body.as_mut().unwrap().yaw_speed = atof(&text);
+                false
+            }
             _ => never_completes(name),
+        }
+    }
+
+    /// `Q3_SetViewTarget`, as task `task`: the view turns toward `target`'s eyes
+    /// from its own (yaw and pitch), if found; the task waits for the turn either
+    /// way. An actor without a body completes it.
+    fn view_target(&mut self, target: Option<Vec3>, task: u32) -> bool {
+        let Some(body) = &mut self.body else {
+            return false;
+        };
+        if let Some(target) = target {
+            let to = vectoangles([0, 1, 2].map(|k| target[k] - body.stance.eyes[k]));
+            body.set_yaw(to[1]);
+            body.set_pitch(to[0]);
+        }
+        self.slot(FACE, task);
+        true
+    }
+
+    /// The turn of level frame `level` (`NPC_UpdateAngles`, before the movement
+    /// frame): a view already where it turns to completes the turn's task.
+    fn turn(&mut self, level: i32) {
+        let Some(body) = &mut self.body else { return };
+        if body.update_angles(level)
+            && let Some(task) = body.slots[FACE]
+        {
+            self.complete(task);
         }
     }
 
@@ -832,6 +967,9 @@ impl<'a> Actor<'a> {
             }
         }
         let Some(body) = &self.body else { return next };
+        if body.slots[FACE].is_some() || !body.exact() {
+            at(level + FRAME_MS);
+        }
         for p in &body.parts {
             if p.timer > 0 {
                 at(frame_from(level + p.timer));
@@ -1235,7 +1373,13 @@ impl<'a> World<'a> {
                         } else {
                             let mut at = 1;
                             let v = value(&b.members, &mut at);
-                            a.set(text(b, 0), v.as_ref(), task, level)
+                            if text(b, 0) == "SET_VIEWTARGET" {
+                                let name = v.as_ref().map(Value::text).unwrap_or_default();
+                                let eyes = self.eyes_of(&name);
+                                self.actors[i].view_target(eyes, task)
+                            } else {
+                                a.set(text(b, 0), v.as_ref(), task, level)
+                            }
                         };
                         if !pending {
                             self.actors[i].complete(task);
@@ -1346,6 +1490,15 @@ impl<'a> World<'a> {
         true
     }
 
+    /// The eyes of the first NPC named `name` (`G_Find` by targetname, ignoring
+    /// case), as it stands; other entities are not found here.
+    fn eyes_of(&self, name: &str) -> Option<Vec3> {
+        self.actors
+            .iter()
+            .filter(|a| a.name.is_some_and(|n| n.eq_ignore_ascii_case(name)))
+            .find_map(|a| Some(a.body.as_ref()?.stance.eyes))
+    }
+
     /// `G_CheckTasksCompleted` for actor `i` at `level`: a voice line played out
     /// completes its task.
     fn check_voice(&mut self, i: usize, level: i32) {
@@ -1372,6 +1525,7 @@ impl<'a> World<'a> {
         }
         for i in self.runners..self.actors.len() {
             self.check_voice(i, level);
+            self.actors[i].turn(level);
             self.actors[i].movement(level, msec);
             self.actors[i].reach(level);
             self.script(i, level, 0);
@@ -1460,7 +1614,11 @@ pub fn timelines(
             more_light: Vec::new(),
             unarmed: Vec::new(),
             idle_time: n.stance.still_since,
-            slots: [None; 3],
+            slots: [None; 4],
+            view: [0.0, n.stance.yaw],
+            desired: [0.0, n.stance.yaw],
+            yaw_speed: n.stance.yaw_speed,
+            yaw: Vec::new(),
         };
         actors.push(Actor::new(n.stance.name.as_deref(), Some(body), n.script));
     }
@@ -1564,6 +1722,7 @@ pub fn timelines(
                 look: b.look,
                 more_light: b.more_light,
                 unarmed: b.unarmed,
+                yaw: b.yaw,
             }
         })
         .collect();

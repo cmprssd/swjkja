@@ -72,9 +72,11 @@ for map in $maps; do
 		# and droids, which the player at the start is in none of).
 		if [ "$sp" = 1 ] && [ "$scripts" != 1 ]; then echo "exitview"; echo "wait 300"; echo "exitview"; echo "wait 100"; fi
 		# With SCRIPTS=1 the views must not come before the game reaches their
-		# time: wait that long at 60 frames a second (com_maxfps), at least.
+		# time, which the game stops at: waits count frames, and the frames do not
+		# keep to com_maxfps (a 47.5 s view waited 3811 frames in 35 s, the
+		# screenshot 13 s early), so wait 150 frames a second of the view's time.
 		if [ "$sp" = 1 ] && [ "$scripts" = 1 ]; then
-			grep -v '^#' "$views" | awk -v m="$map" '$1 == m {print "wait " int($9 * 60 / 1000) + 60; exit}'
+			grep -v '^#' "$views" | awk -v m="$map" '$1 == m {print "wait " int($9 * 150 / 1000) + 300; exit}'
 		fi
 		if [ "$sp" = 1 ]; then echo "noclip"; fi
 		# No console notify lines (the patched cgame logs NPC timing to the console).

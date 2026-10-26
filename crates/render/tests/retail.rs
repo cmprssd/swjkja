@@ -799,6 +799,68 @@ fn a_loop_of_none_runs_once_and_npcs_begin_200_ms_on() {
     }
 }
 
+/// academy4's intro turns Jaden (`npc_fakePlayer1`) from 325 to 270 degrees
+/// toward Luke ("jaden turn": `SET_DYAW 270`), from 47,750 to 47,900 ms; his
+/// elbow then stands where academy4_jaden_turned's reference
+/// (bench/reference/turn-views.txt) has it, and the hall's floor shows there
+/// unturned.
+#[test]
+fn a_script_turns_an_npc_to_its_yaw() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let gpu = Gpu::new_headless().unwrap();
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let shaders = swjkja_shader::ShaderText::load(&vfs).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/academy4.bsp").unwrap()).unwrap();
+    let world = swjkja_world::World::load(&bsp, &Default::default());
+    let mut textures = TextureSet::new(&gpu).unwrap();
+    let time = 48.5;
+    let mut renderer = WorldRenderer::new(
+        &gpu,
+        &mut textures,
+        &vfs,
+        &shaders,
+        &bsp,
+        &world,
+        "maps/academy4.bsp",
+        time,
+    )
+    .unwrap();
+    let (width, height) = (1280, 720);
+    let target = Target::new(&gpu, width, height).unwrap();
+    let depth_slot = textures.add_view(target.depth_copy.view);
+    let camera = Camera::new([-1480.0, -1110.0, 720.0], [5.0, 90.0, 0.0], width, height);
+    target
+        .render(&gpu, renderer.clear_color(), |frame| {
+            renderer
+                .draw(frame, &textures, &camera, time, depth_slot)
+                .unwrap()
+        })
+        .unwrap();
+    let rgba = target.read_rgba(&gpu).unwrap();
+    // The mean colour over his elbow (x 670-689, y 410-429): 35.90 38.65 36.12
+    // unturned.
+    let mut sum = [0u64; 3];
+    for y in 410..430 {
+        for x in 670..690 {
+            let p = (y * width as usize + x) * 4;
+            for (c, s) in sum.iter_mut().enumerate() {
+                *s += u64::from(rgba[p + c]);
+            }
+        }
+    }
+    let ours = sum.map(|s| s as f32 / (20.0 * 20.0));
+    let reference = [143.74, 148.41, 103.84];
+    for (got, want) in ours.iter().zip(reference) {
+        assert!(
+            (got - want).abs() <= 0.3,
+            "the mean colour over his elbow {ours:?}, the reference {reference:?}"
+        );
+    }
+}
+
 /// A map with a sky portal (`misc_skyportal`) shows the scene from there as its sky,
 /// with the view's angles, and the view's own sky surfaces draw nothing
 /// (`CG_DrawSkyBoxPortal`). t3_hevil's portal looks from a room with the sky box and

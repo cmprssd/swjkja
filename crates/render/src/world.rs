@@ -932,12 +932,13 @@ impl WorldRenderer {
             None => placed.get(&i).unwrap_or(&world.surfaces[i].geometry),
         };
         let surface_count = first_model_surface + models.pieces.len();
-        // A moving model's pieces are drawn by its bone, among the turning entities'.
+        // A moving model's pieces are drawn by its bone, among the turning entities';
+        // a posed NPC's bones are turned with it.
         let moved_bone: Vec<Option<usize>> = models
             .instances
             .iter()
             .map(|m| {
-                if m.motion.is_empty() {
+                if m.motion.is_empty() || m.rig.is_some() {
                     return None;
                 }
                 for piece in m.lods.iter().flat_map(|l| l.pieces.clone()) {

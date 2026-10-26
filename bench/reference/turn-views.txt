@@ -1,0 +1,10 @@
+# Views of NPCs that scripts turn, in the format of views.txt; captured as
+# script-views.txt is (SCRIPTS=1 ENTITIES=1 bench/capture-reference.sh
+# reference/turn-views.txt). A map's views share one time, so a view at another
+# time than script-views.txt's view of the same map needs a file of its own.
+# academy4_jaden_turned looks at Jaden (npc_fakePlayer1) from the front after
+# academy4's intro has turned him toward Luke ("jaden turn": SET_DYAW 270 at yaw
+# speed 90, 16.5 degrees a frame from 325, from 47,750 to 47,900 ms here), his head
+# turned to Luke; the voice lines before it end a frame apart from run to run, so
+# the view is taken once the turn is over.
+academy4  academy4_jaden_turned   -1480 -1110 720   5 90 0   48500

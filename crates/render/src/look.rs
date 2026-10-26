@@ -19,6 +19,7 @@
 
 use swjkja_model::gla::{Gla, Mat34};
 use swjkja_world::static_model::angles_to_axis;
+pub use swjkja_world::static_model::vectoangles;
 
 pub type Vec3 = [f32; 3];
 
@@ -63,31 +64,6 @@ fn subtract(a: f32, b: f32) -> f32 {
         d += 360.0;
     }
     d
-}
-
-/// `vectoangles`: the pitch and yaw `v` points along (roll 0).
-pub fn vectoangles(v: Vec3) -> Vec3 {
-    let (yaw, pitch) = if v[0] == 0.0 && v[1] == 0.0 {
-        (0.0, if v[2] > 0.0 { 90.0 } else { 270.0 })
-    } else {
-        let mut yaw = if v[0] != 0.0 {
-            v[1].atan2(v[0]).to_degrees()
-        } else if v[1] > 0.0 {
-            90.0
-        } else {
-            270.0
-        };
-        if yaw < 0.0 {
-            yaw += 360.0;
-        }
-        let forward = (v[0] * v[0] + v[1] * v[1]).sqrt();
-        let mut pitch = v[2].atan2(forward).to_degrees();
-        if pitch < 0.0 {
-            pitch += 360.0;
-        }
-        (yaw, pitch)
-    };
-    [-pitch, yaw, 0.0]
 }
 
 fn clamp(v: Vec3, min: Vec3, max: Vec3) -> Vec3 {

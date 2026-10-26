@@ -112,7 +112,7 @@ pub struct Ghoul2 {
 /// (`PM_SetAnimFinal`), every other bone playing its parent's. A part whose
 /// animation the skeleton lacks stays in "BOTH_STAND1", as it started. What it
 /// plays over time is [`crate::script::timeline`]'s.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Pose {
     pub legs: &'static str,
     pub torso: &'static str,
@@ -126,6 +126,13 @@ pub struct Pose {
     /// Whether its class's bones are too odd for cgame to turn its spine against
     /// its "Motion" bone (`G_ClassHasBadBones`).
     pub bad_bones: bool,
+    /// The way it faces as it begins (degrees: its spawner's yaw).
+    pub yaw: f32,
+    /// How fast it turns (`stats.yawSpeed`, [`crate::npc::NpcLook::yaw_speed`]).
+    pub yaw_speed: f32,
+    /// Where a script's view target is measured from or to (`SET_VIEWTARGET`):
+    /// its origin raised by its view height (`maxs[2]` + `STANDARD_VIEWHEIGHT_OFFSET`).
+    pub eyes: Vec3,
 }
 
 /// A Ghoul2 model bolted to another (`G_CreateG2AttachedWeaponModel`), posed at
@@ -183,6 +190,31 @@ pub fn angles_to_axis(angles: Vec3) -> [Vec3; 3] {
         right.map(|x| -x),
         [cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp],
     ]
+}
+
+/// `vectoangles`: the pitch and yaw `v` points along (roll 0).
+pub fn vectoangles(v: Vec3) -> Vec3 {
+    let (yaw, pitch) = if v[0] == 0.0 && v[1] == 0.0 {
+        (0.0, if v[2] > 0.0 { 90.0 } else { 270.0 })
+    } else {
+        let mut yaw = if v[0] != 0.0 {
+            v[1].atan2(v[0]).to_degrees()
+        } else if v[1] > 0.0 {
+            90.0
+        } else {
+            270.0
+        };
+        if yaw < 0.0 {
+            yaw += 360.0;
+        }
+        let forward = (v[0] * v[0] + v[1] * v[1]).sqrt();
+        let mut pitch = v[2].atan2(forward).to_degrees();
+        if pitch < 0.0 {
+            pitch += 360.0;
+        }
+        (yaw, pitch)
+    };
+    [-pitch, yaw, 0.0]
 }
 
 /// `CG_ParseEntityFromSpawnVars`'s filters: whether `e` spawns in `gametype` (an
@@ -611,7 +643,7 @@ fn rack_item(
 }
 
 /// `AngleNormalize180`: `angle` within -180..=180, in 65536ths of a turn.
-fn angle_normalize180(angle: f32) -> f32 {
+pub(crate) fn angle_normalize180(angle: f32) -> f32 {
     let a = (360.0f32 / 65536.0) * ((angle * (65536.0f32 / 360.0)) as i32 & 65535) as f32;
     if a > 180.0 { a - 360.0 } else { a }
 }

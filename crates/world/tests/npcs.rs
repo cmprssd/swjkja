@@ -326,6 +326,22 @@ fn looks_come_from_the_first_block_of_the_name() {
 }
 
 #[test]
+fn npcs_turn_at_their_blocks_yaw_speed_stormtroopers_slower() {
+    let parms = b"Trooper { playerModel stormtrooper class CLASS_STORMTROOPER yawSpeed 120 }
+        Guard { playerModel imperial yawSpeed 50 }
+        Droid { playerModel imperial yawSpeed 0 }";
+    let entities = ["trooper", "guard", "droid"].map(|t| npc("NPC_spawner", &[("NPC_type", t)]));
+    let models = npc_models(&entities, SP, parms, b"", &Collision::default(), &|_| None);
+    let speeds: Vec<f32> = models
+        .iter()
+        .map(|m| m.ghoul2.as_ref().unwrap().pose.as_ref().unwrap().yaw_speed)
+        .collect();
+    // Three quarters for a stormtrooper at the easiest skill; a speed of 0 is
+    // ignored.
+    assert_eq!(speeds, [90.0, 50.0, 90.0]);
+}
+
+#[test]
 fn npcs_stand_upright_at_their_spawner_scaled_from_their_feet() {
     let entities = [
         npc(
@@ -358,8 +374,18 @@ fn npcs_stand_upright_at_their_spawner_scaled_from_their_feet() {
         g.skin.as_deref(),
         Some("models/players/stormtrooper/model_officer.skin")
     );
-    // A blaster in the right hand, legs apart, the torso holding it idle.
-    assert_eq!(g.pose, Some(pose("BOTH_STAND3", "TORSO_WEAPONIDLE3")));
+    // A blaster in the right hand, legs apart, the torso holding it idle; facing
+    // its spawner's yaw, turning at the default speed, its eyes 4 units below its
+    // box's top (from its origin before the scale lifts it).
+    assert_eq!(
+        g.pose,
+        Some(Pose {
+            yaw: 90.0,
+            yaw_speed: 90.0,
+            eyes: [1.0, 2.0, 39.0],
+            ..pose("BOTH_STAND3", "TORSO_WEAPONIDLE3")
+        })
+    );
     assert_eq!(
         g.attached,
         [Attached {
@@ -414,6 +440,7 @@ fn pose(legs: &'static str, torso: &'static str) -> Pose {
         script: None,
         name: None,
         bad_bones: false,
+        ..Pose::default()
     }
 }
 

@@ -493,9 +493,11 @@ impl StaticModels {
                         eprintln!("warning: model {}: a Ghoul2 mesh placed as an MD3", p.model);
                         continue;
                     };
+                    let mut turns = Vec::new();
                     let rig = g.pose.as_ref().map(|pose| {
                         let files = files[n].as_ref().expect("an NPC's animations");
                         let timeline = timelines.next().expect("an NPC's timeline");
+                        turns = timeline.turns(pose.yaw);
                         Rig::new(m, pose, files, timeline)
                     });
                     // Baked with its spine turned, as drawn; its look is resolved later.
@@ -536,6 +538,10 @@ impl StaticModels {
                         rig.is_some(),
                         &mut pieces,
                     );
+                    if let Some(pose) = &g.pose {
+                        instance.motion.turns = turns;
+                        instance.angles = [0.0, pose.yaw, 0.0];
+                    }
                     instance.rig = rig.map(|rig| Rig { attached, ..rig });
                     instances.push(instance);
                     continue;
@@ -678,13 +684,18 @@ impl StaticModels {
             return Vec::new();
         };
         let poses = rig.poses(time, &self.bone_overrides(n, time));
-        poses.iter().flatten().map(|b| place(m, b)).collect()
+        let moved = m.moved(time);
+        poses
+            .iter()
+            .flatten()
+            .map(|b| place(m, moved.as_ref(), b))
+            .collect()
     }
 
-    /// Where instance `n`'s eyes are with its body posed by `body`, and the angles
-    /// they face (`renderInfo.eyePoint`, `eyeAngles`): its "*head_eyes" tag, or its
-    /// origin and angles without one.
-    fn eyes(&self, n: usize, body: &[Mat34]) -> (Vec3, Vec3) {
+    /// Where instance `n`'s eyes are at game time `time` with its body posed by
+    /// `body`, and the angles they face (`renderInfo.eyePoint`, `eyeAngles`): its
+    /// "*head_eyes" tag, or its origin and angles without one.
+    fn eyes(&self, n: usize, time: i32, body: &[Mat34]) -> (Vec3, Vec3) {
         let m = &self.instances[n];
         let tag = m.rig.as_ref().and_then(|rig| {
             let eyes = rig.eyes?;
@@ -692,7 +703,7 @@ impl StaticModels {
         });
         match tag {
             Some(tag) => {
-                let tag = place(m, &tag);
+                let tag = place(m, m.moved(time).as_ref(), &tag);
                 ([0, 1, 2].map(|r| tag[r][3]), look::eye_angles(&tag))
             }
             None => (m.origin, look::vectoangles(m.axes[0])),
@@ -708,7 +719,7 @@ impl StaticModels {
         let goal = match &self.instances[target].rig {
             Some(t) => {
                 let overrides = t.overrides(time, t.spine_turn(time).as_ref(), None);
-                self.eyes(target, &t.body_pose(time, &overrides)).0
+                self.eyes(target, time, &t.body_pose(time, &overrides)).0
             }
             None => self.instances[target].origin,
         };
@@ -727,7 +738,7 @@ impl StaticModels {
         let settled = look::settle(goal, |l| {
             let overrides = rig.overrides(time, spine.as_ref(), Some(l));
             let body = gla.pose_chain(&gla::ROOT, &locals, &overrides, &rig.eye_chain);
-            self.eyes(n, &body)
+            self.eyes(n, time, &body)
         });
         Some(settled)
     }
@@ -752,7 +763,8 @@ impl StaticModels {
     pub fn shadow(&self, n: usize, time: i32, bones: Option<&[Mat34]>) -> Option<(Vec3, f32)> {
         let m = &self.instances[n];
         let rig = m.rig.as_ref()?;
-        let yaw = m.axes[0][1].atan2(m.axes[0][0]).to_degrees();
+        let yaw = slid(&m.motion.turns, time)
+            .map_or_else(|| m.axes[0][1].atan2(m.axes[0][0]).to_degrees(), |a| a[1]);
         let tag = match (rig.skeleton(time), rig.eyes) {
             (1, Some(eyes)) => {
                 let posed;
@@ -1451,13 +1463,22 @@ fn ghoul2_instance(
 }
 
 /// Bone or tag matrix `b` of instance `m`, from its model's space to the world's:
-/// after the instance's axes and origin.
-fn place(m: &Instance, b: &Mat34) -> Mat34 {
-    std::array::from_fn(|i| {
+/// after the instance's axes and origin, then by `moved`, where its moves and
+/// turns have taken it ([`Instance::moved`]).
+fn place(m: &Instance, moved: Option<&Mat34>, b: &Mat34) -> Mat34 {
+    let placed: Mat34 = std::array::from_fn(|i| {
         let t = [0, 1, 2].map(|k| m.axes[k][i]);
         let mut r: [f32; 4] =
             std::array::from_fn(|j| t[0] * b[0][j] + t[1] * b[1][j] + t[2] * b[2][j]);
         r[3] += m.origin[i];
+        r
+    });
+    let Some(p) = moved else {
+        return placed;
+    };
+    std::array::from_fn(|i| {
+        let mut r: [f32; 4] = std::array::from_fn(|j| (0..3).map(|k| p[i][k] * placed[k][j]).sum());
+        r[3] += p[i][3];
         r
     })
 }
@@ -1613,6 +1634,7 @@ mod tests {
             look: Vec::new(),
             more_light: Vec::new(),
             unarmed: Vec::new(),
+            yaw: Vec::new(),
         };
         let (at, stopped) = switches(&timeline, skeleton);
         assert_eq!(at, [(1550, 1), (9000, 0)]);
@@ -1632,6 +1654,7 @@ mod tests {
             look: Vec::new(),
             more_light: Vec::new(),
             unarmed: Vec::new(),
+            yaw: Vec::new(),
         };
         let (at, stopped) = switches(&timeline, skeleton);
         assert_eq!(at, [(1550, 1)]);
@@ -1647,6 +1670,7 @@ mod tests {
             look: Vec::new(),
             more_light: Vec::new(),
             unarmed: Vec::new(),
+            yaw: Vec::new(),
         };
         let (at, stopped) = switches(&timeline, skeleton);
         assert_eq!(at, [(0, 1)]);

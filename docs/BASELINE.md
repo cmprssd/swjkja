@@ -2308,3 +2308,25 @@ in real time; no fixed lag fits all six).
   views run no scripts.
 - `a_voice_line_holds_its_task_group_until_it_has_played`
   (`crates/world/tests/script.rs`) checks a line's task completing a frame later.
+
+## NPCs turned by their scripts, 2026-10-26
+
+academy4's intro turns Jaden (`npc_fakePlayer1`) toward Luke as Luke's fifth line
+starts ("jaden turn": `SET_DYAW 270`), at yaw speed 90: 16.5 degrees a frame from
+325, here from 47,750 to 47,900 ms, in the traced original from 47,800 to 47,950
+(its voice lines end a frame apart from run to run; DECISIONS.md, 2026-10-26).
+academy4_jaden_turned (`bench/reference/turn-views.txt`) looks at him from the
+front at 48,500 ms, his head turned to Luke.
+
+| View | Mean difference (unturned) | Pixels off by > 16 (unturned) |
+|------|------|------|
+| academy4_jaden_turned | 0.03 (1.13) | 0.0% (2.1%) |
+
+- The mean colour over his elbow (x 670-689, y 410-429) is 143.74 148.51 103.84
+  here, 143.74 148.41 103.84 in the reference, 35.90 38.65 36.12 unturned (the
+  floor behind). `a_script_turns_an_npc_to_its_yaw` (`crates/render/tests/retail.rs`)
+  checks it to 0.3.
+- No kept view changes: the 33 single-player views render pixel for pixel as
+  before (none reaches a turn); the 22 multiplayer views run no scripts.
+- The original's eyes face 276.9 degrees in the capture log (270, and 6.0 of his
+  look at Luke).
