@@ -1002,10 +1002,14 @@ fn rack_weapons_spread_as_the_original_spreads_them() {
     }
 }
 
-/// Rain only adds light (`GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE`): vjun1's hall
-/// (vjun1_hall in bench/reference/model-views.txt) drawn after 30 frames of rain is
-/// nowhere darker than without it, and its streaks brighten some of the frame.
-/// `render_world` leaves rain out (`draw_weather`), as the captures do.
+/// Rain only adds light (`GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE`): from vjun1_hall's
+/// eye (bench/reference/model-views.txt) turned round, out of the hall over the
+/// fogged air, the frame after 6 seconds of rain is nowhere darker than without
+/// it, and its streaks brighten some of it. (vjun1_hall's own view sees rain only
+/// within ~150 units of the eye: beyond, the hall is inside, as the map's shipped
+/// `maps/vjun1.weather` also says, and lower down the floor hides it; how many
+/// streaks fall that near is luck.) `render_world` leaves rain out
+/// (`draw_weather`), as the captures do.
 #[test]
 fn rain_adds_its_streaks_to_the_frame() {
     let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
@@ -1033,7 +1037,7 @@ fn rain_adds_its_streaks_to_the_frame() {
     let (width, height) = (1280, 720);
     let target = Target::new(&gpu, width, height).unwrap();
     let depth_slot = textures.add_view(target.depth_copy.view);
-    let camera = Camera::new([-7052.0, 468.0, 824.0], [10.0, 0.0, 0.0], width, height);
+    let camera = Camera::new([-7052.0, 468.0, 824.0], [10.0, 180.0, 0.0], width, height);
     let draw = |renderer: &mut WorldRenderer, at: f32| {
         target
             .render(&gpu, renderer.clear_color(), |frame| {
@@ -1048,9 +1052,12 @@ fn rain_adds_its_streaks_to_the_frame() {
         draw(&mut renderer, time);
     }
     let dry = target.read_rgba(&gpu).unwrap();
+    // Rain starts spread over the whole range and takes seconds to settle into
+    // falling from its spawn plane: 6 seconds of it, in 100 ms frames (the
+    // particles fall as fast, in units a second, whatever the frame's time).
     renderer.draw_weather = true;
-    for k in (0..30).rev() {
-        draw(&mut renderer, time - k as f32 * 0.016);
+    for k in (0..60).rev() {
+        draw(&mut renderer, time - k as f32 * 0.1);
     }
     let wet = target.read_rgba(&gpu).unwrap();
     let mut darker = 0;
