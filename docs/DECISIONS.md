@@ -1148,3 +1148,38 @@ and drawing such pipes some other way, would match no view held still.
   later in both traces; a second trace started his third at 23,350, the first at
   23,300), and no fixed lag fits all six; views late in an intro are better taken
   where nothing has just changed.
+
+## 2026-10-26: NPC AI next, turning first (chosen by the owner)
+
+- **Next task: NPC AI**, NPCs acting beyond their scripts' animations: behavior
+  states, turning and moving toward goals.
+- **First slice: turning** (`SET_DYAW`, `SET_VIEWTARGET`), over walking to navgoals
+  (`SET_NAVGOAL`, 226 retail scripts, which needs the NPC's `Pmove` and the
+  navigation). 41 retail scripts set a yaw, 22 a view target.
+- **Found: a frozen AI still turns.** `NPC_Think` with `d_npcfreeze` set runs
+  `NPC_UpdateAngles` and the movement frame before it returns, so the captures
+  (`d_npcfreeze 2`) turn NPCs as an unfrozen game does and complete their turns:
+  turning needs no new capture mode.
+
+## 2026-10-26: How turns are drawn and aimed (decided by Claude, pending review)
+
+- **The legs are drawn at the view's yaw**, from snapshot to snapshot
+  (`LerpAngle`). cgame's legs trail the view (by up to 60 degrees, catching up 10
+  degrees a rendered frame at most, the spine turned to make up the difference),
+  at a speed that depends on its frame rate; once the capture has stopped the
+  game they have caught up, as the settled look (2026-10-15) has.
+- **Pitch is turned but not drawn**: a view target's pitch (`SET_DPITCH`, within
+  44 degrees, the default head range; `.npc` blocks' ranges are not read) delays
+  the task as in the original, while the head and spine take no part of it.
+- **A view target is the first NPC of that name**, its eyes and the NPC's own
+  their origin raised by their view height (`maxs[2] - 4`), as the target stands:
+  the original measures to the target's `renderInfo.eyePoint`, which cgame sets
+  from its head as drawn. Other entities are not found here (the turn then
+  completes without turning, as one the original does not find).
+- **Yaw speed is the `.npc` block's "yawSpeed" (90 by default)**, three quarters of
+  it for stormtroopers, swamp troopers, imperial workers and "rodian2", as at the
+  easiest skill the captures play (`g_spskill 0`).
+- **Captures of late views wait longer**: `SCRIPTS=1` waited 60 frames a second of
+  the view's time, and a 47.5 s view on academy4 was taken 13 s early (the frames
+  do not keep to `com_maxfps`); it now waits 150 a second (the game stops itself at
+  the view's time).

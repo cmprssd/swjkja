@@ -66,6 +66,7 @@ fn stance(legs: &'static str, torso: &'static str) -> Pose {
         script: None,
         name: None,
         bad_bones: false,
+        ..Pose::default()
     }
 }
 
@@ -955,4 +956,141 @@ fn a_pinned_use_runs_its_runner_in_its_frame() {
     // Nothing is used before the frame after the first.
     let t = timelines(&[], &elevator_level(0), &|_| None);
     assert_eq!(t.used[0].at, 1600);
+}
+
+fn turner(name: &str, yaw: f32, eyes: [f32; 3]) -> Pose {
+    Pose {
+        yaw,
+        yaw_speed: 90.0,
+        eyes,
+        ..named(name)
+    }
+}
+
+fn set_float(name: &str, value: f32) -> Node {
+    command(id::SET, vec![text(name), float(value)])
+}
+
+/// An NPC's yaw after each frame that turns it ([`swjkja_world::script::Timeline::yaw`]).
+type Yaws = Vec<(i32, f32)>;
+
+/// The legs' animation starts of an NPC named "jaden" facing `yaw`, running
+/// `script`, with another NPC named "luke" whose eyes are at 0 100 0; and the
+/// yaws its turns leave it at.
+fn turned(yaw: f32, script: Vec<Node>) -> (Vec<(String, i32)>, Yaws) {
+    let jaden = turner("jaden", yaw, [0.0; 3]);
+    let luke = turner("luke", 0.0, [0.0, 100.0, 0.0]);
+    let npcs = [&jaden, &luke].map(|pose| Npc {
+        stance: pose,
+        script: pose
+            .name
+            .as_deref()
+            .filter(|n| *n == "jaden")
+            .map(|_| &script[..]),
+        holds: &holds,
+    });
+    let t = timelines(&npcs, &Level::default(), &|_| None)
+        .npcs
+        .remove(0);
+    let early = t.legs.iter().filter(|c| c.start < 5000);
+    (early.map(|c| (c.anim.clone(), c.start)).collect(), t.yaw)
+}
+
+/// A script that does `turn` in a task group, waits for it, then plays BOTH_CIN_1.
+fn turn_then_play(turn: Vec<Node>) -> Vec<Node> {
+    let mut script = vec![task("turn", turn)];
+    script.extend(do_and_wait("turn"));
+    script.push(set("SET_ANIM_BOTH", "BOTH_CIN_1"));
+    script
+}
+
+fn yaws(turns: &[(i32, f32)]) -> Vec<(i32, f32)> {
+    turns
+        .iter()
+        .map(|&(t, y)| (t, (y * 1000.0).round() / 1000.0))
+        .collect()
+}
+
+#[test]
+fn npcs_turn_to_a_scripts_yaw_a_step_a_frame_and_go_on_once_there() {
+    // From 325 to 270 at yaw speed 90: (60 + 3 * 90) / 20 = 16.5 degrees a frame,
+    // the view in 65536ths of a turn, from the frame after the script set it.
+    let (anims, turns) = turned(325.0, turn_then_play(vec![set_float("SET_DYAW", 270.0)]));
+    assert_eq!(
+        yaws(&turns),
+        [
+            (1600, -51.504),
+            (1650, -68.005),
+            (1700, -84.507),
+            (1750, -90.0)
+        ]
+    );
+    // The frame after it got there finds it exact and completes the turn: the
+    // script goes on at 1800 (before the player begins, the client's clock is
+    // the level's).
+    assert_eq!(
+        anims[..2],
+        owned(&[("BOTH_STAND1", 1550), ("BOTH_CIN_1", 1800)])
+    );
+    // The shorter way round, at the speed a script sets: (60 + 3 * 10) / 20, each
+    // step cut to the 65536th of a turn below (350 lands at -10.003, within
+    // 0.01).
+    let (_, turns) = turned(
+        10.0,
+        vec![
+            set_float("SET_YAWSPEED", 10.0),
+            set_float("SET_DYAW", 350.0),
+        ],
+    );
+    assert_eq!(
+        yaws(&turns),
+        [
+            (1600, 5.499),
+            (1650, 1.0),
+            (1700, -3.499),
+            (1750, -7.998),
+            (1800, -10.003)
+        ]
+    );
+    // Already facing it: done the next frame, nothing turned.
+    let (anims, turns) = turned(270.0, turn_then_play(vec![set_float("SET_DYAW", -90.0)]));
+    assert_eq!(turns, []);
+    assert_eq!(anims[1], ("BOTH_CIN_1".to_owned(), 1600));
+}
+
+#[test]
+fn npcs_turn_to_face_a_view_target_from_their_eyes() {
+    // Luke's eyes are straight up the y axis from Jaden's: yaw 90, in six frames.
+    let (anims, turns) = turned(0.0, turn_then_play(vec![set("SET_VIEWTARGET", "LUKE")]));
+    assert_eq!(turns.len(), 6);
+    assert_eq!(turns.last(), Some(&(1850, 90.0)));
+    assert_eq!(anims[1], ("BOTH_CIN_1".to_owned(), 1900));
+    // A target no NPC is named: nothing to turn to, done the next frame.
+    let (anims, turns) = turned(0.0, turn_then_play(vec![set("SET_VIEWTARGET", "nobody")]));
+    assert_eq!(turns, []);
+    assert_eq!(anims[1], ("BOTH_CIN_1".to_owned(), 1600));
+}
+
+#[test]
+fn turns_are_drawn_from_frame_to_frame_the_shorter_way_round() {
+    let t = swjkja_world::script::Timeline {
+        legs: Vec::new(),
+        torso: Vec::new(),
+        look: Vec::new(),
+        more_light: Vec::new(),
+        unarmed: Vec::new(),
+        yaw: vec![(1600, -170.0), (1650, 175.0)],
+    };
+    let slide = |start, from: f32, to: f32| Slide {
+        start,
+        from: [0.0, from, 0.0],
+        to: [0.0, to, 0.0],
+        duration: 50,
+        linear: true,
+    };
+    // From 170 to -170 is 20 degrees on, then 15 back.
+    assert_eq!(
+        t.turns(170.0),
+        [slide(1550, 170.0, 190.0), slide(1600, 190.0, 175.0)]
+    );
 }

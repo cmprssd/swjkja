@@ -589,6 +589,8 @@ pub struct NpcLook {
     /// random components ("random"). The player's character is white (the
     /// `g_char_color_*` defaults).
     pub color: [u8; 4],
+    /// "yawSpeed" (`stats.yawSpeed`): 90 unless the block gives more than 0.
+    pub yaw_speed: f32,
 }
 
 /// "playerTeam" (`team_t`): any other name is no team the game knows, which acts
@@ -632,6 +634,7 @@ pub fn npc_look(
     let mut weapon = 0;
     let mut sabers = [None, None];
     let mut color = [255; 4];
+    let mut yaw_speed = 90.0;
     let mut two_handed = false;
     loop {
         let token = p.token(true);
@@ -690,6 +693,11 @@ pub fn npc_look(
                 }
             }
             // TranslateRankName: a civilian for an unknown name.
+            "yawspeed" => {
+                if let Some(n) = number().filter(|&n| n > 0) {
+                    yaw_speed = n as f32;
+                }
+            }
             "rank" if !value.is_empty() => {
                 rank = RANKS
                     .iter()
@@ -804,6 +812,7 @@ pub fn npc_look(
         weapon,
         sabers,
         color,
+        yaw_speed,
     })
 }
 
@@ -1131,8 +1140,8 @@ pub fn npc_gear(
             torso,
             still_since: 0,
             script: None,
-            name: None,
             bad_bones: bad_bones(class),
+            ..Pose::default()
         },
         attached,
     )
@@ -1258,6 +1267,13 @@ pub fn npc_models(
                 still_since: if moving { FIRST_FRAME } else { 0 },
                 script,
                 name: n.targetname,
+                yaw: n.angles[1],
+                yaw_speed: yaw_speed(&look, &n.npc_type),
+                eyes: [
+                    at[0],
+                    at[1],
+                    at[2] + look.maxs[2] + STANDARD_VIEWHEIGHT_OFFSET,
+                ],
                 ..pose
             };
             let mut origin = at;
@@ -1289,6 +1305,25 @@ pub fn npc_models(
             })
         })
         .collect()
+}
+
+/// `STANDARD_VIEWHEIGHT_OFFSET`: an NPC's eyes stand this far below its box's top.
+const STANDARD_VIEWHEIGHT_OFFSET: f32 = -4.0;
+
+/// How fast an NPC of type `npc_type` turns (`stats.yawSpeed`) at the easiest skill
+/// (`g_spskill` 0, the cvar's default, as the captures play): its block's, three
+/// quarters of it for stormtroopers, swamp troopers, imperial workers and "rodian2"
+/// (`NPC_Spawn_Go`).
+fn yaw_speed(look: &NpcLook, npc_type: &str) -> f32 {
+    let slower = matches!(
+        look.class.as_str(),
+        "class_stormtrooper" | "class_swamptrooper" | "class_impworker"
+    ) || npc_type.eq_ignore_ascii_case("rodian2");
+    if slower {
+        look.yaw_speed * 0.75
+    } else {
+        look.yaw_speed
+    }
 }
 
 /// Where an NPC spawned at `origin` with the box `mins`..`maxs` comes to rest: lifted
