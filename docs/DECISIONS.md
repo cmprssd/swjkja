@@ -1101,3 +1101,33 @@ and drawing such pipes some other way, would match no view held still.
   out: `fx_puff`, multiplayer's spawners, and heavy rain's lightning
   (`fx_rain_think`, which also draws from the game's random numbers and so could
   shift later picks on such a map).
+- **Second slice (render)**: `weather::Weather` runs the rain clouds and winds
+  (`CParticleCloud`, `CWindZone`) once a frame from the time since the last one
+  (1 to 1000 ms; the first frame only caches, as the original's), and
+  `WorldRenderer` draws every cloud's triangles after the scene in one draw: added
+  to the frame, depth tested but not written, unfogged, not in the sky portal's
+  scene. The renderer module's numbers come from a `Rand` of its own and the
+  winds' lulls from MSVC's `rand()` unseeded: numbers of the right kind, not the
+  capture's. `WorldRenderer::draw_weather` (on by default) is off in
+  `render_world`. Left out: snow, space dust, fog clouds, puffs, in-game
+  cinematics (no world effects during one), and the rain image's nearest filter.
+
+## 2026-10-26: t3_hevil's streaks are an effect, not rain; the scan matches the shipped caches
+
+- **Found**: t3_hevil has no world effects. The single-player maps with any are
+  hoth2 (snow, wind, fog), t1_rail (heavy rain), t2_wedge (wind, fog), vjun1 (acid
+  rain) and yavin2 (light rain). hevil_fan_west's and hevil_fan_low's streaks sit
+  over the `fx_runner`s of `bespin/dust` at the fans (-1664 512 520 and
+  2688 512 -120): an effect (effects are not drawn yet), which
+  `r_swjkjaNoWeather` does not take out (BASELINE.md's "rain over the fan" was
+  wrong). Of the kept views, only vjun1_hall shows world-effect rain, so it is
+  the only one to recapture without it.
+- **Found**: every weather map ships `maps/<map>.weather`, its header (version 1,
+  the map's MD4 checksum) matching, so the original reads that cache and never
+  scans. The scan gives the same bytes once its dot products are unrounded (the
+  files come from an x87 build); in floats, 70 of t1_rail's cells differ. The
+  retail test compares all five byte for byte, so the files need not be read.
+- **vjun1_hall** sees rain only within ~150 units of the eye: beyond, the hall is
+  inside (the shipped cache agrees), and the floor hides what falls below it. How
+  many streaks fall that near is luck, so the rain test turns round from the same
+  eye, out over the fogged air.

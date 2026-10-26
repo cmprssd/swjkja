@@ -17,6 +17,7 @@ pub mod sprites;
 pub mod swapchain;
 pub mod texture;
 pub mod vis;
+pub mod weather;
 pub mod world;
 
 pub use ash::vk;
