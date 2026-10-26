@@ -188,6 +188,15 @@ impl Collision {
         let tr = self.trace(origin, bottom, mins, maxs, mask);
         (!tr.all_solid && !tr.start_solid && tr.fraction < 1.0).then_some(tr.end)
     }
+
+    /// The contents of every brush holding `p`, on its faces included
+    /// (`CM_PointContents`).
+    pub fn point_contents(&self, p: Vec3) -> i32 {
+        self.brushes
+            .iter()
+            .filter(|b| b.planes.iter().all(|&(n, d)| dot(p, n) <= d))
+            .fold(0, |c, b| c | b.contents)
+    }
 }
 
 fn dot(a: Vec3, b: Vec3) -> f32 {

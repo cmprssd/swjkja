@@ -773,3 +773,95 @@ fn t2_dpreds_rack_goods_spread_as_in_the_original() {
     // packs 100 ms in, after every gun rack: the first is the 122nd draw.
     at([-2030.0, -4346.0 - 0.661621 * 0.5, 37.0]);
 }
+
+/// Every single-player map's world effects, and its outside scan. Prints them
+/// (run with `--nocapture`): which maps rain, and where (t3_hevil's fan pit and
+/// vjun1's hall show streaks the original draws).
+#[test]
+fn every_single_player_maps_weather_reads_and_scans() {
+    use swjkja_world::weather::{Command, Outside, PointContents, commands};
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let mut maps: Vec<&str> = vfs
+        .files()
+        .filter(|f| f.ends_with(".bsp") && !f.starts_with("maps/mp/"))
+        .collect();
+    maps.sort_unstable();
+    // Each weather map's zone count and its other commands, in order.
+    let expected: &[(&str, usize, &[&str])] = &[
+        (
+            "maps/hoth2.bsp",
+            10,
+            &[
+                "constantwind ( -3000.000000 -0.000262 -0.000000 )",
+                "gustingwind",
+                "snow",
+                "fog",
+            ],
+        ),
+        (
+            "maps/t1_rail.bsp",
+            10,
+            &[
+                "constantwind ( -5000.000000 -0.000437 -0.000000 )",
+                "heavyrain",
+                "heavyrainfog",
+                "outsideShake",
+            ],
+        ),
+        (
+            "maps/t2_wedge.bsp",
+            3,
+            &[
+                "constantwind ( 212.132034 212.132034 -0.000000 )",
+                "gustingwind",
+                "light_fog",
+            ],
+        ),
+        ("maps/vjun1.bsp", 45, &["acidrain"]),
+        ("maps/yavin2.bsp", 5, &["lightrain"]),
+    ];
+    let mut found = Vec::new();
+    for name in maps {
+        let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
+        let cmds = commands(&bsp.entities, &bsp.models, 0);
+        if cmds.is_empty() {
+            continue;
+        }
+        let parsed: Vec<Command> = cmds.iter().filter_map(|c| Command::parse(c)).collect();
+        assert_eq!(parsed.len(), cmds.len(), "{name}: {cmds:?}");
+        let zones: Vec<_> = parsed
+            .iter()
+            .filter_map(|c| match *c {
+                Command::Zone { mins, maxs } => Some((mins, maxs)),
+                _ => None,
+            })
+            .collect();
+        let others: Vec<String> = cmds
+            .iter()
+            .filter(|c| !c.starts_with("zone "))
+            .cloned()
+            .collect();
+        found.push((name, zones.len(), others));
+        let world = bsp.models[0];
+        let contents = PointContents::new(&bsp);
+        let outside = Outside::scan(|p| contents.at(p), &zones, (world.mins, world.maxs))
+            .unwrap_or_else(|_| panic!("{name}"));
+        // The cache the map ships (its header, version 1 and the map's checksum,
+        // matches every one of these maps, so the original reads it), byte for byte.
+        let file = vfs.read(&name.replace(".bsp", ".weather")).unwrap();
+        assert_eq!(file[..4], 1i32.to_le_bytes(), "{name}");
+        assert!(
+            outside.cache_bytes() == file[8..],
+            "{name}: the scan differs from its .weather"
+        );
+    }
+    let expected: Vec<_> = expected
+        .iter()
+        .map(|&(n, z, o)| (n, z, o.iter().map(|s| s.to_string()).collect::<Vec<_>>()))
+        .collect();
+    assert_eq!(found, expected);
+}

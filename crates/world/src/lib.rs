@@ -19,6 +19,7 @@ pub mod sound;
 pub mod static_model;
 pub mod stitch;
 pub mod style;
+pub mod weather;
 
 use swjkja_bsp::{Bsp, DrawVert, SurfaceKind};
 
