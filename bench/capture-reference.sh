@@ -65,7 +65,12 @@ for map in $maps; do
 		# so a view with an NPC there moves the player closer.
 		# With SCRIPTS=1 the cutscene runs on (the view is pinned anyway): skipping
 		# it would leave its actors as of whenever the skip came.
-		if [ "$sp" = 1 ] && [ "$scripts" != 1 ]; then echo "exitview"; echo "wait 300"; fi
+		# A skip runs until the script turns the camera off, and the screen is not
+		# drawn meanwhile; with NPCs frozen, an intro that waits on its actors
+		# (vjun1's Kyle and Jaden) never gets there, so a second exitview ends the
+		# skip as a second Esc would (without a camera it only leaves turrets, guns
+		# and droids, which the player at the start is in none of).
+		if [ "$sp" = 1 ] && [ "$scripts" != 1 ]; then echo "exitview"; echo "wait 300"; echo "exitview"; echo "wait 100"; fi
 		# With SCRIPTS=1 the views must not come before the game reaches their
 		# time: wait that long at 60 frames a second (com_maxfps), at least.
 		if [ "$sp" = 1 ] && [ "$scripts" = 1 ]; then
