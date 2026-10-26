@@ -89,7 +89,10 @@ for map in $maps; do
 	echo "capturing $map"
 	case $map in
 	mp/*) game=(openjk.x86_64.exe +set g_gametype 1 +set sv_pure 0) ;;
-	*) game=(openjk_sp.x86_64.exe +set g_spskill 0 +set cg_thirdPerson 0) ;;
+	# A script's video (vjun1's intro opens with ja07) is not played
+	# (cl_swjkjaNoVideo, a patch addition): playing one ends the cutscene skip and
+	# covers the view until a key stops it. Set as the map loads, as scripts start then.
+	*) game=(openjk_sp.x86_64.exe +set g_spskill 0 +set cg_thirdPerson 0 +set cl_swjkjaNoVideo 1) ;;
 	esac
 	# Scripts that start when the player spawns (the academies' intros) start at
 	# 2000 ms, the first frame a fast load gives: the patched server holds its time
