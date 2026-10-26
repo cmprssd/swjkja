@@ -593,8 +593,9 @@ fn an_inserted_block_runs_first_and_a_wait_it_cut_starts_over() {
 
 #[test]
 fn a_voice_line_holds_its_task_group_until_it_has_played() {
-    // The line starts at 2050 and plays 1234 ms: its task completes on the first
-    // frame from 3284 (3300), before Luke's script runs.
+    // The line starts at 2050, plays from a frame later (2100) for 1234 ms: its
+    // task completes on the first frame from 3334 (3350), before Luke's script
+    // runs.
     let line = body(
         id::TASK,
         vec![text("line")],
@@ -617,8 +618,8 @@ fn a_voice_line_holds_its_task_group_until_it_has_played() {
         luke(vec![hold_forever()], &level),
         owned(&[
             ("BOTH_STAND1", 1550),
-            ("BOTH_SIT5", 3250),
-            ("BOTH_STAND1", 4250)
+            ("BOTH_SIT5", 3300),
+            ("BOTH_STAND1", 4300)
         ])
     );
 }

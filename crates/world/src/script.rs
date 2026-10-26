@@ -53,6 +53,12 @@ pub const FRAME_MS: i32 = 50;
 /// frames count 50 ms each (the AI frozen, as in the captures, its commands' times
 /// are 1000 ms behind the level's too).
 const BEGIN_MSEC: i32 = 200;
+/// How much later than the frame that starts it a voice line starts playing: the
+/// client plays it as it draws that frame, a frame behind the server, and the game
+/// sees it has stopped (`G_CheckTasksCompleted`: the mixer's `s_entityWavVol` back
+/// to 0) on the first frame after it has (academy4's intro, traced: five of its
+/// first six lines end then, the other a frame later still).
+const VOICE_LAG: i32 = FRAME_MS;
 /// Milliseconds a part blends from its previous animation into a new one
 /// (`SETANIM_BLEND_DEFAULT`, which `NPC_SetAnim` and the stance's `PM_SetAnim`
 /// pass).
@@ -382,7 +388,7 @@ struct Actor<'a> {
     /// When the current timed wait started (`CTask` time stamp).
     wait_since: Option<i32>,
     /// The voice line playing (`TID_CHAN_VOICE`): its task and the level time it
-    /// has played out by.
+    /// has played out by ([`VOICE_LAG`] after its start, plus its length).
     voice: Option<(u32, i32)>,
 }
 
@@ -1219,7 +1225,9 @@ impl<'a> World<'a> {
                             voice_channel(channel) && {
                                 let length = (self.voice)(name).unwrap_or(0);
                                 let a = &mut self.actors[i];
-                                if let Some((old, _)) = a.voice.replace((task, level + length)) {
+                                if let Some((old, _)) =
+                                    a.voice.replace((task, level + VOICE_LAG + length))
+                                {
                                     a.complete(old);
                                 }
                                 true
