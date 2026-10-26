@@ -112,11 +112,15 @@ for map in $maps; do
 	# Extra engine arguments for a debugging run (e.g. "+set g_ICARUSDebug 3").
 	read -ra extra <<<"${CAPTURE_ARGS:-}"
 	game+=("${extra[@]}")
+	# Only this run's screenshots are copied out: an older one left there (a view
+	# since renamed or moved) would overwrite its reference.
+	shots="$(wslpath "$HOME_WIN")/$BENCH_GAME/screenshots"
+	rm -f "$shots"/*.png
 	run_timed 300 "${game[0]}" "${OPENJK_SETTINGS[@]}" +set com_maxfps 60 \
 		+set r_picmip 0 +set r_ext_compress_textures 0 +set r_DynamicGlow 0 \
 		+set cg_fov 80 +set r_textureMode GL_LINEAR_MIPMAP_NEAREST \
 		"${game[@]:1}" +devmap "$map" +exec capture >/dev/null
-	cp -f "$(wslpath "$HOME_WIN")/$BENCH_GAME/screenshots/"*.png "$out/"
+	cp -f "$shots"/*.png "$out/"
 	# The patched cgame logs each NPC's animation timing once per view time, and
 	# its look ("swjkja look") once the view's time is pinned.
 	if [ "$sp" = 1 ]; then
