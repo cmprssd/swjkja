@@ -14,8 +14,12 @@
 //! grid of 32-unit cells over each weather zone, or over the world's bounds when the
 //! map has none ([`Outside`]).
 //!
-//! Left out: `fx_puff` (`SP_CreatePuffSystem`), multiplayer's spawners, and the
-//! cached `.weather` file (it holds what the scan finds).
+//! The original reads the scan from `maps/<map>.weather` when the file's header
+//! matches the map's checksum, as every retail weather map's does; the scan here
+//! gives the same bytes ([`Outside::cache_bytes`], its dot products unrounded as
+//! in the x87 build that wrote them), so the file is not read.
+//!
+//! Left out: `fx_puff` (`SP_CreatePuffSystem`) and multiplayer's spawners.
 
 use swjkja_bsp::{Bsp, Entity, Model};
 
@@ -369,7 +373,7 @@ impl PointContents {
         let mut num = 0i32;
         while num >= 0 {
             let (normal, dist, children) = self.nodes[num as usize];
-            let d = normal[0] * p[0] + normal[1] * p[1] + normal[2] * p[2] - dist;
+            let d = wide_dot(normal, p) - f64::from(dist);
             num = if d < 0.0 { children[1] } else { children[0] };
         }
         let Some(leaf) = self.leaves.get((-1 - num) as usize) else {
@@ -377,13 +381,16 @@ impl PointContents {
         };
         leaf.iter()
             .filter_map(|&b| self.brushes.get(b))
-            .filter(|(_, planes)| {
-                planes
-                    .iter()
-                    .all(|&(n, d)| n[0] * p[0] + n[1] * p[1] + n[2] * p[2] <= d)
-            })
+            .filter(|(_, planes)| planes.iter().all(|&(n, d)| wide_dot(n, p) <= f64::from(d)))
             .fold(0, |c, (contents, _)| c | contents)
     }
+}
+
+/// A dot product as the x87 build that wrote the retail `.weather` files made it,
+/// unrounded to a float: with floats, 70 of t1_rail's cells at its slanted brushes'
+/// faces come out otherwise.
+fn wide_dot(a: Vec3, b: Vec3) -> f64 {
+    (0..3).map(|i| f64::from(a[i]) * f64::from(b[i])).sum()
 }
 
 impl Outside {
@@ -432,6 +439,18 @@ impl Outside {
             zones,
             marked_outside: marked.unwrap_or(false),
         })
+    }
+
+    /// The cache as the original writes it to `maps/<map>.weather` after its
+    /// header (`SWeatherZone::WriteToDisk`, zone by zone): the marked-outside byte,
+    /// then the zone's cells, little-endian.
+    pub fn cache_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        for zone in &self.zones {
+            out.push(u8::from(self.marked_outside));
+            out.extend(zone.bits.iter().flat_map(|b| b.to_le_bytes()));
+        }
+        out
     }
 
     /// `CellOutside`: a cell beyond the zone counts as unmarked.
