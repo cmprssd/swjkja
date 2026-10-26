@@ -8,6 +8,7 @@
 //! Each view is drawn [`HELD_FRAMES`] times in a row and the last frame saved, as
 //! the capture holds a view still before its screenshot: on a map without a global
 //! fog the colour is not cleared between frames (`WorldRenderer::clear_color`).
+//! Rain is not drawn (`WorldRenderer::draw_weather`), as the captures draw none.
 use std::time::Instant;
 
 use swjkja_render::{Camera, Gpu, Target, TextureSet, WorldRenderer};
@@ -64,6 +65,9 @@ fn main() {
             &uses,
         )
         .unwrap();
+        // World effects (rain) are left out, as the reference captures leave them
+        // out: where their particles fall cannot be reproduced.
+        renderer.draw_weather = false;
         let load = t.elapsed();
         // One target per map; its depth copy sits in the texture array for flares.
         let target = Target::new(&gpu, 1280, 720).unwrap();

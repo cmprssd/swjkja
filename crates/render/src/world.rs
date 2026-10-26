@@ -40,6 +40,7 @@ use crate::resource::{Buffer, Frame};
 use crate::sky;
 use crate::sprites;
 use crate::texture::{Texture, TextureSet};
+use crate::weather;
 
 /// `R_FindImageFile`: the image `name` resolves to, or `None` if none decodes or its
 /// sides are not powers of two (the original refuses those as if missing).
@@ -254,6 +255,8 @@ enum DynamicSource {
     /// The NPCs' shadows in fog `fog`: the polygons in that fog, from the shadows'
     /// shared region ([`Shadows`]), filled each frame (see draw()).
     Shadows { fog: usize },
+    /// The rain's triangles ([`WorldRenderer::weather`]).
+    Weather,
     /// A surface sprite stage's sprites over the visible ones of its surfaces, at
     /// most `capacity`.
     Sprites {
@@ -379,6 +382,11 @@ pub struct WorldRenderer {
     /// The field of view surface sprites were first drawn with
     /// ([`sprites::range_scale`]).
     sprite_fov: Option<f32>,
+    /// The map's rain, if it has any.
+    weather: Option<weather::Weather>,
+    /// Whether rain is drawn (on by default). Comparisons with the reference leave
+    /// world effects out on both sides (DECISIONS.md, 2026-10-24).
+    pub draw_weather: bool,
     /// Whether the map is drawn by the single-player renderer, whose environment
     /// mapping differs from multiplayer's.
     single_player: bool,
@@ -1622,6 +1630,94 @@ impl WorldRenderer {
                 }
             }
         }
+        // Rain (RB_RenderWorldEffects, after the scene's surfaces): every cloud's
+        // triangles in one draw, added to the frame (GLS_SRCBLEND_ONE |
+        // GLS_DSTBLEND_ONE), depth tested but not written, unfogged, coloured by
+        // their vertices, the image unmipmapped and clamped.
+        let weather = match rules {
+            swjkja_world::static_model::Rules::SinglePlayer { skill } => {
+                use swjkja_world::weather::{Command, Outside, PointContents, commands};
+                let cmds: Vec<Command> = commands(&bsp.entities, &bsp.models, skill)
+                    .iter()
+                    .filter_map(|c| Command::parse(c))
+                    .collect();
+                let zones: Vec<_> = cmds
+                    .iter()
+                    .filter_map(|c| match *c {
+                        Command::Zone { mins, maxs } => Some((mins, maxs)),
+                        _ => None,
+                    })
+                    .collect();
+                let rains = cmds.iter().any(|c| {
+                    matches!(
+                        c,
+                        Command::LightRain | Command::Rain | Command::AcidRain | Command::HeavyRain
+                    )
+                });
+                match bsp.models.first().filter(|_| rains) {
+                    Some(world) => {
+                        let contents = PointContents::new(bsp);
+                        Outside::scan(|p| contents.at(p), &zones, (world.mins, world.maxs))
+                            .ok()
+                            .and_then(|outside| weather::Weather::new(&cmds, outside))
+                    }
+                    None => None,
+                }
+            }
+            swjkja_world::static_model::Rules::Multiplayer { .. } => None,
+        };
+        if let Some(w) = &weather {
+            let slot = match find_image(vfs, weather::RAIN_IMAGE) {
+                Some(img) => textures.add(Texture::queued(
+                    gpu,
+                    img.width,
+                    img.height,
+                    img.rgba,
+                    false,
+                    &mut uploads.borrow_mut(),
+                )?),
+                None => default_slot,
+            };
+            let mut g = GpuStage::zeroed();
+            g.modes = [5, 4, 0, 0]; // rgbGen exactVertex, alphaGen vertex
+            g.funcs[2] = 1; // clamp
+            gpu_stages.push(g);
+            let st = State {
+                blend: Some((vk::BlendFactor::ONE, vk::BlendFactor::ONE)),
+                depth_write: false,
+                depth_compare: Some(vk::CompareOp::GREATER_OR_EQUAL),
+                cull: vk::CullModeFlags::NONE,
+                front_face: FRONT_FACE,
+                depth_bias: false,
+                write_mask: vk::ColorComponentFlags::R
+                    | vk::ColorComponentFlags::G
+                    | vk::ColorComponentFlags::B,
+            };
+            let pipeline = states.iter().position(|x| *x == st).unwrap_or_else(|| {
+                states.push(st);
+                states.len() - 1
+            });
+            let capacity = w.capacity() as u32;
+            draw_materials.push(DrawMaterial {
+                first_index: 0,
+                index_count: 0,
+                stages: vec![DrawStage {
+                    gpu_stage: gpu_stages.len() as u32 - 1,
+                    pipeline,
+                    slots: [Slots::One(slot), Slots::One(white)],
+                }],
+                dynamic: Some(Dynamic {
+                    vertex_offset: dynamic_vertices,
+                    index_offset: dynamic_indexes,
+                    source: DynamicSource::Weather,
+                }),
+                culled: false,
+                gate: None,
+                bones: 0,
+            });
+            dynamic_vertices += capacity * 3;
+            dynamic_indexes += capacity * 3;
+        }
         let layouts = [textures.layout, frame_layout];
         let pipelines = states
             .iter()
@@ -1822,6 +1918,8 @@ impl WorldRenderer {
             surface_gate,
             gate_count: gates,
             sprite_fov: None,
+            weather,
+            draw_weather: true,
             single_player: matches!(
                 rules,
                 swjkja_world::static_model::Rules::SinglePlayer { .. }
@@ -1930,7 +2028,8 @@ impl WorldRenderer {
                 }
                 DynamicSource::Flares { .. }
                 | DynamicSource::Shadows { .. }
-                | DynamicSource::Sprites { .. } => continue,
+                | DynamicSource::Sprites { .. }
+                | DynamicSource::Weather => continue,
             };
             let out: Vec<Vertex> = verts
                 .iter()
@@ -2161,6 +2260,48 @@ impl WorldRenderer {
             let indexes: Vec<u32> = (0..scattered.len() as u32)
                 .flat_map(|q| sprites::QUAD_TRIANGLES.map(|k| q * 4 + k))
                 .collect();
+            let vstart = *vertex_offset as usize * size_of::<Vertex>();
+            vb[vstart..vstart + size_of_val(&verts[..])]
+                .copy_from_slice(bytemuck::cast_slice(&verts));
+            let istart = *index_offset as usize * 4;
+            ib[istart..istart + indexes.len() * 4].copy_from_slice(bytemuck::cast_slice(&indexes));
+            m.first_index = *index_offset;
+            m.index_count = indexes.len() as u32;
+        }
+        // The rain, moved on once a frame: not in the sky portal's scene
+        // (RDF_SKYBOXPORTAL).
+        let mut rain = Vec::new();
+        if scene != Scene::Portal
+            && self.draw_weather
+            && let Some(w) = &mut self.weather
+        {
+            let weather_view = weather::WeatherView {
+                origin: camera.origin,
+                axes: [view.forward, view.left, view.up],
+            };
+            w.frame(ms, &weather_view, &mut rain);
+        }
+        for m in &mut self.materials {
+            let Some(Dynamic {
+                source: DynamicSource::Weather,
+                vertex_offset,
+                index_offset,
+            }) = &m.dynamic
+            else {
+                continue;
+            };
+            let verts: Vec<Vertex> = rain
+                .iter()
+                .map(|v| Vertex {
+                    xyz: v.xyz,
+                    normal: [0.0; 3],
+                    st: v.st,
+                    lightmap: [[0.0; 2]; 4],
+                    color: v.color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8),
+                    styled: [[0; 4]; 3],
+                })
+                .collect();
+            let indexes: Vec<u32> = (0..verts.len() as u32).collect();
             let vstart = *vertex_offset as usize * size_of::<Vertex>();
             vb[vstart..vstart + size_of_val(&verts[..])]
                 .copy_from_slice(bytemuck::cast_slice(&verts));

@@ -1001,3 +1001,76 @@ fn rack_weapons_spread_as_the_original_spreads_them() {
         );
     }
 }
+
+/// Rain only adds light (`GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE`): from vjun1_hall's
+/// eye (bench/reference/model-views.txt) turned round, out of the hall over the
+/// fogged air, the frame after 6 seconds of rain is nowhere darker than without
+/// it, and its streaks brighten some of it. (vjun1_hall's own view sees rain only
+/// within ~150 units of the eye: beyond, the hall is inside, as the map's shipped
+/// `maps/vjun1.weather` also says, and lower down the floor hides it; how many
+/// streaks fall that near is luck.) `render_world` leaves rain out
+/// (`draw_weather`), as the captures do.
+#[test]
+fn rain_adds_its_streaks_to_the_frame() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let gpu = Gpu::new_headless().unwrap();
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let shaders = swjkja_shader::ShaderText::load(&vfs).unwrap();
+    let bsp = swjkja_bsp::Bsp::parse(&vfs.read("maps/vjun1.bsp").unwrap()).unwrap();
+    let world = swjkja_world::World::load(&bsp, &Default::default());
+    let mut textures = TextureSet::new(&gpu).unwrap();
+    let time = 12.345;
+    let mut renderer = WorldRenderer::new(
+        &gpu,
+        &mut textures,
+        &vfs,
+        &shaders,
+        &bsp,
+        &world,
+        "maps/vjun1.bsp",
+        time,
+    )
+    .unwrap();
+    let (width, height) = (1280, 720);
+    let target = Target::new(&gpu, width, height).unwrap();
+    let depth_slot = textures.add_view(target.depth_copy.view);
+    let camera = Camera::new([-7052.0, 468.0, 824.0], [10.0, 180.0, 0.0], width, height);
+    let draw = |renderer: &mut WorldRenderer, at: f32| {
+        target
+            .render(&gpu, renderer.clear_color(), |frame| {
+                renderer
+                    .draw(frame, &textures, &camera, at, depth_slot)
+                    .unwrap()
+            })
+            .unwrap();
+    };
+    renderer.draw_weather = false;
+    for _ in 0..10 {
+        draw(&mut renderer, time);
+    }
+    let dry = target.read_rgba(&gpu).unwrap();
+    // Rain starts spread over the whole range and takes seconds to settle into
+    // falling from its spawn plane: 6 seconds of it, in 100 ms frames (the
+    // particles fall as fast, in units a second, whatever the frame's time).
+    renderer.draw_weather = true;
+    for k in (0..60).rev() {
+        draw(&mut renderer, time - k as f32 * 0.1);
+    }
+    let wet = target.read_rgba(&gpu).unwrap();
+    let mut darker = 0;
+    let mut brighter = 0;
+    for (d, w) in dry.chunks(4).zip(wet.chunks(4)) {
+        if (0..3).any(|c| w[c].saturating_add(1) < d[c]) {
+            darker += 1;
+        }
+        if (0..3).any(|c| w[c] > d[c].saturating_add(8)) {
+            brighter += 1;
+        }
+    }
+    eprintln!("rain brightens {brighter} pixels by more than 8 levels");
+    assert_eq!(darker, 0);
+    assert!(brighter > 500, "{brighter}");
+}
