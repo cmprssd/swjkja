@@ -195,6 +195,23 @@ index b9d7b6f..ae59cca 100644
  	VM_Call( CG_DRAW_ACTIVE_FRAME,timei, stereo, qfalse );
  //	VM_Debug( 0 );
  }
+diff --git a/code/client/cl_cin.cpp b/code/client/cl_cin.cpp
+index 7cf2db8..92c3e8f 100644
+--- a/code/client/cl_cin.cpp
++++ b/code/client/cl_cin.cpp
+@@ -1997,6 +1997,12 @@ void CL_PlayCinematic_f(void)
+ void CL_PlayInGameCinematic_f(void)
+ {
+ 	const char *arg = Cmd_Argv( 1 );
++	// swjkja reference capture: with cl_swjkjaNoVideo set, a script's video is not
++	// played. Playing one ends a cutscene skip (timescale back to 1) and covers the
++	// view until a key stops it, so a skipped intro would hold the screen.
++	if ( Cvar_VariableIntegerValue( "cl_swjkjaNoVideo" ) ) {
++		return;
++	}
+ 	if (cls.state == CA_ACTIVE)
+ 	{
+ 		PlayCinematic(arg,NULL,qtrue);
 diff --git a/code/game/NPC.cpp b/code/game/NPC.cpp
 index d1c794e..0cb9b9e 100644
 --- a/code/game/NPC.cpp
@@ -313,6 +330,22 @@ index a349d4f..2368b69 100644
  
  	//ResetTeamCounters();
  	NAV::DecayDangerSenses();
+diff --git a/code/rd-vanilla/tr_WorldEffects.cpp b/code/rd-vanilla/tr_WorldEffects.cpp
+index 5464b70..d46b7cf 100644
+--- a/code/rd-vanilla/tr_WorldEffects.cpp
++++ b/code/rd-vanilla/tr_WorldEffects.cpp
+@@ -1596,7 +1596,10 @@ void RB_RenderWorldEffects(void)
+ 		(tr.refdef.rdflags & RDF_NOWORLDMODEL) ||
+ 		(backEnd.refdef.rdflags & RDF_SKYBOXPORTAL) ||
+ 		!mParticleClouds.size() ||
+-		ri.CL_IsRunningInGameCinematic())
++		ri.CL_IsRunningInGameCinematic() ||
++		// swjkja reference capture: world effects (rain) left out, as where their
++		// particles fall cannot be reproduced.
++		ri.Cvar_VariableIntegerValue("r_swjkjaNoWeather"))
+ 	{	//  no world rendering or no world or no particle clouds
+ 		return;
+ 	}
 diff --git a/code/rd-vanilla/tr_surfacesprites.cpp b/code/rd-vanilla/tr_surfacesprites.cpp
 index f0c210a..032959a 100644
 --- a/code/rd-vanilla/tr_surfacesprites.cpp

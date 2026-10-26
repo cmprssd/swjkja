@@ -2270,3 +2270,25 @@ original puts them.
   the goods' places against the logged numbers.
 - All 55 kept views: median 0.01. The largest are ffa5_pipes (3.73), hevil_fan_west
   (0.63) and vjun1_hall (0.42); none other above 0.2.
+
+## vjun1_hall recaptured without rain, 2026-10-26
+
+vjun1_hall's 0.42 was the original's acid rain, which falls where neither side can
+reproduce (DECISIONS.md, 2026-10-24). The reference is recaptured with
+`r_swjkjaNoWeather 1`, and `render_world` leaves rain out too. Two capture fixes
+were needed on the way: vjun1's intro script opens with a video (ja07), which ended
+the cutscene skip and covered the view (`cl_swjkjaNoVideo` now keeps scripts'
+videos from playing); and the skip itself never ended, as the intro waits on Kyle
+and Jaden, whose scripts do not run with NPCs frozen, and the client draws nothing
+while a skip runs (a second `exitview` now ends it).
+
+| View | Mean difference (before) | Pixels off by > 16 (before) |
+|------|------|------|
+| vjun1_hall | 0.0004 (0.42) | 0.0% (1.0%) |
+
+- The new reference differs from the October one in 19001 pixels, and the old one
+  is brighter or equal in every one of them: only the rain is gone. 1159 pixels
+  differ from this renderer's view now (at most 24 in a channel).
+- Only vjun1_hall was recaptured and rendered; the other 54 kept views are as in
+  the section above. The largest are now ffa5_pipes (3.73) and hevil_fan_west
+  (0.63, `bespin/dust` effects, not rain: DECISIONS.md, 2026-10-26).

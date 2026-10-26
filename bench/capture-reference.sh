@@ -2,7 +2,7 @@
 # Captures reference screenshots with the reference OpenJK (built with the
 # cg_swjkjaView/cg_swjkjaTime patch by bench/build-openjk.sh): every view in
 # reference/views.txt (or the views file given) at its pinned game time,
-# world only (r_drawentities 0, no HUD), full-quality textures, 1280x720.
+# world only (r_drawentities 0, no HUD, no rain), full-quality textures, 1280x720.
 # With ENTITIES=1, entities are drawn too (the static models of
 # reference/model-views.txt; those views keep items and movers out of sight).
 # With SCRIPTS=1, single player's NPCs run their scripts (only their AI is frozen)
@@ -65,7 +65,12 @@ for map in $maps; do
 		# so a view with an NPC there moves the player closer.
 		# With SCRIPTS=1 the cutscene runs on (the view is pinned anyway): skipping
 		# it would leave its actors as of whenever the skip came.
-		if [ "$sp" = 1 ] && [ "$scripts" != 1 ]; then echo "exitview"; echo "wait 300"; fi
+		# A skip runs until the script turns the camera off, and the screen is not
+		# drawn meanwhile; with NPCs frozen, an intro that waits on its actors
+		# (vjun1's Kyle and Jaden) never gets there, so a second exitview ends the
+		# skip as a second Esc would (without a camera it only leaves turrets, guns
+		# and droids, which the player at the start is in none of).
+		if [ "$sp" = 1 ] && [ "$scripts" != 1 ]; then echo "exitview"; echo "wait 300"; echo "exitview"; echo "wait 100"; fi
 		# With SCRIPTS=1 the views must not come before the game reaches their
 		# time: wait that long at 60 frames a second (com_maxfps), at least.
 		if [ "$sp" = 1 ] && [ "$scripts" = 1 ]; then
@@ -73,7 +78,9 @@ for map in $maps; do
 		fi
 		if [ "$sp" = 1 ]; then echo "noclip"; fi
 		# No console notify lines (the patched cgame logs NPC timing to the console).
-		echo "set cg_draw2D 0; set r_drawentities $entities; set cg_drawGun 0; set con_notifytime 0"
+		# No world effects (rain, r_swjkjaNoWeather, a patch addition): where their
+		# particles fall cannot be reproduced, so the new renderer leaves them out too.
+		echo "set cg_draw2D 0; set r_drawentities $entities; set cg_drawGun 0; set con_notifytime 0; set r_swjkjaNoWeather 1"
 		echo "wait 300"
 		grep -v '^#' "$views" | awk -v m="$map" -v sp="$sp" '$1 == m {
 			back = NF >= 10 ? $10 : 128
@@ -87,7 +94,10 @@ for map in $maps; do
 	echo "capturing $map"
 	case $map in
 	mp/*) game=(openjk.x86_64.exe +set g_gametype 1 +set sv_pure 0) ;;
-	*) game=(openjk_sp.x86_64.exe +set g_spskill 0 +set cg_thirdPerson 0) ;;
+	# A script's video (vjun1's intro opens with ja07) is not played
+	# (cl_swjkjaNoVideo, a patch addition): playing one ends the cutscene skip and
+	# covers the view until a key stops it. Set as the map loads, as scripts start then.
+	*) game=(openjk_sp.x86_64.exe +set g_spskill 0 +set cg_thirdPerson 0 +set cl_swjkjaNoVideo 1) ;;
 	esac
 	# Scripts that start when the player spawns (the academies' intros) start at
 	# 2000 ms, the first frame a fast load gives: the patched server holds its time
