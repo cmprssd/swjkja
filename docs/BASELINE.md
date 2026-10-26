@@ -2292,3 +2292,19 @@ while a skip runs (a second `exitview` now ends it).
 - Only vjun1_hall was recaptured and rendered; the other 54 kept views are as in
   the section above. The largest are now ffa5_pipes (3.73) and hevil_fan_west
   (0.63, `bespin/dust` effects, not rain: DECISIONS.md, 2026-10-26).
+
+## Voice lines a frame later, 2026-10-26
+
+academy4's intro, traced in the original (`g_ICARUSDebug 4`), ends each voice line
+a frame later than this renderer did (DECISIONS.md, 2026-10-26): its lines start
+here at 3100, 15,700, 19,450, 23,150, 32,000 and 44,500 ms, in the original at
+3100, 15,750, 19,550, 23,300 (23,350 in a second run), 32,200 and 44,800. With
+lines a frame later, the first five start here as in the first run, and Kyle's at
+44,750: Luke's fourth line ended a frame later still in both runs (the mixer runs
+in real time; no fixed lag fits all six).
+
+- No kept view changes: the 33 single-player views render pixel for pixel as
+  before (none reaches the end of a line its intro waits on); the 22 multiplayer
+  views run no scripts.
+- `a_voice_line_holds_its_task_group_until_it_has_played`
+  (`crates/world/tests/script.rs`) checks a line's task completing a frame later.

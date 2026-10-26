@@ -1131,3 +1131,20 @@ and drawing such pipes some other way, would match no view held still.
   inside (the shipped cache agrees), and the floor hides what falls below it. How
   many streaks fall that near is luck, so the rain test turns round from the same
   eye, out over the fogged air.
+
+## 2026-10-26: Voice lines play out a frame later than their length (decided by Claude, pending review)
+
+- **Found**: a capture of academy4's intro with its script trace (`g_ICARUSDebug 4`)
+  has five of its first six voice lines end a frame later than "the first frame
+  from its start plus its length" (2026-10-16's rule) gave: Luke's first line,
+  started at 3100 and 9979 ms long, ends at 13150, not 13100, and the intro's
+  later lines start 50 to 300 ms later than here (Kyle's first at 44,800, here
+  44,500). The client plays a line as it draws the frame that started it, a frame
+  behind the server, and the game sees it stopped (`G_CheckTasksCompleted`, the
+  mixer's `s_entityWavVol` back to 0) on its first frame after that.
+- **Chosen: a line plays out at the first frame from its start, plus 50 ms, plus
+  its length** (`VOICE_LAG`). The mixer runs in real time, so a run may still end
+  a line a frame later still (Luke's fourth, 12.4 s long, ended two frames
+  later in both traces; a second trace started his third at 23,350, the first at
+  23,300), and no fixed lag fits all six; views late in an intro are better taken
+  where nothing has just changed.
