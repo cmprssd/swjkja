@@ -1,0 +1,21 @@
+# The progress page's timeline: commits whose build bench/history.sh renders the
+# history views with (bench/reference/history-views.txt), one per step that changed
+# what is on screen. Append the PR that adds the next visible step; history.sh renders
+# only the ones not rendered yet. PR #12's preview renderer cannot be rebuilt: its
+# shader was never committed (the whitelist .gitignore left out *.wgsl until #15).
+# commit  label
+c28204e  Materials drawn stage by stage
+d8a1e2a  Global fog
+d5e544b  Sky box and clouds
+9cd68a6  Flares
+bd50807  Fog volumes
+95f6be2  The original's CPU mipmaps
+261b9b4  Static models
+b8f5679  NPCs standing, with their skins
+ce8b0ac  NPCs hold their weapons
+68b912a  NPCs posed, skinned on the GPU
+4a5296a  Spawnscripts run
+1764543  Level scripts and intros
+fc46967  Blob shadows
+e3894ed  Single player's ambient light
+4d176ee  NPCs turn and walk as scripts ask

@@ -10,6 +10,9 @@ step() { echo; echo "== $*"; }
 
 step "format"; cargo fmt --all -- --check
 step "shell syntax"; for f in bench/*.sh scripts/*.sh .local-ci; do bash -n "$f"; done
+# The overview's numbers are counted, not typed: a PR that changes them regenerates
+# them (python3 scripts/progress.py) so the docs never fall behind the code.
+step "overview numbers"; python3 scripts/progress.py --check
 
 # Build what is committed, not what happens to be in the working folder: a file
 # the whitelist .gitignore leaves out (it once hid every shader) fails here.

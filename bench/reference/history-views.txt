@@ -1,0 +1,12 @@
+# The views the progress page shows at every milestone (bench/reference/milestones.txt),
+# taken from the other views files: worlds, models and NPCs, in the format of views.txt.
+mp/ffa3   ffa3_spawn1   -1208 -912 228   0 360 0   12345
+mp/ctf4   ctf4_up       544 1824 -260    -25 270 0   12345
+mp/duel2  duel2_fog_above  -4440 2088 -800     50 90 0   12345
+mp/duel9  duel9_fog_in     -32 1856 -985.6     0 0 0     12345
+mp/ffa1   ffa1_fog_in      3776 832 339.2      0 90 0    12345
+mp/ffa5   ffa5_rings    -2024 -1296 572   0 342 0   12345
+t3_stamp  stamp_cranes     -3584 0 1000   10 270 0   22000
+kor2      kor2_troopers  8208 1500 -3740   5 90 0    12345
+academy1  academy1_class   -1400 -1260 790   15 90 0   12345
+yavin1    yavin1_students  3990 -120 30   15 90 0   12345

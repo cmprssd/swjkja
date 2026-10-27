@@ -1,10 +1,16 @@
 # How swjkja works
 
 A guided tour of the project: what it builds, how the code is laid out, how every
-change is proven against the original game, and how the work itself is run. Numbers
-are as of 2026-10-17 (the history up to PR #65, the views' scores with PR #67)
-unless a section says otherwise; [BASELINE.md](BASELINE.md) holds every
-measurement in full and [DECISIONS.md](DECISIONS.md) every choice with its reason.
+change is proven against the original game, and how the work itself is run.
+[BASELINE.md](BASELINE.md) holds every measurement in full and
+[DECISIONS.md](DECISIONS.md) every choice with its reason. The pictures and videos
+of the same story, before and after, are on the [progress page](#progress-page).
+
+<!-- progress:asof -->
+Numbers in the generated parts below are as of 2026-10-27 (through PR #108), counted
+by `scripts/progress.py`.
+<!-- /progress -->
+The hand-written parts (speed, the retail files read) give their own dates.
 
 ## What it is
 
@@ -59,8 +65,11 @@ that differs instead of being guessed at from pixels.
 
 ## Architecture
 
-Ten crates in one Cargo workspace, about 28,600 lines of Rust plus 513 lines of
-WGSL shaders. Each crate maps to one part of the original engine.
+<!-- progress:code -->
+10 crates in one Cargo workspace, 37,300 lines of Rust (sources, tests and examples)
+plus 630 lines of WGSL shaders, 344 tests. Each crate maps to one part of the
+original engine.
+<!-- /progress -->
 
 ```mermaid
 flowchart BT
@@ -83,22 +92,23 @@ flowchart BT
     render & world --> app
 ```
 
+<!-- progress:crates -->
 | Crate | Rust lines | Tests | What it does | The original's counterpart |
 |------|------:|------:|------|------|
 | `fs` | 905 | 13 | `.pk3` (zip) archives, the search order across them | `files.cpp` |
-| `bsp` | 1,074 | 8 | parses and cross-checks the 57 retail maps | `tr_bsp.cpp`, `cm_load.cpp` |
-| `image` | 651 | 13 | decodes textures as the original does | `tr_image*.cpp` |
+| `bsp` | 1,113 | 9 | parses and cross-checks the 57 retail maps | `tr_bsp.cpp`, `cm_load.cpp` |
+| `image` | 1,936 | 17 | decodes textures as the original does | `tr_image*.cpp` |
 | `console` | 1,011 | 12 | command buffer, cvars, config files | `cmd.cpp`, `cvar.cpp` |
 | `icarus` | 307 | 1 | reads compiled ICARUS scripts | `icarus/` |
-| `shader` | 2,906 | 27 | `.shader` scripts and which material a surface draws | `tr_shader.cpp` |
+| `shader` | 3,134 | 28 | `.shader` scripts and which material a surface draws | `tr_shader.cpp` |
 | `model` | 2,499 | 32 | MD3 and Ghoul2 (`.glm`/`.gla`) meshes, skins, animation | `tr_model.cpp`, `ghoul2/` |
-| `world` | 9,078 | 97 | patches, stitching, light grid, entities as they spawn, NPCs, scripts, box traces, shadows, the game's random numbers | `tr_curve.cpp`, `g_*.cpp`, `NPC_*.cpp`, `Q3_Interface.cpp` |
-| `render` | 9,225 | 46 | Vulkan renderer: materials stage by stage, fog, sky, deforms, flares, culling, models skinned on the GPU, frames in flight | `tr_*.cpp` (the vanilla renderer) |
+| `world` | 12,798 | 142 | patches, stitching, light grid, entities as they spawn, NPCs, scripts, box traces, shadows, the game's random numbers | `tr_curve.cpp`, `g_*.cpp`, `NPC_*.cpp`, `Q3_Interface.cpp` |
+| `render` | 12,647 | 83 | Vulkan renderer: materials stage by stage, fog, sky, deforms, flares, culling, models skinned on the GPU, frames in flight | `tr_*.cpp` (the vanilla renderer) |
 | `swjkja` | 950 | 7 | the map viewer window and its loading screen | `cl_*.cpp` (a small part) |
+<!-- /progress -->
 
-Tests total 256; the ones that read retail data run on the Windows side against the
-owner's install, and every retail file of each kind is checked, not a sample (see
-below).
+The tests that read retail data run on the Windows side against the owner's install,
+and every retail file of each kind is checked, not a sample (see below).
 
 ## The process
 
@@ -127,7 +137,9 @@ Rules that shape it:
   the result (for example "check with a new pistol-stance view" or "only the existing
   ones"), with a recommendation. Choices that come up mid-build are made by Claude,
   marked *decided by Claude, pending review* in DECISIONS.md, and listed in the PR.
-  So far: 49 decision entries, 9 chosen by the owner, 37 made by Claude for review.
+  <!-- progress:process -->
+  So far: 71 decision entries, 15 chosen by the owner, 52 made by Claude for review.
+  <!-- /progress -->
 - **$0 development.** No GitHub Actions: `.local-ci` runs on this machine (format,
   shell syntax, a build of exactly the committed tree, then clippy and tests on
   Linux/WSL and on Windows/MSVC in parallel) and posts a `local-ci` status to the
@@ -146,17 +158,19 @@ Rules that shape it:
 
 ### History
 
-66 commits, 65 merged PRs in 11 days (2026-10-07 to 2026-10-17, on 7 of them):
-48 features, 7 fixes, 4 benchmark, 3 docs, 2 chores, 1 CI. About 39,600 lines
-added and 3,200 removed across 135 tracked files.
+<!-- progress:history -->
+123 commits, 109 merged PRs from 2026-10-07 to 2026-10-27, on 12 working days: 59
+feat, 33 fix, 10 docs, 4 bench, 2 chore, 1 ci. About 52,312 lines added and 4,070
+removed; 155 tracked files.
 
 ```mermaid
 xychart-beta
     title "PRs merged per working day"
-    x-axis ["Oct 7", "Oct 10", "Oct 11", "Oct 14", "Oct 15", "Oct 16", "Oct 17"]
+    x-axis ["Oct 7", "Oct 10", "Oct 11", "Oct 14", "Oct 15", "Oct 16", "Oct 17", "Oct 18", "Oct 19", "Oct 21", "Oct 26", "Oct 27"]
     y-axis "PRs" 0 --> 25
-    bar [23, 19, 9, 1, 2, 8, 3]
+    bar [23, 19, 9, 1, 2, 8, 10, 10, 8, 9, 8, 2]
 ```
+<!-- /progress -->
 
 ```mermaid
 timeline
@@ -165,7 +179,10 @@ timeline
     Oct 10 : Frames in flight, viewer window, loading screen : Speed goal met : MD3 and static models : Ghoul2, rack weapons, NPCs standing
     Oct 11 : NPCs hold weapons, dropped to the floor : Animated, skinned on the GPU, blending : Brush entities and their models
     Oct 14-15 : Rotating entities turn : ICARUS scripts read, spawnscripts run
-    Oct 16-17 : Look targets, cinematic skeletons : Level scripts and intros : The original's random numbers : Blob shadows, spine turn, more light
+    Oct 16-17 : Look targets, cinematic skeletons : Level scripts and intros : The original's random numbers : Blob shadows, spine turn, more light : Surface sprites (grass)
+    Oct 18-19 : 10-bit blending, libjpeg 9a JPEGs, curve LOD : Scripts move and turn brush entities, triggers used : Sky portals
+    Oct 21 : Specular and environment maps in model space : The original's fast inverse square root : Rack goods spread as the original's
+    Oct 26-27 : Weather entities and rain : NPCs turn as scripts ask : NPCs walk to their navgoals
 ```
 
 ### Every retail file, read
@@ -181,28 +198,34 @@ timeline
 
 ### How close the pictures are
 
-47 reference views, 1280x720, rendered by both engines and compared (mean absolute
-difference per channel, 0-255; measured 2026-10-19):
+<!-- progress:views -->
+58 reference views, 1280x720, rendered by both engines and compared (mean absolute
+difference per channel, 0-255; measured 2026-10-27 at PR #108):
 
 | Kind | Views | Mean difference |
 |------|------:|------|
 | Multiplayer world (sky, fog, fog volumes, flares, animated stages, curve LOD) | 19 | 0.00-0.03 |
-| Static and brush-entity models, rotating fans and drums | 18 | 0.00-3.75 |
-| Single-player NPCs (spawned, scripted, academy classes, yavin1's shuttle) | 10 | 0.01-0.09 |
-| **All** | **47** | **median 0.01; 44 under 0.5, 46 under 1.0** |
+| Static and brush-entity models, rotating fans and drums | 18 | 0.00-3.73 |
+| Single-player NPCs (spawned, scripted, turned, walked) | 21 | 0.00-0.24 |
+| **All** | **58** | **median 0.01; 56 under 0.5, 57 under 1.0** |
 
 ```mermaid
 xychart-beta
-    title "Views by mean difference (47 views)"
+    title "Views by mean difference (58 views)"
     x-axis ["< 0.25", "0.25-0.5", "0.5-1", "1-2", "> 2"]
-    y-axis "views" 0 --> 45
-    bar [42, 2, 2, 0, 1]
+    y-axis "views" 0 --> 59
+    bar [56, 0, 1, 0, 1]
 ```
 
-The one view above 2 is explained and is not a renderer error: ffa5_pipes (3.75)
-has the original's first-person lightsaber, which its `cg_drawGun 0` doesn't hide.
-dpred_guns (0.97) is the rack weapons, which the original turns slightly at random.
-danger_rock's distant peaks (5.19 until 2026-10-19) were its sky portal's scene.
+The largest: ffa5_pipes (3.73), hevil_fan_west (0.63), academy3_luke_walking (0.24).
+<!-- /progress -->
+
+Explained, and not renderer errors: ffa5_pipes has the original's first-person
+lightsaber, which its `cg_drawGun 0` doesn't hide; hevil_fan_west shows the effects
+(`fx_runner`, t3_hevil's dust) swjkja doesn't draw yet; academy3_luke_walking is
+Luke's stride mid-walk, his cinematic animation starting 36 ms apart (BASELINE.md,
+2026-10-27). danger_rock's distant peaks (5.19 until 2026-10-19) were its sky
+portal's scene.
 
 How the world views got there, step by step (the worst of the first 11 multiplayer
 views, on 2026-10-07 and 2026-10-10):
