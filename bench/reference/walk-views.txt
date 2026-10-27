@@ -6,3 +6,8 @@
 # where he stands to lukeNav1 (SET_NAVGOAL, from 14,750 ms here), BOTH_CIN_1 held;
 # the player stands 64 units behind the eye, clear of the east wall.
 academy3  academy3_luke_walking   -1180 -1440 780   10 175 0   16500   64
+# t1_sour_intro_walking looks across the yard as t1_sour's intro walks Kyle
+# (npc_fakeKyleIntro) and the player's stand-in (npc_fakePlayerIntro, walkSpeed 90)
+# to introNav1 from the moment the player begins, their legs free: BOTH_WALK1
+# (PM_Footsteps), their torsos with them.
+t1_sour   t1_sour_intro_walking   6359 -2708 70   5 162 0   3500   64

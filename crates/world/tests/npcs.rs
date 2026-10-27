@@ -512,7 +512,13 @@ fn npcs_hold_their_weapons_and_stand_with_them() {
     // No weapon for this type from its team (an ugnaught): an imperial's stance.
     assert_eq!(
         gear("ugnaught_imp", 0),
-        (pose("BOTH_STAND4", "BOTH_STAND4"), vec![])
+        (
+            Pose {
+                unarmed: true,
+                ..pose("BOTH_STAND4", "BOTH_STAND4")
+            },
+            vec![]
+        )
     );
     // A reborn officer's pistols, one in each hand, arms down.
     let pistol = "models/weapons2/blaster_pistol/blaster_pistol_w.glm";

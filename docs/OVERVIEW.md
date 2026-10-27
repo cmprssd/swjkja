@@ -66,8 +66,8 @@ that differs instead of being guessed at from pixels.
 ## Architecture
 
 <!-- progress:code -->
-10 crates in one Cargo workspace, 37,300 lines of Rust (sources, tests and examples)
-plus 630 lines of WGSL shaders, 344 tests. Each crate maps to one part of the
+10 crates in one Cargo workspace, 37,417 lines of Rust (sources, tests and examples)
+plus 630 lines of WGSL shaders, 345 tests. Each crate maps to one part of the
 original engine.
 <!-- /progress -->
 
@@ -102,7 +102,7 @@ flowchart BT
 | `icarus` | 307 | 1 | reads compiled ICARUS scripts | `icarus/` |
 | `shader` | 3,134 | 28 | `.shader` scripts and which material a surface draws | `tr_shader.cpp` |
 | `model` | 2,499 | 32 | MD3 and Ghoul2 (`.glm`/`.gla`) meshes, skins, animation | `tr_model.cpp`, `ghoul2/` |
-| `world` | 12,798 | 142 | patches, stitching, light grid, entities as they spawn, NPCs, scripts, box traces, shadows, the game's random numbers | `tr_curve.cpp`, `g_*.cpp`, `NPC_*.cpp`, `Q3_Interface.cpp` |
+| `world` | 12,915 | 143 | patches, stitching, light grid, entities as they spawn, NPCs, scripts, box traces, shadows, the game's random numbers | `tr_curve.cpp`, `g_*.cpp`, `NPC_*.cpp`, `Q3_Interface.cpp` |
 | `render` | 12,647 | 83 | Vulkan renderer: materials stage by stage, fog, sky, deforms, flares, culling, models skinned on the GPU, frames in flight | `tr_*.cpp` (the vanilla renderer) |
 | `swjkja` | 950 | 7 | the map viewer window and its loading screen | `cl_*.cpp` (a small part) |
 <!-- /progress -->
@@ -138,7 +138,7 @@ Rules that shape it:
   ones"), with a recommendation. Choices that come up mid-build are made by Claude,
   marked *decided by Claude, pending review* in DECISIONS.md, and listed in the PR.
   <!-- progress:process -->
-  So far: 71 decision entries, 15 chosen by the owner, 52 made by Claude for review.
+  So far: 72 decision entries, 15 chosen by the owner, 53 made by Claude for review.
   <!-- /progress -->
 - **$0 development.** No GitHub Actions: `.local-ci` runs on this machine (format,
   shell syntax, a build of exactly the committed tree, then clippy and tests on

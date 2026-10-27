@@ -1155,6 +1155,7 @@ pub fn npc_gear(
         Pose {
             legs,
             torso,
+            unarmed: weapon_number == 0,
             still_since: 0,
             script: None,
             bad_bones: bad_bones(class),
@@ -1270,6 +1271,7 @@ pub fn npc_models(
             }
             if first.unarmed {
                 (pose.legs, pose.torso) = stance(&look.class, 0, false);
+                pose.unarmed = true;
                 attached.clear();
             }
             let folder = format!("models/players/{}/", look.model);

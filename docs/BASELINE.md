@@ -2362,3 +2362,21 @@ at 21,000, once he has arrived and turned to 269.
   was 0.24.
 - No kept view changes: the 56 kept views render byte for byte as before (main's
   build in its own worktree and target folder).
+
+## Walking NPCs' legs, 2026-10-27 (not merged: positions first)
+
+t1_sour's intro walks Kyle (`npc_fakeKyleIntro`) and the player's stand-in
+(`npc_fakePlayerIntro`, walkSpeed 90) to introNav1 from the moment the player
+begins, legs free. The original, traced with their AI running (`WALK=1`), moves them
+from 2100 ms; here from 2050, straight, where its first think follows the nav graph
+(DECISIONS.md, 2026-10-27): at 3550 ms they stand 9 and 23 units from where the
+trace has them. The view (`bench/reference/walk-views.txt`) looks across the yard at
+3500 ms.
+
+| View | Walking legs | Stance (main) |
+|------|------|------|
+| t1_sour_intro_walking | 2.02 (3.3%) | 1.82 (3.1%) |
+
+- Both walk mid-stride in both engines; the offset in position outweighs the stride.
+- No other view changes: the 58 others render byte for byte as on main (main's build
+  in its own worktree and target folder).

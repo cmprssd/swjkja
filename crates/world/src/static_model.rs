@@ -137,6 +137,8 @@ pub struct Pose {
     /// How fast it walks and runs ([`crate::npc::NpcLook::walk_speed`]).
     pub walk_speed: f32,
     pub run_speed: f32,
+    /// Whether it holds no weapon (`WP_NONE`) as it begins.
+    pub unarmed: bool,
     /// Where a script's view target is measured from or to (`SET_VIEWTARGET`):
     /// its origin raised by its view height (`maxs[2]` + `STANDARD_VIEWHEIGHT_OFFSET`).
     pub eyes: Vec3,

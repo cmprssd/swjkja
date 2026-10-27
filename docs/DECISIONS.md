@@ -1225,3 +1225,29 @@ and drawing such pipes some other way, would match no view held still.
   the traces here hit no NPCs) are left out.
 - **It is drawn from snapshot to snapshot**, as its turns are; what looks at it and
   its shadow follow it.
+
+## 2026-10-27: How walking NPCs move their legs (decided by Claude, pending review)
+
+- **The command picks the animation**: each think's steering also gives the NPC a
+  command (`STEER::DeActivate`: `forwardmove` and `rightmove`, the move direction
+  against its current yaw times 127, floored; `BUTTON_WALKING` under its walking
+  speed plus 5), replayed until the next think and cleared by a think that does not
+  steer. A command that moves it plays `BOTH_WALK1` or `BOTH_RUN1` on legs not held
+  (`PM_Footsteps`), `BOTH_WALKBACK1` or `BOTH_RUNBACK1` while its last forward or
+  backward move went back (`PMF_BACKWARDS_RUN`); the torso plays what the legs do
+  (`PM_TorsoAnimation`), but for an armed NPC backing up, which keeps its stance's
+  torso (its weapon's own choice is not modelled). The ATST, rancor, wampa, jawa
+  and Galak mech's own walks, and lit sabers' (`BOTH_WALK2`...), are left out.
+- **Found: late in an intro the original's clock drifts from ours.** academy6's
+  hangar walks (kyle2, jaden2) start 350 and 700 ms earlier in the original than
+  here: a voice line plays out when the client's mixer has painted its last sample
+  (`G_CheckTasksCompleted`), and the mixer runs in real time, ahead of what is
+  heard, so a capture's line can end well before its length (2026-10-26's lag
+  fits academy4's first lines, not these). A walking view is taken early instead.
+- **Found: the first think takes the nav grid, and it shows.** t1_sour's intro
+  walks Kyle and the player's stand-in to introNav1 from 2050 ms; the original's
+  first think steers them along the nav graph's path (headings 288 and 317, not
+  the goal's 238 and 252), then straight from the next. They walk on 9 and 23
+  units off the straight path, and the frame after ours. Until the nav grid is
+  modelled, t1_sour_intro_walking scores worse walking (2.02) than sliding in the
+  stance (1.82): the strides match the original's, the positions do not.

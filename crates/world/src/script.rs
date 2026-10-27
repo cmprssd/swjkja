@@ -438,6 +438,14 @@ struct Walk {
     /// trace keeps it safe ("SafeToGoToDURATION").
     check: Option<i32>,
     safe_until: Option<i32>,
+    /// The command its last think gave (`ucmd`, replayed until the next):
+    /// `forwardmove`, `rightmove`, and whether it presses `BUTTON_WALKING`.
+    forward: i32,
+    right: i32,
+    walking: bool,
+    /// `PMF_BACKWARDS_RUN`: the last command that moved it forward or back moved
+    /// it back.
+    backwards: bool,
 }
 
 fn sub(a: Vec3, b: Vec3) -> Vec3 {
@@ -657,7 +665,8 @@ impl<'a> Body<'a> {
     /// the radius, at its walking or running speed) less its velocity, at most
     /// [`MAX_FORCE`], added to its velocity at most that speed, sets its move
     /// direction, its speed (none under 10; three quarters while it backs up, a
-    /// whole number) and the yaw it turns to. A path that is not safe takes the
+    /// whole number), the yaw it turns to and, with any speed, its command (walking
+    /// under its walking speed and 5). A path that is not safe takes the
     /// nav grid in the original (`NAV::GoTo`), not modelled: it does not steer.
     fn steer(&mut self, goal: Vec3, radius: f32, level: i32, world: &Collision) {
         let max = if self.walk.running {
@@ -702,9 +711,13 @@ impl<'a> Body<'a> {
         // ps.speed is a whole number.
         w.speed = speed as i32 as f32;
         if speed > 0.0 {
+            // The command, from its current angles (AngleVectors' forward and right).
             let yaw = self.view[1].to_radians();
-            let forward = (yaw.cos() * w.dir[0] + yaw.sin() * w.dir[1]) * 127.0;
-            if forward.clamp(-127.0, 127.0).floor() < 0.0 {
+            let dot = |x: f32, y: f32| (x * w.dir[0] + y * w.dir[1]) * 127.0;
+            w.forward = dot(yaw.cos(), yaw.sin()).clamp(-127.0, 127.0).floor() as i32;
+            w.right = dot(yaw.sin(), -yaw.cos()).clamp(-127.0, 127.0).floor() as i32;
+            w.walking = speed < self.stance.walk_speed + 5.0;
+            if w.forward < 0 {
                 w.speed = (w.speed * 0.75) as i32 as f32;
             }
         }
@@ -902,10 +915,17 @@ impl<'a> Actor<'a> {
     }
 
     /// The movement frame of level frame `level`, `msec` after the last: the timers
-    /// count down (`PM_DropTimers`), the stance returns to parts no longer held
-    /// (`PM_Footsteps`, `PM_TorsoAnimation`, which play an animation the skeleton
-    /// has, without restarting it), then `G_CheckClientIdle`. Nothing for an actor
-    /// without a body.
+    /// count down (`PM_DropTimers`), it walks ([`Body::walk_move`]), parts no longer
+    /// held play what its command asks (`PM_Footsteps`, `PM_TorsoAnimation`, which
+    /// play an animation the skeleton has, without restarting it), then
+    /// `G_CheckClientIdle`. Nothing for an actor without a body.
+    ///
+    /// A command that moves it walks or runs its legs, forward or back
+    /// (`BOTH_WALK1`, `BOTH_RUN1`, `BOTH_WALKBACK1`, `BOTH_RUNBACK1`), its torso
+    /// with them, but for an armed NPC backing up (its weapon's animation, not
+    /// modelled: it keeps its stance's); otherwise both parts return to the stance.
+    /// The classes that walk or run otherwise (the ATST, rancor, wampa, jawa, Galak
+    /// mech) and lit sabers are not modelled.
     fn movement(&mut self, level: i32, msec: i32, world: &Collision) {
         if self.body.is_none() {
             return;
@@ -924,11 +944,34 @@ impl<'a> Actor<'a> {
         }
         let moving =
             body.walk.velocity != [0.0; 3] || (body.walk.dir != [0.0; 3] && body.walk.speed > 0.0);
-        for (p, anim) in [(0, body.stance.legs), (1, body.stance.torso)] {
-            let has = (body.holds)(anim).is_some();
-            if body.parts[p].timer == 0 && has && body.parts[p].anim != anim {
-                body.play(p, anim, level);
-            }
+        let w = &mut body.walk;
+        if w.forward < 0 {
+            w.backwards = true;
+        } else if w.forward > 0 || w.right != 0 {
+            w.backwards = false;
+        }
+        let legs = match (w.forward != 0 || w.right != 0, w.backwards, w.walking) {
+            (false, ..) => body.stance.legs,
+            (true, false, true) => "BOTH_WALK1",
+            (true, false, false) => "BOTH_RUN1",
+            (true, true, true) => "BOTH_WALKBACK1",
+            (true, true, false) => "BOTH_RUNBACK1",
+        };
+        let holds = body.holds;
+        let has = |anim| holds(anim).is_some();
+        if body.parts[0].timer == 0 && has(legs) && body.parts[0].anim != legs {
+            body.play(0, legs, level);
+        }
+        let legs = body.parts[0].anim.as_str();
+        let unarmed = body.unarmed.last().map_or(body.stance.unarmed, |u| u.1);
+        let torso = match legs {
+            "BOTH_WALK1" | "BOTH_RUN1" => legs,
+            "BOTH_WALKBACK1" | "BOTH_RUNBACK1" if unarmed => legs,
+            _ => body.stance.torso,
+        };
+        if body.parts[1].timer == 0 && has(torso) && body.parts[1].anim != torso {
+            let torso = torso.to_owned();
+            body.play(1, &torso, level);
         }
         let [legs, torso] = &body.parts;
         let mut idle = None;
@@ -1090,14 +1133,15 @@ impl<'a> Actor<'a> {
     /// (its task pending: the AI then runs, [`Walk`]), every [`BSTATE_MS`]: once
     /// it has reached the goal (`UpdateGoal`) the goal clears and the task
     /// completes, else it steers there ([`Body::steer`]). Returns whether it
-    /// thought, and whether it was unfrozen; a frozen NPC's move direction clears
-    /// (`NPC_Think`).
+    /// thought, and whether it was unfrozen; a frozen NPC's move direction and
+    /// command clear (`NPC_Think`).
     fn think(&mut self, level: i32, world: &Collision) -> (bool, bool) {
         let Some(body) = &mut self.body else {
             return (false, false);
         };
         let Some(task) = body.slots[NAV] else {
             body.walk.dir = [0.0; 3];
+            (body.walk.forward, body.walk.right) = (0, 0);
             return (false, false);
         };
         if body.walk.next_think > level {
@@ -1105,6 +1149,7 @@ impl<'a> Actor<'a> {
         }
         body.walk.next_think = level + BSTATE_MS;
         body.walk.dir = [0.0; 3];
+        (body.walk.forward, body.walk.right) = (0, 0);
         let (goal, radius) = body.walk.goal.expect("a pending navgoal's goal");
         if body.reached(goal, radius) {
             body.walk.goal = None;
