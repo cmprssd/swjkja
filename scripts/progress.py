@@ -208,8 +208,9 @@ def median(xs):
 def blocks(s):
     """The text of each generated block, by name."""
     b = {}
+    # Counted, not named by number: a branch counts its own PR before it has one.
     b["asof"] = (f"Numbers in the generated parts below are as of {s['as_of']} "
-                 f"(through PR #{s['last_pr']}), counted by `scripts/progress.py`.")
+                 f"({s['prs']} merged PRs), counted by `scripts/progress.py`.")
     b["code"] = (f"{len(s['crates'])} crates in one Cargo workspace, {s['rust_lines']:,} lines of Rust "
                  f"(sources, tests and examples) plus {s['wgsl_lines']:,} lines of WGSL shaders, "
                  f"{s['tests']} tests. Each crate maps to one part of the original engine.")
