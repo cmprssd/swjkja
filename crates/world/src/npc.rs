@@ -591,6 +591,10 @@ pub struct NpcLook {
     pub color: [u8; 4],
     /// "yawSpeed" (`stats.yawSpeed`): 90 unless the block gives more than 0.
     pub yaw_speed: f32,
+    /// "walkSpeed" and "runSpeed" (`stats.walkSpeed`, `runSpeed`): 90 and 300
+    /// unless the block gives 0 or more.
+    pub walk_speed: f32,
+    pub run_speed: f32,
 }
 
 /// "playerTeam" (`team_t`): any other name is no team the game knows, which acts
@@ -635,6 +639,7 @@ pub fn npc_look(
     let mut sabers = [None, None];
     let mut color = [255; 4];
     let mut yaw_speed = 90.0;
+    let (mut walk_speed, mut run_speed) = (90.0, 300.0);
     let mut two_handed = false;
     loop {
         let token = p.token(true);
@@ -696,6 +701,16 @@ pub fn npc_look(
             "yawspeed" => {
                 if let Some(n) = number().filter(|&n| n > 0) {
                     yaw_speed = n as f32;
+                }
+            }
+            "walkspeed" => {
+                if let Some(n) = number().filter(|&n| n >= 0) {
+                    walk_speed = n as f32;
+                }
+            }
+            "runspeed" => {
+                if let Some(n) = number().filter(|&n| n >= 0) {
+                    run_speed = n as f32;
                 }
             }
             "rank" if !value.is_empty() => {
@@ -813,6 +828,8 @@ pub fn npc_look(
         sabers,
         color,
         yaw_speed,
+        walk_speed,
+        run_speed,
     })
 }
 
@@ -1269,6 +1286,11 @@ pub fn npc_models(
                 name: n.targetname,
                 yaw: n.angles[1],
                 yaw_speed: yaw_speed(&look, &n.npc_type),
+                origin: at,
+                mins: look.mins,
+                maxs: look.maxs,
+                walk_speed: look.walk_speed,
+                run_speed: look.run_speed,
                 eyes: [
                     at[0],
                     at[1],

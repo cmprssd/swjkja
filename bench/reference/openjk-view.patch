@@ -213,16 +213,77 @@ index 7cf2db8..92c3e8f 100644
  	{
  		PlayCinematic(arg,NULL,qtrue);
 diff --git a/code/game/NPC.cpp b/code/game/NPC.cpp
-index d1c794e..0cb9b9e 100644
+index d1c794e..3feb12a 100644
 --- a/code/game/NPC.cpp
 +++ b/code/game/NPC.cpp
-@@ -2380,6 +2380,13 @@ void NPC_Think ( gentity_t *self)//, int msec )
+@@ -2276,6 +2276,12 @@ void NPC_ExecuteBState ( gentity_t *self)//, int msec )
+ 	// run the bot through the server like it was a real client
+ //=== Save the ucmd for the second no-think Pmove ============================
+ 	ucmd.serverTime = level.time - 50;
++	// swjkja reference capture: with d_npcfreeze 3 an NPC's commands stay 1000 ms
++	// behind the level's, as a frozen NPC's do, so each moves it 50 ms.
++	if ( debugNPCFreeze->integer == 3 )
++	{
++		ucmd.serverTime = level.time - 1000;
++	}
+ 	memcpy( &NPCInfo->last_ucmd, &ucmd, sizeof( usercmd_t ) );
+ 	if ( !NPCInfo->attackHoldTime )
+ 	{
+@@ -2362,8 +2368,38 @@ Main NPC AI - called once per frame
+ #if	AI_TIMERS
+ extern int AITime;
+ #endif//	AI_TIMERS
++// swjkja reference capture: with d_npcfreeze 3, logs a walking NPC (one with a
++// navgoal or still moving) as each think ends: its origin, velocity, speed, view's
++// yaw and where it turns to, its move direction, and whether its behavior thought.
++struct SwjkjaWalkLog
++{
++	gentity_t	*self;
++	int			bstate;
++	~SwjkjaWalkLog()
++	{
++		if ( debugNPCFreeze->integer != 3 || !self->NPC || !self->client || !self->inuse )
++		{
++			return;
++		}
++		const playerState_t &ps = self->client->ps;
++		if ( !Q3_TaskIDPending( self, TID_MOVE_NAV ) && !VectorLengthSquared( ps.velocity ) )
++		{
++			return;
++		}
++		gi.Printf( "swjkja walk %s %d %s %.4f %.4f %.4f %.4f %.4f %.4f %d %.4f %.4f %.4f %.4f %.4f %d\n",
++			self->script_targetname ? self->script_targetname : "-", level.time,
++			Q3_TaskIDPending( self, TID_MOVE_NAV ) ? "nav" : "-",
++			self->currentOrigin[0], self->currentOrigin[1], self->currentOrigin[2],
++			ps.velocity[0], ps.velocity[1], ps.velocity[2], ps.speed,
++			ps.viewangles[YAW], self->NPC->desiredYaw,
++			ps.moveDir[0], ps.moveDir[1], ps.moveDir[2],
++			self->NPC->nextBStateThink != bstate );
++	}
++};
++
+ void NPC_Think ( gentity_t *self)//, int msec )
+ {
++	SwjkjaWalkLog swjkjaWalkLog = { self, self->NPC ? self->NPC->nextBStateThink : 0 };
+ 	vec3_t	oldMoveDir;
+ 
+ 	self->nextthink = level.time + FRAMETIME/2;
+@@ -2375,11 +2411,21 @@ void NPC_Think ( gentity_t *self)//, int msec )
+ 	VectorCopy( self->client->ps.moveDir, oldMoveDir );
+ 	VectorClear( self->client->ps.moveDir );
+ 	// see if NPC ai is frozen
+-	if ( debugNPCFreeze->integer || (NPC->svFlags&SVF_ICARUS_FREEZE) )
++	// swjkja reference capture: d_npcfreeze 3 freezes the AI as 2 does, but for an
++	// NPC walking to a script's navgoal.
++	if ( (debugNPCFreeze->integer && !(debugNPCFreeze->integer == 3 && Q3_TaskIDPending( self, TID_MOVE_NAV )))
++		|| (NPC->svFlags&SVF_ICARUS_FREEZE) )
+ 	{
  		NPC_UpdateAngles( qtrue, qtrue );
  		ClientThink(self->s.number, &ucmd);
  		VectorCopy(self->s.origin, self->s.origin2 );
-+		// swjkja reference capture: d_npcfreeze 2 freezes the AI only; scripts run
++		// swjkja reference capture: d_npcfreeze 2 (and 3) freezes the AI only; scripts run
 +		// as they do after an unfrozen think.
-+		if ( debugNPCFreeze->integer == 2 && !(NPC->svFlags&SVF_ICARUS_FREEZE)
++		if ( debugNPCFreeze->integer >= 2 && !(NPC->svFlags&SVF_ICARUS_FREEZE)
 +			&& self->m_iIcarusID != IIcarusInterface::ICARUS_INVALID && !stop_icarus )
 +		{
 +			IIcarusInterface::GetIcarus()->Update( self->m_iIcarusID );
@@ -230,6 +291,15 @@ index d1c794e..0cb9b9e 100644
  		return;
  	}
  
+@@ -2511,7 +2557,7 @@ void NPC_Think ( gentity_t *self)//, int msec )
+ 		}
+ 		VectorCopy( oldMoveDir, self->client->ps.moveDir );
+ 		//or use client->pers.lastCommand?
+-		NPCInfo->last_ucmd.serverTime = level.time - 50;
++		NPCInfo->last_ucmd.serverTime = level.time - (debugNPCFreeze->integer == 3 ? 1000 : 50);
+ 		if ( !NPC->next_roff_time || NPC->next_roff_time < level.time )
+ 		{//If we were following a roff, we don't do normal pmoves.
+ 			//FIXME: firing angles (no aim offset) or regular angles?
 diff --git a/code/game/Q3_Interface.cpp b/code/game/Q3_Interface.cpp
 index eb344d2..b2f6336 100644
 --- a/code/game/Q3_Interface.cpp

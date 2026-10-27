@@ -2330,3 +2330,35 @@ front at 48,500 ms, his head turned to Luke.
   before (none reaches a turn); the 22 multiplayer views run no scripts.
 - The original's eyes face 276.9 degrees in the capture log (270, and 6.0 of his
   look at Luke).
+
+## NPCs walked to their navgoals, 2026-10-27
+
+academy3's intro walks Luke (`npc_luke1`, walkSpeed 55) from where he stands to
+lukeNav1, 180 units away ("task lukeNav1": `SET_NAVGOAL`), `BOTH_CIN_1` held. The
+original, traced with his AI running (`WALK=1`, `d_npcfreeze 3`; DECISIONS.md,
+2026-10-27), sets the goal at 14,800 ms, walks him 78 frames and completes the task
+at 18,750; here the goal is set a frame earlier (14,750: the voice line before it
+ends a frame apart, DECISIONS.md, 2026-10-26), and every one of the 78 frames
+leaves him where the trace has him a frame later, to its four decimals, the task
+completing a frame earlier too. Two views (`bench/reference/walk-views.txt`,
+`walked-views.txt`) look west across the room's south end, mid-walk at 16,500 ms and
+at 21,000, once he has arrived and turned to 269.
+
+| View | Mean difference (unwalked) | Pixels off by > 16 (unwalked) |
+|------|------|------|
+| academy3_luke_walking | 0.24 (2.99) | 0.3% (3.6%) |
+| academy3_luke_walked | 0.01 (3.05) | 0.0% (5.3%) |
+
+- Mid-walk, cgame draws Luke at -1319.4 -1419.5 (its log), where he is here: the
+  capture draws the game's last snapshot, a frame after the view's time, and the
+  goal here comes a frame early. What differs is his stride: his `BOTH_CIN_1`
+  starts at 14,736 on the original's clock, at 14,700 here.
+- The mean colour over his torso in the walked view (x 200-219, y 300-319) is
+  30.32 29.82 29.98 here and in the reference, 93.94 90.81 88.07 unwalked (the wall).
+  `a_script_walks_an_npc_to_its_navgoal` (`crates/render/tests/retail.rs`) checks it
+  to 0.3; `a_script_walks_its_npc_straight_to_a_navgoal`
+  (`crates/world/tests/script.rs`) checks the traced frames.
+- His shadow follows him: drawn where he spawned, the walked view's mean difference
+  was 0.24.
+- No kept view changes: the 56 kept views render byte for byte as before (main's
+  build in its own worktree and target folder).

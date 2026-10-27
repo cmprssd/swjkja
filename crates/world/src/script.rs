@@ -27,9 +27,11 @@
 //! models scripts name move where `move` sends them (`Lerp2Pos`: to a `ref_tag` or a
 //! point, over its time, turning to its angles if it gives them), their task
 //! completing on the mover's first turn there, and turn as `rotate` turns them
-//! (`Lerp2Angles`), its task completing as the turn's time runs out. Commands that move an NPC
-//! (`SET_NAVGOAL`, `SET_ORIGIN`, ...) are left out (those that complete later never
-//! do, as with the AI frozen), and so are cameras (but when one is first enabled)
+//! (`Lerp2Angles`), its task completing as the turn's time runs out. An NPC walks to
+//! the navgoal a script sets (`SET_NAVGOAL`), its AI running until it gets there
+//! ([`Walk`]). Other commands that move an NPC (`SET_ORIGIN`, ...) are left out
+//! (those that complete later never do, as with the AI frozen), and so are cameras
+//! (but when one is first enabled)
 //! and the other commands. A random number is its range's low end
 //! (once the client runs, what the shared generator draws depends on frame timing:
 //! [`crate::rand`]); a `get` reads nothing (a condition with one is false).
@@ -40,6 +42,7 @@ use swjkja_icarus::{Block, Member, Node, id};
 
 use crate::Vec3;
 use crate::brush_entity::{Motion, Slide, slid};
+use crate::collision::{CONTENTS_BOTCLIP, Collision, MASK_NPCSOLID};
 use crate::static_model::{Pose, angle_normalize180, atof, vectoangles};
 
 /// The level time (ms) of the server's first frame on a map: four settling frames
@@ -104,6 +107,9 @@ pub struct Timeline {
     /// Its yaw (`ps.viewangles`) after each level frame that turns it: the level
     /// time and the yaw (degrees, -180..180).
     pub yaw: Vec<(i32, f32)>,
+    /// How far it has moved from where it began after each level frame that moves
+    /// it (walking to a navgoal): the level time and the offset.
+    pub moves: Vec<(i32, Vec3)>,
 }
 
 impl Timeline {
@@ -133,6 +139,28 @@ impl Timeline {
                     start: level - FRAME_MS,
                     from: [0.0, from, 0.0],
                     to: [0.0, to, 0.0],
+                    duration: FRAME_MS,
+                    linear: true,
+                };
+                from = to;
+                slide
+            })
+            .collect()
+    }
+
+    /// Its moves, for an NPC drawn at `origin` as it begins, as cgame draws them:
+    /// from each frame's origin to the next over the 50 ms between their snapshots
+    /// (`CG_InterpolateEntityPosition`).
+    pub fn slides(&self, origin: Vec3) -> Vec<Slide> {
+        let mut from = origin;
+        self.moves
+            .iter()
+            .map(|&(level, offset)| {
+                let to = [0, 1, 2].map(|k| origin[k] + offset[k]);
+                let slide = Slide {
+                    start: level - FRAME_MS,
+                    from,
+                    to,
                     duration: FRAME_MS,
                     linear: true,
                 };
@@ -180,6 +208,8 @@ const LOWER: usize = 1;
 const UPPER: usize = 2;
 /// The slot a turn's completion is kept in (`TID_ANGLE_FACE`).
 const FACE: usize = 3;
+/// The slot a navgoal's task is kept in (`TID_MOVE_NAV`).
+const NAV: usize = 4;
 
 /// `MIN_ANGLE_ERROR`: a view this close to where it is turning to is there.
 const MIN_ANGLE_ERROR: f32 = 0.01;
@@ -217,7 +247,6 @@ fn never_completes(name: &str) -> bool {
             | "SET_BEHAVIOR_STATE"
             | "SET_ENDFRAME"
             | "SET_LOCATION"
-            | "SET_NAVGOAL"
             | "SET_TELEPORT_DEST"
             | "SET_TEMP_BSTATE"
             | "SET_WIDTH"
@@ -352,8 +381,9 @@ struct Body<'a> {
     unarmed: Vec<(i32, bool)>,
     /// `client->idleTime`.
     idle_time: i32,
-    /// The task each slot (the animations', the turn's) waits on, if any.
-    slots: [Option<u32>; 4],
+    /// The task each slot (the animations', the turn's, the navgoal's) waits on,
+    /// if any.
+    slots: [Option<u32>; 5],
     /// Its view's pitch and yaw (`ps.viewangles`) and where it turns them to
     /// (`NPCInfo->desiredPitch`, `desiredYaw`).
     view: [f32; 2],
@@ -361,6 +391,72 @@ struct Body<'a> {
     /// `stats.yawSpeed`.
     yaw_speed: f32,
     yaw: Vec<(i32, f32)>,
+    walk: Walk,
+    moves: Vec<(i32, Vec3)>,
+}
+
+/// Milliseconds between an unfrozen NPC's behavior thinks (`nextBStateThink`,
+/// `FRAMETIME`); on the frames between, its last command plays again.
+const BSTATE_MS: i32 = 100;
+/// How much a think can change the velocity it steers by (`STEER::Activate`'s
+/// `mMaxForce`).
+const MAX_FORCE: f32 = 150.0;
+/// `ps.friction` (`ClientSpawn`), `pm_accelerate` and `pm_stopspeed`.
+const FRICTION: f32 = 6.0;
+const ACCELERATE: f32 = 12.0;
+const STOP_SPEED: f32 = 100.0;
+/// `STEPSIZE`: how far above its feet a walk's path trace sweeps its box
+/// (`MoveTrace`).
+const STEPSIZE: f32 = 18.0;
+/// `OVERCLIP`: how much more than touching a velocity is clipped off a plane.
+const OVERCLIP: f32 = 1.001;
+
+/// An NPC's walk to the navgoal a script sets (`SET_NAVGOAL`) and its movement.
+/// The captures freeze the AI but for an NPC whose navgoal's task is pending
+/// (`d_npcfreeze 3`), which thinks as in the game: every [`BSTATE_MS`] its behavior
+/// (`NPC_BSDefault`) completes the task once it has reached the goal, or steers it
+/// straight there (`STEER::GoTo`); the frames between replay its last command.
+#[derive(Debug, Default)]
+struct Walk {
+    /// Where it is (`currentOrigin`) and its velocity (`ps.velocity`).
+    origin: Vec3,
+    velocity: Vec3,
+    /// The navgoal (`tempGoal->currentOrigin`) and its radius (`goalRadius`), while
+    /// one is set.
+    goal: Option<(Vec3, f32)>,
+    /// `ps.moveDir` and `ps.speed` as its last think left them.
+    dir: Vec3,
+    speed: f32,
+    /// `lastPathAngles`' yaw: its velocity's when it last steered with any speed.
+    path_yaw: f32,
+    /// When its behavior next thinks (`nextBStateThink`).
+    next_think: i32,
+    /// `SCF_RUNNING`: it runs to its goals, else walks (`NPC_BSDefault` presses
+    /// `BUTTON_WALKING` unless it runs).
+    running: bool,
+    /// When its path is next traced ("SafeToGoToCHECK") and until when a clear
+    /// trace keeps it safe ("SafeToGoToDURATION").
+    check: Option<i32>,
+    safe_until: Option<i32>,
+}
+
+fn sub(a: Vec3, b: Vec3) -> Vec3 {
+    [0, 1, 2].map(|k| a[k] - b[k])
+}
+
+fn length(v: Vec3) -> f32 {
+    (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
+}
+
+/// `CVec3::Truncate`: `v` cut to `max` long; its length after.
+fn truncate(v: &mut Vec3, max: f32) -> f32 {
+    let len = length(*v);
+    if len > max && len > 1e-10 {
+        let scale = max / len;
+        *v = v.map(|x| x * scale);
+        return max;
+    }
+    len
 }
 
 /// An entity scripts move: where it spawns, its moves and turns, and the tasks
@@ -456,9 +552,14 @@ impl<'a> Body<'a> {
     /// frame `level`: each angle off by more than [`MIN_ANGLE_ERROR`] turns toward
     /// where it is going by `(60 + 3 yawSpeed) / 20` degrees (pitch at the same
     /// speed), the view kept in 65536ths of a turn (the command's angles, a
-    /// `short`); a yaw it turns is kept. Returns whether it was already there.
-    fn update_angles(&mut self, level: i32) -> bool {
+    /// `short`); a yaw it turns is kept. Returns whether it was already there. With
+    /// `apply` false its view stays (an unfrozen NPC between its thinks: the command
+    /// it replays keeps the angles of its last).
+    fn update_angles(&mut self, level: i32, apply: bool) -> bool {
         let exact = self.exact();
+        if !apply {
+            return exact;
+        }
         let yaw = self.view[1];
         let decay = (60.0 + self.yaw_speed * 3.0) * (50.0 / 1000.0);
         for k in 0..2 {
@@ -496,6 +597,168 @@ impl<'a> Body<'a> {
         } else {
             pitch
         };
+    }
+
+    /// `STEER::Reached`: whether `goal` is within `radius` of its origin or inside
+    /// its box (`absmin`, `absmax`: a unit larger all round).
+    fn reached(&self, goal: Vec3, radius: f32) -> bool {
+        let at = self.walk.origin;
+        let (mins, maxs) = (self.stance.mins, self.stance.maxs);
+        let d = sub(goal, at);
+        d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < radius * radius
+            || (0..3).all(|k| goal[k] > at[k] + mins[k] - 1.0 && goal[k] < at[k] + maxs[k] + 1.0)
+    }
+
+    /// `STEER::SafeToGoTo` at level time `level`: within 110 units (and 50 up or
+    /// down) of `goal`, or within 400 while a trace of its path keeps it safe (a
+    /// clear one every 1.5 s, safe for 2 s: `MoveTrace` of its box, raised by
+    /// [`STEPSIZE`] from below). The nav graph's check (`NAV::OnNeighboringPoints`)
+    /// and the first trace's think, which the original spends on the grid
+    /// (`NAV::GoTo`), go straight here.
+    fn safe_to_go(&mut self, goal: Vec3, level: i32, world: &Collision) -> bool {
+        let at = self.walk.origin;
+        let dist = length(sub(goal, at));
+        if dist < 110.0 && (goal[2] - at[2]).abs() < 50.0 {
+            return true;
+        }
+        if dist >= 400.0 {
+            return false;
+        }
+        let w = &mut self.walk;
+        if w.safe_until.is_some_and(|t| t >= level) {
+            return true;
+        }
+        if w.check.is_some_and(|t| t >= level) {
+            return false;
+        }
+        w.check = Some(level + 1500);
+        let mut mins = self.stance.mins;
+        mins[2] += STEPSIZE;
+        let maxs = self.stance.maxs;
+        let clear = |mask: i32| {
+            let tr = world.trace(at, goal, mins, maxs, mask);
+            (
+                !tr.all_solid && !tr.start_solid && tr.fraction == 1.0,
+                tr.start_solid || tr.all_solid,
+            )
+        };
+        let (mut ok, solid) = clear(MASK_NPCSOLID | CONTENTS_BOTCLIP);
+        if solid {
+            ok = clear(MASK_NPCSOLID).0;
+        }
+        if ok {
+            w.safe_until = Some(level + 2000);
+        }
+        ok
+    }
+
+    /// `STEER::GoTo` to `goal` (radius `radius`) at level time `level`, then
+    /// `STEER::DeActivate`: where it wants to go (`Seek`, slowing within four times
+    /// the radius, at its walking or running speed) less its velocity, at most
+    /// [`MAX_FORCE`], added to its velocity at most that speed, sets its move
+    /// direction, its speed (none under 10; three quarters while it backs up, a
+    /// whole number) and the yaw it turns to. A path that is not safe takes the
+    /// nav grid in the original (`NAV::GoTo`), not modelled: it does not steer.
+    fn steer(&mut self, goal: Vec3, radius: f32, level: i32, world: &Collision) {
+        let max = if self.walk.running {
+            self.stance.run_speed
+        } else {
+            self.stance.walk_speed
+        };
+        if !self.safe_to_go(goal, level, world) {
+            return;
+        }
+        let mut desired = sub(goal, self.walk.origin);
+        if desired[2].abs() < 10.0 {
+            desired[2] = 0.0;
+        }
+        let dist = length(desired);
+        if dist > 1e-10 {
+            let slowing = radius * 4.0;
+            let mut speed = max;
+            if slowing != 0.0 && dist < slowing {
+                speed *= dist / slowing;
+            }
+            desired = desired.map(|x| x / dist * speed);
+        }
+        let w = &mut self.walk;
+        let mut steering = sub(desired, w.velocity);
+        let mut velocity = w.velocity;
+        let mut speed = length(velocity);
+        if truncate(&mut steering, MAX_FORCE) > 1e-10 {
+            velocity = [0, 1, 2].map(|k| velocity[k] + steering[k]);
+            speed = truncate(&mut velocity, max);
+        }
+        if speed < 10.0 {
+            speed = 0.0;
+        }
+        w.dir = velocity;
+        if speed > 0.0 && velocity != [0.0; 3] {
+            let len = length(velocity);
+            w.dir = velocity.map(|x| x / len);
+            w.path_yaw = vectoangles(velocity)[1];
+        }
+        self.desired = [0.0, w.path_yaw];
+        // ps.speed is a whole number.
+        w.speed = speed as i32 as f32;
+        if speed > 0.0 {
+            let yaw = self.view[1].to_radians();
+            let forward = (yaw.cos() * w.dir[0] + yaw.sin() * w.dir[1]) * 127.0;
+            if forward.clamp(-127.0, 127.0).floor() < 0.0 {
+                w.speed = (w.speed * 0.75) as i32 as f32;
+            }
+        }
+    }
+
+    /// `PM_WalkMove` on level ground for `msec`: friction (`PM_Friction`: at least
+    /// [`STOP_SPEED`] slows by [`FRICTION`] a second), then acceleration along its
+    /// move direction toward its speed (`PM_Accelerate`, [`ACCELERATE`]); its box
+    /// then sweeps as far as it can go (`PM_StepSlideMove`: a wall stops it there,
+    /// its velocity clipped along it). Whether it moved.
+    fn walk_move(&mut self, msec: i32, world: &Collision) -> bool {
+        let w = &mut self.walk;
+        let time = msec as f32 * 0.001;
+        let v = &mut w.velocity;
+        let speed = (v[0] * v[0] + v[1] * v[1]).sqrt();
+        if speed < 1.0 {
+            v[0] = 0.0;
+            v[1] = 0.0;
+        } else {
+            let drop = speed.max(STOP_SPEED) * FRICTION * time;
+            let scale = (speed - drop).max(0.0) / speed;
+            *v = v.map(|x| x * scale);
+        }
+        let current = v[0] * w.dir[0] + v[1] * w.dir[1] + v[2] * w.dir[2];
+        let add = w.speed - current;
+        if add > 0.0 {
+            let accel = (ACCELERATE * time * w.speed).min(add);
+            *v = [0, 1, 2].map(|k| v[k] + accel * w.dir[k]);
+        }
+        if v[0] == 0.0 && v[1] == 0.0 {
+            return false;
+        }
+        let end = [0, 1, 2].map(|k| w.origin[k] + v[k] * time);
+        let tr = world.trace(
+            w.origin,
+            end,
+            self.stance.mins,
+            self.stance.maxs,
+            MASK_NPCSOLID,
+        );
+        if tr.fraction < 1.0 {
+            // PM_ClipVelocity.
+            let n = tr.normal;
+            let mut backoff = v[0] * n[0] + v[1] * n[1] + v[2] * n[2];
+            backoff = if backoff < 0.0 {
+                backoff * OVERCLIP
+            } else {
+                backoff / OVERCLIP
+            };
+            *v = [0, 1, 2].map(|k| v[k] - n[k] * backoff);
+        }
+        let moved = tr.end != w.origin;
+        w.origin = tr.end;
+        moved
     }
 
     fn play(&mut self, part: usize, anim: &str, level: i32) {
@@ -643,7 +906,7 @@ impl<'a> Actor<'a> {
     /// (`PM_Footsteps`, `PM_TorsoAnimation`, which play an animation the skeleton
     /// has, without restarting it), then `G_CheckClientIdle`. Nothing for an actor
     /// without a body.
-    fn movement(&mut self, level: i32, msec: i32) {
+    fn movement(&mut self, level: i32, msec: i32, world: &Collision) {
         if self.body.is_none() {
             return;
         }
@@ -654,6 +917,13 @@ impl<'a> Actor<'a> {
             }
         }
         let body = self.body.as_mut().unwrap();
+        let w = &body.walk;
+        if (w.velocity != [0.0; 3] || w.dir != [0.0; 3]) && body.walk_move(msec, world) {
+            let offset = sub(body.walk.origin, body.stance.origin);
+            body.moves.push((level, offset));
+        }
+        let moving =
+            body.walk.velocity != [0.0; 3] || (body.walk.dir != [0.0; 3] && body.walk.speed > 0.0);
         for (p, anim) in [(0, body.stance.legs), (1, body.stance.torso)] {
             let has = (body.holds)(anim).is_some();
             if body.parts[p].timer == 0 && has && body.parts[p].anim != anim {
@@ -662,7 +932,7 @@ impl<'a> Actor<'a> {
         }
         let [legs, torso] = &body.parts;
         let mut idle = None;
-        if !standing(&legs.anim) || legs.timer != 0 || torso.timer != 0 {
+        if moving || !standing(&legs.anim) || legs.timer != 0 || torso.timer != 0 {
             body.idle_time = body.idle_time.max(level);
         } else if level - body.idle_time > 5000
             && let Some(anim) = idle_for(&legs.anim)
@@ -676,9 +946,16 @@ impl<'a> Actor<'a> {
         }
     }
 
-    /// One `set` command, as task `task`: whether its task stays pending. An actor
-    /// without a body completes every one.
-    fn set(&mut self, name: &str, value: Option<&Value>, task: u32, level: i32) -> bool {
+    /// One `set` command, as task `task`, on map `map`: whether its task stays
+    /// pending. An actor without a body completes every one.
+    fn set(
+        &mut self,
+        name: &str,
+        value: Option<&Value>,
+        task: u32,
+        level: i32,
+        map: &Level,
+    ) -> bool {
         if self.body.is_none() {
             return false;
         }
@@ -777,8 +1054,66 @@ impl<'a> Actor<'a> {
                 self.body.as_mut().unwrap().yaw_speed = atof(&text);
                 false
             }
+            "SET_RUNNING" => {
+                // Q3_SetRunning: anything but "true" clears it.
+                self.body.as_mut().unwrap().walk.running = text.eq_ignore_ascii_case("true");
+                false
+            }
+            "SET_NAVGOAL" => self.set_nav_goal(&text, map, task),
             _ => never_completes(name),
         }
+    }
+
+    /// `Q3_SetNavGoal`, as task `task`: the goal is where the tag `name` names and
+    /// its radius ([`Level::radii`]), the task completing as it gets there; "null"
+    /// clears the goal, completing its task. Whether the task stays pending (a tag
+    /// not found completes it; entities that are not tags are not found here).
+    fn set_nav_goal(&mut self, name: &str, map: &Level, task: u32) -> bool {
+        if name.eq_ignore_ascii_case("null") {
+            self.body.as_mut().unwrap().walk.goal = None;
+            if let Some(old) = self.body.as_mut().unwrap().slots[NAV].take() {
+                self.complete(old);
+            }
+            return false;
+        }
+        let key = name.to_ascii_lowercase();
+        let Some(&goal) = map.tags.get(&key) else {
+            return false;
+        };
+        let radius = map.radii.get(&key).copied().unwrap_or(0.0);
+        self.body.as_mut().unwrap().walk.goal = Some((goal, radius));
+        self.slot(NAV, task);
+        true
+    }
+
+    /// The behavior think of level frame `level` of an NPC walking to a navgoal
+    /// (its task pending: the AI then runs, [`Walk`]), every [`BSTATE_MS`]: once
+    /// it has reached the goal (`UpdateGoal`) the goal clears and the task
+    /// completes, else it steers there ([`Body::steer`]). Returns whether it
+    /// thought, and whether it was unfrozen; a frozen NPC's move direction clears
+    /// (`NPC_Think`).
+    fn think(&mut self, level: i32, world: &Collision) -> (bool, bool) {
+        let Some(body) = &mut self.body else {
+            return (false, false);
+        };
+        let Some(task) = body.slots[NAV] else {
+            body.walk.dir = [0.0; 3];
+            return (false, false);
+        };
+        if body.walk.next_think > level {
+            return (false, true);
+        }
+        body.walk.next_think = level + BSTATE_MS;
+        body.walk.dir = [0.0; 3];
+        let (goal, radius) = body.walk.goal.expect("a pending navgoal's goal");
+        if body.reached(goal, radius) {
+            body.walk.goal = None;
+            body.slots[NAV] = None;
+            self.complete(task);
+        } else {
+            body.steer(goal, radius, level, world);
+        }
+        (true, true)
     }
 
     /// `Q3_SetViewTarget`, as task `task`: the view turns toward `target`'s eyes
@@ -798,10 +1133,11 @@ impl<'a> Actor<'a> {
     }
 
     /// The turn of level frame `level` (`NPC_UpdateAngles`, before the movement
-    /// frame): a view already where it turns to completes the turn's task.
-    fn turn(&mut self, level: i32) {
+    /// frame; `apply` as [`Body::update_angles`]): a view already where it turns to
+    /// completes the turn's task.
+    fn turn(&mut self, level: i32, apply: bool) {
         let Some(body) = &mut self.body else { return };
-        if body.update_angles(level)
+        if body.update_angles(level, apply)
             && let Some(task) = body.slots[FACE]
         {
             self.complete(task);
@@ -970,6 +1306,9 @@ impl<'a> Actor<'a> {
         if body.slots[FACE].is_some() || !body.exact() {
             at(level + FRAME_MS);
         }
+        if body.slots[NAV].is_some() || body.walk.velocity != [0.0; 3] {
+            at(level + FRAME_MS);
+        }
         for p in &body.parts {
             if p.timer > 0 {
                 at(frame_from(level + p.timer));
@@ -1064,6 +1403,11 @@ pub struct Level {
     pub begin: Vec<String>,
     pub runs: HashMap<String, std::sync::Arc<Vec<Node>>>,
     pub tags: HashMap<String, Vec3>,
+    /// The radius of each tag (`TAG_GetRadius`): 16 for a `ref_tag`, a navgoal's
+    /// "radius" (12 without one).
+    pub radii: HashMap<String, f32>,
+    /// The brushes NPCs walk among; the caller fills them.
+    pub collision: Collision,
     /// In spawn order; the caller fills them ([`Timelines::movers`]).
     pub movers: Vec<Mover>,
     /// What is used from outside the scripts, each at the first level frame at or
@@ -1173,15 +1517,31 @@ impl Level {
             }
         }
         // TAG_Add: a tag's name in lower case, the first of a name kept; those with
-        // an "ownername" belong to it, and the movers here have none.
+        // an "ownername" belong to it, and the movers here have none. A navgoal
+        // (SP_waypoint_navgoal) is a tag 0.125 above its origin, its radius a whole
+        // number.
         let mut tags = HashMap::new();
+        let mut radii = HashMap::new();
         for e in entities {
-            if class(e, "ref_tag")
+            let navgoal = class(e, "waypoint_navgoal");
+            if (navgoal || class(e, "ref_tag"))
                 && e.get("ownername").is_none()
                 && let Some(name) = e.get("targetname")
             {
-                let (origin, _) = crate::static_model::origin_and_angles(e);
-                tags.entry(name.to_ascii_lowercase()).or_insert(origin);
+                let (mut origin, _) = crate::static_model::origin_and_angles(e);
+                let mut radius = 16.0;
+                if navgoal {
+                    origin[2] += 0.125;
+                    radius = match e.get("radius").map_or(0.0, atof) as i32 {
+                        0 => 12.0,
+                        r => r as f32,
+                    };
+                }
+                let name = name.to_ascii_lowercase();
+                if !tags.contains_key(&name) {
+                    tags.insert(name.clone(), origin);
+                    radii.insert(name, radius);
+                }
             }
         }
         Self {
@@ -1189,6 +1549,8 @@ impl Level {
             begin,
             runs,
             tags,
+            radii,
+            collision: Collision::default(),
             movers: Vec::new(),
             uses: Vec::new(),
         }
@@ -1378,7 +1740,8 @@ impl<'a> World<'a> {
                                 let eyes = self.eyes_of(&name);
                                 self.actors[i].view_target(eyes, task)
                             } else {
-                                a.set(text(b, 0), v.as_ref(), task, level)
+                                let map = self.level;
+                                self.actors[i].set(text(b, 0), v.as_ref(), task, level, map)
                             }
                         };
                         if !pending {
@@ -1523,10 +1886,12 @@ impl<'a> World<'a> {
             self.check_voice(r, level);
             self.script(r, level, 0);
         }
+        let world = &self.level.collision;
         for i in self.runners..self.actors.len() {
             self.check_voice(i, level);
-            self.actors[i].turn(level);
-            self.actors[i].movement(level, msec);
+            let (thought, unfrozen) = self.actors[i].think(level, world);
+            self.actors[i].turn(level, thought || !unfrozen);
+            self.actors[i].movement(level, msec, world);
             self.actors[i].reach(level);
             self.script(i, level, 0);
         }
@@ -1614,11 +1979,16 @@ pub fn timelines(
             more_light: Vec::new(),
             unarmed: Vec::new(),
             idle_time: n.stance.still_since,
-            slots: [None; 4],
+            slots: [None; 5],
             view: [0.0, n.stance.yaw],
             desired: [0.0, n.stance.yaw],
             yaw_speed: n.stance.yaw_speed,
             yaw: Vec::new(),
+            walk: Walk {
+                origin: n.stance.origin,
+                ..Walk::default()
+            },
+            moves: Vec::new(),
         };
         actors.push(Actor::new(n.stance.name.as_deref(), Some(body), n.script));
     }
@@ -1658,7 +2028,7 @@ pub fn timelines(
     let mut level_time = FIRST_FRAME;
     for i in world.runners..world.actors.len() {
         world.script(i, level_time, 0);
-        world.actors[i].movement(level_time, BEGIN_MSEC);
+        world.actors[i].movement(level_time, BEGIN_MSEC, &level.collision);
     }
     let mut begun = false;
     loop {
@@ -1686,7 +2056,7 @@ pub fn timelines(
         let skipped = (next - level_time) / FRAME_MS - 1;
         if skipped > 0 {
             for a in &mut world.actors {
-                a.movement(next - FRAME_MS, skipped * FRAME_MS);
+                a.movement(next - FRAME_MS, skipped * FRAME_MS, &level.collision);
             }
         }
         level_time = next;
@@ -1723,6 +2093,7 @@ pub fn timelines(
                 more_light: b.more_light,
                 unarmed: b.unarmed,
                 yaw: b.yaw,
+                moves: b.moves,
             }
         })
         .collect();
