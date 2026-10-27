@@ -271,6 +271,24 @@ From [ROADMAP.md](ROADMAP.md):
 | 5 | Multiplayer: protocol, server, client, bots | not started |
 | 6 | Mods | not started |
 
+## Progress page
+
+The [progress page](https://claude.ai/artifact/SjkTWwG1mdnoZUhTgLfCjd) (private:
+it shows the game's imagery, which stays out of the repository) tells the same story
+in pictures:
+
+- **Before and after:** the history views (`bench/reference/history-views.txt`) as
+  each milestone's build drew them (`bench/reference/milestones.txt`, rendered by
+  `bench/history.sh`), against the original, with a slider and each build's score.
+- **Every reference view:** the original's screenshot, swjkja's render and their
+  difference, with compare.py's scores.
+- **Videos:** the ffa3 demo's camera path and academy3's Luke walking to his navgoal
+  (`bench/progress-media.sh`).
+- **The numbers:** PRs per day, Rust lines and tests after every PR, crates, speed.
+
+`scripts/progress_page.py` builds it from these and from `scripts/progress.py`'s
+counts; it is refreshed after each merge (see CLAUDE.md).
+
 ## Reproducing the numbers
 
     cargo test --workspace                                    # Linux

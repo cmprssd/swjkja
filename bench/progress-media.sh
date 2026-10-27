@@ -6,7 +6,8 @@
 # - academy3-luke-walk.mp4: academy3's intro walking Luke to lukeNav1, from the
 #   walk view (reference/walk-views.txt) every 50 ms. NPCs stand as of a map's first
 #   view, so each frame is its own run.
-# Each video gets a .txt caption beside it. Frames are deleted once encoded.
+# Each video gets a .txt caption beside it, at 960x540 (the page shows no wider; a
+# published file may be at most 15 MB). Frames are deleted once encoded.
 # Output: %USERPROFILE%\.swjkja\progress-media (game imagery: never committed).
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -20,7 +21,7 @@ exe="$work/target-msvc/release/examples/render_world.exe"
 ffmpeg=$(uv run -q --with imageio-ffmpeg python -c "import imageio_ffmpeg as f; print(f.get_ffmpeg_exe())")
 encode() { # frames-glob out.mp4
 	"$ffmpeg" -loglevel error -y -framerate 20 -pattern_type glob -i "$1" \
-		-vf scale=1280:720 -c:v libx264 -preset slow -crf 24 -pix_fmt yuv420p -movflags +faststart "$2"
+		-vf scale=960:540 -c:v libx264 -preset slow -crf 26 -pix_fmt yuv420p -movflags +faststart "$2"
 }
 
 rm -rf "$frames"; mkdir -p "$frames"

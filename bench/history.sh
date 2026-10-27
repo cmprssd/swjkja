@@ -29,7 +29,7 @@ grep -v '^#' reference/milestones.txt | awk 'NF {print $1}' | while read -r c; d
 	mkdir -p "$out"
 	git -C "$wt" checkout -q --detach "$c"
 	echo "== $c (#$pr)"
-	(cd "$wt" && "$cargo" build -q --release --locked -p swjkja-render --example render_world) || continue
+	(cd "$wt" && "$cargo" build -q --release --locked -p swjkja-render --example render_world </dev/null) || continue
 	# One view per run: an old build stops at the first map it cannot draw. The fourth
 	# argument is the time (seconds) of builds before the views file had a time column.
 	grep -v '^#' "$views" | awk 'NF' | while read -r line; do

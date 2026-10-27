@@ -18,4 +18,9 @@ ce8b0ac  NPCs hold their weapons
 1764543  Level scripts and intros
 fc46967  Blob shadows
 e3894ed  Single player's ambient light
+82cdd5e  Curved surfaces' rows by distance
+4248259  Blending in 10 bits, as the reference PC
+be515c9  Scripts move brush entities
+9da9ca8  Sky portals
+a037837  Specular, environment maps and rack goods as the original's
 4d176ee  NPCs turn and walk as scripts ask
