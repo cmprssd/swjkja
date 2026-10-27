@@ -12,6 +12,9 @@
 # academies' intros) start then, and a cutscene runs on instead of being skipped.
 # A script's random numbers (waits, loop counts) are their range's low end
 # (g_swjkjaScriptRand, a patch addition): the game seeds them from the clock.
+# With WALK=1 too, an NPC walking to a script's navgoal thinks unfrozen until it
+# gets there (d_npcfreeze 3, a patch addition), and each of its frames is logged
+# ("swjkja walk") to <map>-npcs.txt.
 # A map's first view may give, in an eleventh column, names the game uses as it
 # runs, as "name@ms" separated by commas: each is used in the first frame at or
 # after its time (g_swjkjaUse, a patch addition), as the use command uses it.
@@ -35,6 +38,8 @@ mkdir -p "$out"
 views=${1:-reference/views.txt}
 entities=${ENTITIES:-0}
 scripts=${SCRIPTS:-0}
+freeze=2
+[ "${WALK:-0}" = 1 ] && freeze=3
 maps=$(grep -v '^#' "$views" | awk 'NF {print $1}' | sort -u)
 for map in $maps; do
 	cfg=$(mktemp)
@@ -49,7 +54,7 @@ for map in $maps; do
 		# and the game runs no frame the client would draw after the view's time
 		# (it draws one frame behind).
 		if [ "$sp" = 1 ] && [ "$scripts" = 1 ]; then
-			grep -v '^#' "$views" | awk -v m="$map" '$1 == m {print "set d_npcfreeze 2; set g_swjkjaStop " $9 + 50; exit}'
+			grep -v '^#' "$views" | awk -v m="$map" -v f="$freeze" '$1 == m {print "set d_npcfreeze " f "; set g_swjkjaStop " $9 + 50; exit}'
 		elif [ "$sp" = 1 ]; then
 			echo "set d_npcfreeze 1"
 		fi
@@ -126,7 +131,7 @@ for map in $maps; do
 	# The patched cgame logs each NPC's animation timing once per view time, and
 	# its look ("swjkja look") once the view's time is pinned.
 	if [ "$sp" = 1 ]; then
-		get qconsole.log | grep -a "swjkja npc\|swjkja look\|swjkja begin\|swjkja rand\|swjkja use" >"$out/$map-npcs.txt" || true
+		get qconsole.log | grep -a "swjkja npc\|swjkja walk\|swjkja look\|swjkja begin\|swjkja rand\|swjkja use" >"$out/$map-npcs.txt" || true
 	fi
 done
 ls -l "$out"

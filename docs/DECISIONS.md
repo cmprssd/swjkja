@@ -1183,3 +1183,45 @@ and drawing such pipes some other way, would match no view held still.
   the view's time, and a 47.5 s view on academy4 was taken 13 s early (the frames
   do not keep to `com_maxfps`); it now waits 150 a second (the game stops itself at
   the view's time).
+
+## 2026-10-27: Walks captured with the walker's AI alone running; straight paths first (chosen by the owner)
+
+- **Captures of walks run the AI of an NPC walking to a navgoal only**
+  (`d_npcfreeze 3`, a patch addition; `WALK=1 bench/capture-reference.sh`), over
+  unfreezing every NPC (`d_npcfreeze 0`), whose idle AI would look around and draw
+  random numbers. An NPC thinks unfrozen while its `TID_MOVE_NAV` task is pending;
+  its commands stay 1000 ms behind the level's, as a frozen NPC's do, so each moves
+  it 50 ms; each of its frames is logged ("swjkja walk": origin, velocity, speed,
+  view and desired yaw, move direction, whether its behavior thought).
+- **First slice: straight paths** (`STEER::GoTo` to a goal in reach, the NPC's
+  `Pmove`), over the nav grid with it (`NAV::GoTo`, the map's `.nav` graph), which
+  comes later; the walk and run animations are the next slice (academy3's Luke
+  walks in a held `BOTH_CIN_1`).
+
+## 2026-10-27: How NPCs walk to their navgoals (decided by Claude, pending review)
+
+- **Found: a frozen NPC's view turns every frame, an unfrozen one's only as its
+  behavior thinks** (every 100 ms, `nextBStateThink`): between thinks `NPC_Think`
+  replays the last command, whose angles overwrite those `NPC_UpdateAngles` just
+  set. academy3's traced Luke turns 24 degrees every other frame.
+- **Found: steering sets no velocity.** `STEER::DeActivate` turns the velocity it
+  wants into a move direction, a speed (`ps.speed`, a whole number, three
+  quarters while the NPC backs up: Luke starts at 41 of his 55) and the yaw to
+  turn to; `Pmove` then brakes (friction 6, at least 100 units a second's worth)
+  and accelerates (12) along that direction, so a walk at 55 gains 3 a frame from
+  33. Within 48 units (four times the navgoal's radius of 12) it slows.
+- **A goal within 400 units is steered to once a trace of the path clears**, from
+  the first think: the original's first trace returns "not yet" and that think
+  takes the nav grid, and the nav graph's own check (`NAV::OnNeighboringPoints`)
+  is not modelled; academy3's traced walk matches frame for frame either way. A
+  path that is not safe (beyond 400 units, or blocked) would take the nav grid:
+  the NPC is not steered and its task does not complete, as before.
+- **Its goal is reached in its box**: `STEER::Reached` takes the goal within its
+  radius or inside the NPC's box a unit larger (`absmin`, `absmax`); Luke stops
+  16.7 units from lukeNav1, which is inside his box. The task completes on that
+  think, and friction stops him the same frame (12 units a second, braked by 30).
+- **Level ground, no one in the way**: the NPC keeps its height, and its box stops
+  at walls (sliding along them); steps, slopes and other NPCs (`AvoidCollisions`:
+  the traces here hit no NPCs) are left out.
+- **It is drawn from snapshot to snapshot**, as its turns are; what looks at it and
+  its shadow follow it.

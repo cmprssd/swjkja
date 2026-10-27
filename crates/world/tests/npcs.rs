@@ -342,6 +342,24 @@ fn npcs_turn_at_their_blocks_yaw_speed_stormtroopers_slower() {
 }
 
 #[test]
+fn npcs_walk_and_run_at_their_blocks_speeds() {
+    let parms = b"Luke { playerModel luke walkSpeed 55 runSpeed 200 }
+        Still { playerModel imperial walkSpeed 0 runSpeed -5 }
+        Plain { playerModel imperial }";
+    let entities = ["luke", "still", "plain"].map(|t| npc("NPC_spawner", &[("NPC_type", t)]));
+    let models = npc_models(&entities, SP, parms, b"", &Collision::default(), &|_| None);
+    let speeds: Vec<(f32, f32)> = models
+        .iter()
+        .map(|m| {
+            let pose = m.ghoul2.as_ref().unwrap().pose.as_ref().unwrap();
+            (pose.walk_speed, pose.run_speed)
+        })
+        .collect();
+    // 0 is kept, less than 0 ignored; 90 and 300 by default.
+    assert_eq!(speeds, [(55.0, 200.0), (0.0, 300.0), (90.0, 300.0)]);
+}
+
+#[test]
 fn npcs_stand_upright_at_their_spawner_scaled_from_their_feet() {
     let entities = [
         npc(
@@ -375,14 +393,19 @@ fn npcs_stand_upright_at_their_spawner_scaled_from_their_feet() {
         Some("models/players/stormtrooper/model_officer.skin")
     );
     // A blaster in the right hand, legs apart, the torso holding it idle; facing
-    // its spawner's yaw, turning at the default speed, its eyes 4 units below its
-    // box's top (from its origin before the scale lifts it).
+    // its spawner's yaw, turning, walking and running at the default speeds, its
+    // eyes 4 units below its box's top (from its origin before the scale lifts it).
     assert_eq!(
         g.pose,
         Some(Pose {
             yaw: 90.0,
             yaw_speed: 90.0,
             eyes: [1.0, 2.0, 39.0],
+            origin: [1.0, 2.0, 3.0],
+            mins: [-16.0, -16.0, -24.0],
+            maxs: [16.0, 16.0, 40.0],
+            walk_speed: 90.0,
+            run_speed: 300.0,
             ..pose("BOTH_STAND3", "TORSO_WEAPONIDLE3")
         })
     );

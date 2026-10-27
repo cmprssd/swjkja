@@ -1080,6 +1080,7 @@ fn turns_are_drawn_from_frame_to_frame_the_shorter_way_round() {
         more_light: Vec::new(),
         unarmed: Vec::new(),
         yaw: vec![(1600, -170.0), (1650, 175.0)],
+        moves: Vec::new(),
     };
     let slide = |start, from: f32, to: f32| Slide {
         start,
@@ -1093,4 +1094,134 @@ fn turns_are_drawn_from_frame_to_frame_the_shorter_way_round() {
         t.turns(170.0),
         [slide(1550, 170.0, 190.0), slide(1600, 190.0, 175.0)]
     );
+}
+
+/// academy3's Luke (`npc_luke1`): where he stands, facing 50, his box, yaw speed
+/// 140, walking at 55.
+fn walker() -> Pose {
+    Pose {
+        yaw: 50.0,
+        yaw_speed: 140.0,
+        origin: [-1344.0, -1338.0, 744.125],
+        mins: [-15.0, -15.0, -24.0],
+        maxs: [15.0, 15.0, 40.0],
+        walk_speed: 55.0,
+        run_speed: 200.0,
+        ..named("luke")
+    }
+}
+
+/// A map with academy3's "lukeNav1" (radius 12, raised 0.125) and a "far" tag 500
+/// units east of Luke, nothing to bump into.
+fn navgoals() -> Level {
+    let mut level = Level::default();
+    for (name, at) in [
+        ("lukenav1", [-1292.0, -1510.0, 744.125]),
+        ("far", [-844.0, -1338.0, 744.125]),
+    ] {
+        level.tags.insert(name.to_owned(), at);
+        level.radii.insert(name.to_owned(), 12.0);
+    }
+    level
+}
+
+/// A script that sets the navgoal `name` in a task group, waits for it, then plays
+/// BOTH_CIN_1 (as academy3's intro: "task lukeNav1").
+fn walk_then_play(name: &str) -> Vec<Node> {
+    let mut script = vec![task("walk", vec![set("SET_NAVGOAL", name)])];
+    script.extend(do_and_wait("walk"));
+    script.push(set("SET_ANIM_BOTH", "BOTH_CIN_1"));
+    script
+}
+
+/// Luke's timeline, running `script` on [`navgoals`].
+fn walked(script: Vec<Node>) -> swjkja_world::script::Timeline {
+    let pose = walker();
+    let npc = Npc {
+        stance: &pose,
+        script: Some(&script),
+        holds: &holds,
+    };
+    timelines(&[npc], &navgoals(), &|_| None).npcs.remove(0)
+}
+
+/// Where Luke is after the frame at `level`, or `None` if he did not move in it.
+fn walked_to(t: &swjkja_world::script::Timeline, level: i32) -> Option<[f32; 3]> {
+    let start = walker().origin;
+    t.moves
+        .iter()
+        .find(|(l, _)| *l == level)
+        .map(|(_, o)| [0, 1, 2].map(|k| start[k] + o[k]))
+}
+
+/// When Luke's legs start BOTH_CIN_1, if they do.
+fn cin(t: &swjkja_world::script::Timeline) -> Option<i32> {
+    t.legs
+        .iter()
+        .find(|c| c.anim == "BOTH_CIN_1")
+        .map(|c| c.start)
+}
+
+#[test]
+fn a_script_walks_its_npc_straight_to_a_navgoal() {
+    // academy3's intro, traced in the original (`d_npcfreeze 3`): Luke's navgoal
+    // set at 14,800, his first think at 14,850, here 13,250 ms earlier. He backs
+    // off at three quarters of 55 (the goal lies behind him) and speeds up by 3 a
+    // frame from 33 (friction takes 30, acceleration adds 0.6 of his speed).
+    let t = walked(walk_then_play("lukeNav1"));
+    let traced = [
+        (1600, [-1343.644, -1339.1774, 744.125]),
+        (1650, [-1343.2881, -1340.3547, 744.125]),
+        (1700, [-1342.9408, -1341.5034, 744.125]),
+        (1750, [-1342.5935, -1342.6521, 744.125]),
+        (1800, [-1342.116, -1344.2314, 744.125]),
+        (1850, [-1341.5951, -1345.9545, 744.125]),
+        // The last frames, slowing within 48 of the goal.
+        (5400, [-1296.9801, -1493.5278, 744.125]),
+        (5450, [-1296.8065, -1494.1022, 744.125]),
+    ];
+    // The trace logs four decimals.
+    for (level, traced) in traced {
+        let at = walked_to(&t, level).unwrap_or_else(|| panic!("no move at {level}"));
+        assert!(
+            (0..3).all(|k| (at[k] - traced[k]).abs() < 0.001),
+            "at {level}: {at:?}"
+        );
+    }
+    // 5500 finds the goal inside his box (a unit larger), 16.7 away: the task
+    // completes there (the script goes on: BOTH_CIN_1, a frame earlier on the
+    // client's clock) and friction stops him where he was.
+    assert_eq!(t.moves.len(), 78);
+    assert_eq!(walked_to(&t, 5500), None);
+    assert_eq!(cin(&t), Some(5450));
+    // His view turns 24 degrees ((60 + 3 * 140) / 20) toward where he heads, only
+    // on the frames his behavior thinks.
+    assert_eq!(
+        yaws(&t.yaw),
+        [
+            (1600, 25.999),
+            (1700, 2.0),
+            (1800, -22.0),
+            (1900, -46.0),
+            (2000, -69.999),
+            (2100, -73.18)
+        ]
+    );
+}
+
+#[test]
+fn a_navgoal_out_of_reach_or_cleared_moves_no_one() {
+    // 500 units away the original takes the nav grid, not modelled: he stays and
+    // the task never completes.
+    let t = walked(walk_then_play("far"));
+    assert_eq!((t.moves.len(), t.yaw.len(), cin(&t)), (0, 0, None));
+    // "NULL" clears a goal set in a task group, completing its task.
+    let mut script = vec![task("walk", vec![set("SET_NAVGOAL", "lukeNav1")])];
+    script.push(command(id::DO, vec![text("walk")]));
+    script.push(set("SET_NAVGOAL", "NULL"));
+    script.extend(do_and_wait("walk")[1..].iter().cloned());
+    script.push(set("SET_ANIM_BOTH", "BOTH_CIN_1"));
+    let t = walked(script);
+    assert_eq!(t.moves.len(), 0);
+    assert_eq!(cin(&t), Some(1550));
 }

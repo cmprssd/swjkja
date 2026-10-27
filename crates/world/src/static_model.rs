@@ -130,6 +130,13 @@ pub struct Pose {
     pub yaw: f32,
     /// How fast it turns (`stats.yawSpeed`, [`crate::npc::NpcLook::yaw_speed`]).
     pub yaw_speed: f32,
+    /// Where it stands as it begins (its origin, come to rest) and its box.
+    pub origin: Vec3,
+    pub mins: Vec3,
+    pub maxs: Vec3,
+    /// How fast it walks and runs ([`crate::npc::NpcLook::walk_speed`]).
+    pub walk_speed: f32,
+    pub run_speed: f32,
     /// Where a script's view target is measured from or to (`SET_VIEWTARGET`):
     /// its origin raised by its view height (`maxs[2]` + `STANDARD_VIEWHEIGHT_OFFSET`).
     pub eyes: Vec3,

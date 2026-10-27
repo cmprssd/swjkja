@@ -382,6 +382,7 @@ impl StaticModels {
             ));
             level = script::Level::of(bsp, &scripts);
             level.uses = uses.to_vec();
+            level.collision = world.clone();
             // The brush entities, then the breakables: scripts find a name's last
             // spawned, so a breakable named as a brush entity takes the name here
             // whichever spawned last.
@@ -493,11 +494,12 @@ impl StaticModels {
                         eprintln!("warning: model {}: a Ghoul2 mesh placed as an MD3", p.model);
                         continue;
                     };
-                    let mut turns = Vec::new();
+                    let (mut turns, mut slides) = (Vec::new(), Vec::new());
                     let rig = g.pose.as_ref().map(|pose| {
                         let files = files[n].as_ref().expect("an NPC's animations");
                         let timeline = timelines.next().expect("an NPC's timeline");
                         turns = timeline.turns(pose.yaw);
+                        slides = timeline.slides(p.origin);
                         Rig::new(m, pose, files, timeline)
                     });
                     // Baked with its spine turned, as drawn; its look is resolved later.
@@ -540,6 +542,7 @@ impl StaticModels {
                     );
                     if let Some(pose) = &g.pose {
                         instance.motion.turns = turns;
+                        instance.motion.slides = slides;
                         instance.angles = [0.0, pose.yaw, 0.0];
                     }
                     instance.rig = rig.map(|rig| Rig { attached, ..rig });
@@ -755,7 +758,7 @@ impl StaticModels {
 
     /// Where instance `n`, an NPC, casts its shadow from at game time `time` (ms),
     /// and the way its legs face (yaw, degrees): `CG_PlayerShadow`'s root origin,
-    /// its origin, but while it plays a cinematic animation the point of its bolt
+    /// its origin (where its moves have taken it), but while it plays a cinematic animation the point of its bolt
     /// numbered as its root bone (`rootBone`, the bone list's first entry, read as
     /// a bolt number): its eyes' tag ("*head_eyes", the first bolt `G_SetG2PlayerModel`
     /// adds). `bones` is its [`StaticModels::bones`] at `time` if already posed.
@@ -779,7 +782,8 @@ impl StaticModels {
             }
             _ => None,
         };
-        let origin = tag.map_or(m.origin, |t| [t[0][3], t[1][3], t[2][3]]);
+        // The bones, and so the tag, are where its moves have taken it.
+        let origin = tag.map_or_else(|| m.origin_at(time), |t| [t[0][3], t[1][3], t[2][3]]);
         Some((origin, yaw))
     }
 
@@ -1635,6 +1639,7 @@ mod tests {
             more_light: Vec::new(),
             unarmed: Vec::new(),
             yaw: Vec::new(),
+            moves: Vec::new(),
         };
         let (at, stopped) = switches(&timeline, skeleton);
         assert_eq!(at, [(1550, 1), (9000, 0)]);
@@ -1655,6 +1660,7 @@ mod tests {
             more_light: Vec::new(),
             unarmed: Vec::new(),
             yaw: Vec::new(),
+            moves: Vec::new(),
         };
         let (at, stopped) = switches(&timeline, skeleton);
         assert_eq!(at, [(1550, 1)]);
@@ -1671,6 +1677,7 @@ mod tests {
             more_light: Vec::new(),
             unarmed: Vec::new(),
             yaw: Vec::new(),
+            moves: Vec::new(),
         };
         let (at, stopped) = switches(&timeline, skeleton);
         assert_eq!(at, [(0, 1)]);
