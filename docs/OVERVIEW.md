@@ -7,7 +7,7 @@ change is proven against the original game, and how the work itself is run.
 of the same story, before and after, are on the [progress page](#progress-page).
 
 <!-- progress:asof -->
-Numbers in the generated parts below are as of 2026-10-27 (110 merged PRs), counted
+Numbers in the generated parts below are as of 2026-10-27 (111 merged PRs), counted
 by `scripts/progress.py`.
 <!-- /progress -->
 The hand-written parts (speed, the retail files read) give their own dates.
@@ -159,16 +159,16 @@ Rules that shape it:
 ### History
 
 <!-- progress:history -->
-124 commits, 110 merged PRs from 2026-10-07 to 2026-10-27, on 12 working days: 59
-feat, 34 fix, 10 docs, 4 bench, 2 chore, 1 ci. About 52,323 lines added and 4,072
-removed; 155 tracked files.
+125 commits, 111 merged PRs from 2026-10-07 to 2026-10-27, on 12 working days: 60
+feat, 34 fix, 10 docs, 4 bench, 2 chore, 1 ci. About 52,361 lines added and 4,079
+removed; 156 tracked files.
 
 ```mermaid
 xychart-beta
     title "PRs merged per working day"
     x-axis ["Oct 7", "Oct 10", "Oct 11", "Oct 14", "Oct 15", "Oct 16", "Oct 17", "Oct 18", "Oct 19", "Oct 21", "Oct 26", "Oct 27"]
     y-axis "PRs" 0 --> 25
-    bar [23, 19, 9, 1, 2, 8, 10, 10, 8, 9, 8, 3]
+    bar [23, 19, 9, 1, 2, 8, 10, 10, 8, 9, 8, 4]
 ```
 <!-- /progress -->
 
@@ -273,9 +273,9 @@ From [ROADMAP.md](ROADMAP.md):
 
 ## Progress page
 
-The [progress page](https://claude.ai/artifact/SjkTWwG1mdnoZUhTgLfCjd) (private:
-it shows the game's imagery, which stays out of the repository) tells the same story
-in pictures:
+The [progress page](https://cmprssd.github.io/swjkja/) tells the same story in
+pictures. It is served from the `gh-pages` branch, which holds the page alone, so the
+game's imagery stays off main:
 
 - **Before and after:** the history views (`bench/reference/history-views.txt`) as
   each milestone's build drew them (`bench/reference/milestones.txt`, rendered by
@@ -287,7 +287,8 @@ in pictures:
 - **The numbers:** PRs per day, Rust lines and tests after every PR, crates, speed.
 
 `scripts/progress_page.py` builds it from these and from `scripts/progress.py`'s
-counts; it is refreshed after each merge (see CLAUDE.md).
+counts, and `scripts/publish-progress.sh` publishes it after each merge (see
+CLAUDE.md).
 
 ## Reproducing the numbers
 
