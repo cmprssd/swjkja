@@ -65,7 +65,9 @@ def history():
     if not on_main:
         # This change, counted as the squash merge it becomes.
         date = git("log", "-1", "--format=%ad", "--date=short", "HEAD").strip()
-        subject = git("log", "-1", "--format=%s", "HEAD").strip()
+        # Its type is the branch's first commit's, which the PR is titled after: a later
+        # commit (regenerated numbers, a fix-up) does not change what the PR is.
+        subject = git("log", "--reverse", "--format=%s", f"{base}..HEAD").splitlines()[0]
         diff = git("diff", "--shortstat", base, "HEAD", "--", ".", NOT_COUNTED)
         changes.append({**change("this", date, subject, diff), "pr": "this"})
     return changes, int(git("rev-list", "--count", base)) + (0 if on_main else 1)
@@ -208,8 +210,9 @@ def median(xs):
 def blocks(s):
     """The text of each generated block, by name."""
     b = {}
+    # Counted, not named by number: a branch counts its own PR before it has one.
     b["asof"] = (f"Numbers in the generated parts below are as of {s['as_of']} "
-                 f"(through PR #{s['last_pr']}), counted by `scripts/progress.py`.")
+                 f"({s['prs']} merged PRs), counted by `scripts/progress.py`.")
     b["code"] = (f"{len(s['crates'])} crates in one Cargo workspace, {s['rust_lines']:,} lines of Rust "
                  f"(sources, tests and examples) plus {s['wgsl_lines']:,} lines of WGSL shaders, "
                  f"{s['tests']} tests. Each crate maps to one part of the original engine.")
