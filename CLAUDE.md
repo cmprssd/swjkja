@@ -10,7 +10,7 @@ The docs are large, and every line read stays in the context for the rest of the
 - `docs/DECISIONS.md` (1,100+ lines, dated `##` entries, newest last): list headings with `grep -n '^## ' docs/DECISIONS.md`, then read the entries you need by line range. Never read it whole.
 - `docs/BASELINE.md` (2,300+ lines of measurements): the same way, by section. Add a section when you measure something.
 - `docs/OVERVIEW.md`: how the project and its process work, for orientation.
-- The progress page (private claude.ai artifact, link in OVERVIEW.md): every reference view, the milestones before and after, videos, the numbers.
+- The progress page (https://cmprssd.github.io/swjkja/, the `gh-pages` branch): every reference view, the milestones before and after, videos, the numbers.
 - The OpenJK source: grep for the function you're porting; don't browse.
 
 ## Commands
@@ -33,7 +33,7 @@ Retail-data tests read the install above; if the drive is unplugged `.local-ci` 
 - **A/B builds in worktrees:** `scripts/cargo-msvc.sh` builds the main checkout's target, and a stale shared target can reuse old crates. Give the worktree its own `CARGO_TARGET_DIR` and `cmp` the binaries before timing.
 - `.gitignore` is a whitelist, so game data never gets committed: a new kind of file is ignored until you add it there deliberately (the committed-tree check in `.local-ci` catches a missed one).
 - **The numbers are counted, not typed.** OVERVIEW.md's `<!-- progress:… -->` blocks come from `python3 scripts/progress.py`; `.local-ci` fails when they are stale, so run it before pushing. A PR that renders every reference view writes compare.py's output to `bench/reference/scores.txt`.
-- **Refresh the progress page after each merge** (offscreen, no window): `bench/history.sh` renders milestones not rendered yet, `scripts/progress_page.py <out> --ours <renders>` builds the page, and the Artifact tool republishes it to the URL in OVERVIEW.md. When a merged PR changed what is on screen, add it to `bench/reference/milestones.txt` in the next PR; rerun `bench/progress-media.sh` when the videos' scenes change.
+- **Refresh the progress page after each merge** (offscreen, no window): `bench/history.sh` renders milestones not rendered yet, `scripts/publish-progress.sh <renders>` builds the page and force-pushes it to `gh-pages` as one commit. When a merged PR changed what is on screen, add it to `bench/reference/milestones.txt` in the next PR; rerun `bench/progress-media.sh` when the videos' scenes change.
 - Decisions go in `docs/DECISIONS.md` as dated `##` entries; mid-build ones are marked "decided by Claude, pending review".
 - Work autonomously, slice after slice, without stopping for status reports; stop only for a question the owner must answer. **But hand off at ~250k tokens of context** (the status line turns red), even mid-roadmap: save the handoff, then the next slice starts in a fresh session.
 - Commit subjects are Conventional Commits with a crate scope: `feat(world): NPCs turn as their scripts ask (SET_DYAW, SET_VIEWTARGET) (#106)`.

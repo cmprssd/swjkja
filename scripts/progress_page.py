@@ -1,11 +1,13 @@
 """Builds the progress page: the numbers of scripts/progress.py, every reference view
 (the original's screenshot, swjkja's render and their difference), the same views as
 each milestone's build drew them (bench/history.sh), and the videos of
-bench/progress-media.sh. Game imagery stays out of the repository: the page is built
-into a folder outside it and published from there as a private claude.ai artifact.
+bench/progress-media.sh. Game imagery stays off main: the page is built into a folder
+outside the repository and published from there to the gh-pages branch.
 
     uv run --with numpy --with pillow python scripts/progress_page.py <out> \\
-        --ours <render folder>... [--work <%USERPROFILE%\\.swjkja as a WSL path>]
+        --ours <render folder>... --work <%USERPROFILE%\\.swjkja as a WSL path>
+
+scripts/publish-progress.sh runs it and publishes the result.
 
 <work>/reference-shots holds the original's screenshots, <work>/history/<PR>-<hash>
 the milestones' renders, <work>/progress-media the videos; --ours the current
@@ -46,7 +48,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out", type=pathlib.Path)
     ap.add_argument("--ours", type=pathlib.Path, nargs="+", required=True)
-    ap.add_argument("--work", type=pathlib.Path, default=pathlib.Path("/mnt/c/Users/tb/.swjkja"))
+    ap.add_argument("--work", type=pathlib.Path, required=True)
     a = ap.parse_args()
     out = a.out
     out.mkdir(parents=True, exist_ok=True)
