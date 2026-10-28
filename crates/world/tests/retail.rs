@@ -8,7 +8,7 @@ use swjkja_bsp::{Bsp, SurfaceKind};
 use swjkja_world::collision::Collision;
 use swjkja_world::rand::Rand;
 use swjkja_world::static_model::Rules;
-use swjkja_world::{Geometry, Options, World, npc, script};
+use swjkja_world::{Geometry, Options, World, nav, npc, script};
 
 #[test]
 fn every_retail_map_builds() {
@@ -864,4 +864,45 @@ fn every_single_player_maps_weather_reads_and_scans() {
         .map(|&(n, z, o)| (n, z, o.iter().map(|s| s.to_string()).collect::<Vec<_>>()))
         .collect();
     assert_eq!(found, expected);
+}
+
+/// t1_sour's nav graph takes its intro walkers to introNav1 by bay_tre_13, as the
+/// original's first think steers them (traced: Kyle heads straight for it, at
+/// 288.43 degrees from where he stands).
+#[test]
+fn t1_sours_intro_walkers_path_to_their_navgoal_by_the_nearest_waypoint() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let bsp = Bsp::parse(&vfs.read("maps/t1_sour.bsp").unwrap()).unwrap();
+    let world = Collision::new(&bsp);
+    let g = nav::Graph::build(&bsp, 1, &world);
+    let named = |name: &str| {
+        g.nodes
+            .iter()
+            .position(|n| n.name.as_deref() == Some(name))
+            .unwrap()
+    };
+    let (goal, by) = (named("introNav1"), named("bay_tre_13"));
+    let (mins, maxs) = ([-16.0, -16.0, -24.0], [16.0, 16.0, 40.0]);
+    for at in [[6248.0, -2552.0, 24.125], [6200.0, -2488.0, 24.125]] {
+        let Some(nav::Nearest::Node(start)) = g.nearest(&world, at, None, Some(goal)) else {
+            panic!("no nearest point to {at:?}");
+        };
+        assert_eq!(start, by, "{at:?}");
+        // STEER::SafeToGoTo's graph test does not let them go straight.
+        let goal_at = g.nodes[goal].point;
+        assert!(
+            !(g.neighboring(start, goal)
+                && g.in_safe_radius(at, start, goal)
+                && g.in_safe_radius(goal_at, goal, start)),
+            "{at:?}"
+        );
+        let path = g.find_path(&world, at, mins, maxs, start, goal).unwrap();
+        let points: Vec<usize> = path.iter().map(|p| p.node).collect();
+        assert_eq!(points, [goal, by], "{at:?}");
+        assert_eq!(path[1].point, [6272.0, -2624.0, 24.0]);
+    }
 }
