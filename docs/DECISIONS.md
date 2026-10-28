@@ -1251,3 +1251,47 @@ and drawing such pipes some other way, would match no view held still.
   units off the straight path, and the frame after ours. Until the nav grid is
   modelled, t1_sour_intro_walking scores worse walking (2.02) than sliding in the
   stance (1.82): the strides match the original's, the positions do not.
+
+## 2026-10-28: How NPCs find their way by the nav graph (decided by Claude, pending review)
+
+- **Found: the trace that clears a path does not clear it for that think.**
+  `STEER::SafeToGoTo` returns false even when its trace (every 1.5 s) is clear: it
+  only marks the path safe for the 2 s after. So the first think, and each one
+  whose 2 s have run out when the next trace is due, takes the nav graph
+  (`NAV::GoTo`); the thinks between go straight. Before the trace, a goal within
+  500 units is safe when the NPC's nearest point and the goal's are neighbors and
+  each stands within its point's safe radius (`NAV::OnNeighboringPoints`,
+  `NAV::InSafeRadius`).
+- **`NAV::GoTo`**: the goal's nearest point, the NPC's nearest toward it, the
+  shortest path (`NAV::FindPath`), the path's next point sought within its slowing
+  radius (`STEER::Path`), then collisions avoided. On an edge it takes the edge's
+  first point, where the original draws one of the two. The path is found anew on
+  each think that takes the graph; `NAV::UpdatePath` and the path cache are left
+  out, as no traced walk uses them (the thinks between go straight and clear it).
+  Without a path the NPC stops (`STEER::Stop`) and turns to its last path's yaw,
+  0 if it never had one (OpenJK's own rancor code notes this).
+- **Collisions are avoided as the original does** (`STEER::AvoidCollisions`, after
+  straight steering too): the velocity the steering so far would give, traced a
+  second ahead through the world and every other NPC's box where it stands now
+  (those earlier in the frame have moved), then 40 degrees aside at 0.3 s (ahead
+  again while the NPC has no side yet, which is how a first think seeks three
+  points). An NPC slower its way is followed at its speed, one standing on the next
+  point is waited behind, else the NPC steers past what it hit by the side the
+  plane leans its way. That side holds for 2000 ms: the original draws 500 to 2000
+  (`Q_irand`), a draw not replayed here, and t1_sour's stand-in needs at least
+  1300. Doors are not told apart from the world (the original's avoidance passes
+  through `func_door`), and being blocked for 2 s (`STEER::Blocked`) is left out.
+- **What NPCs meet**: every other NPC's box but those spawned not solid
+  (`SFB_NOTSOLID`, 64: contents 0), as academy3's Kyle, who stands within Luke's
+  box and is walked through.
+- **The graph's edges are tested against the world's brushes alone**: doors,
+  walls and breakables on edges, area portals and danger are left out
+  (`crates/world/src/nav.rs`).
+- **A level without a graph** (the tests' made-up levels) skips the graph's test,
+  and the think whose trace clears goes straight, as before. The renderer always
+  builds one for single player.
+- **t1_sour's intro walkers match every traced frame** (2100 to 3550, to four
+  decimals), and so does academy3's Luke on the real map (78 frames), each a frame
+  early. In t1_sour: the original updates the intro's runner after the two
+  walkers (by entity number), so they get its navgoal a frame after ours, where
+  runners update first (2026-10-16). Entity numbers are not modelled yet.

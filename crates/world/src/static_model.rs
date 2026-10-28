@@ -139,6 +139,8 @@ pub struct Pose {
     pub run_speed: f32,
     /// Whether it holds no weapon (`WP_NONE`) as it begins.
     pub unarmed: bool,
+    /// Whether nothing meets it (its spawner's `SFB_NOTSOLID`, 64: contents 0).
+    pub not_solid: bool,
     /// Where a script's view target is measured from or to (`SET_VIEWTARGET`):
     /// its origin raised by its view height (`maxs[2]` + `STANDARD_VIEWHEIGHT_OFFSET`).
     pub eyes: Vec3,

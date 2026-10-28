@@ -1293,6 +1293,7 @@ pub fn npc_models(
                 maxs: look.maxs,
                 walk_speed: look.walk_speed,
                 run_speed: look.run_speed,
+                not_solid: n.flags & 64 != 0,
                 eyes: [
                     at[0],
                     at[1],

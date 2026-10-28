@@ -1216,10 +1216,12 @@ fn a_script_walks_its_npc_straight_to_a_navgoal() {
 
 #[test]
 fn a_navgoal_out_of_reach_or_cleared_moves_no_one() {
-    // 500 units away the original takes the nav grid, not modelled: he stays and
-    // the task never completes.
+    // 500 units away, on a level without a nav graph, he finds no path and stops
+    // (`STEER::Stop`): he stays, the task never completes, and he turns to his
+    // last path's yaw, never set (0).
     let t = walked(walk_then_play("far"));
-    assert_eq!((t.moves.len(), t.yaw.len(), cin(&t)), (0, 0, None));
+    assert_eq!((t.moves.len(), cin(&t)), (0, None));
+    assert_eq!(yaws(&t.yaw), [(1600, 25.994), (1700, 1.989), (1800, 0.0)]);
     // "NULL" clears a goal set in a task group, completing its task.
     let mut script = vec![task("walk", vec![set("SET_NAVGOAL", "lukeNav1")])];
     script.push(command(id::DO, vec![text("walk")]));

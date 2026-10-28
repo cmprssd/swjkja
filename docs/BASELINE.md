@@ -2380,3 +2380,23 @@ trace has them. The view (`bench/reference/walk-views.txt`) looks across the yar
 - Both walk mid-stride in both engines; the offset in position outweighs the stride.
 - No other view changes: the 58 others render byte for byte as on main (main's build
   in its own worktree and target folder).
+
+## NPCs by the nav graph, 2026-10-28
+
+t1_sour's intro walkers now take the nav graph's first think (DECISIONS.md,
+2026-10-28): the player's stand-in heads for bay_tre_13 and steers left of Kyle,
+Kyle heads for bay_tre_13, then both go straight to introNav1, the stand-in
+steering left of Kyle again at 3400. Every traced frame (2100 to 3550, both
+walkers) leaves them where the trace has them a frame later, to its four decimals
+(`t1_sours_intro_walkers_walk_as_in_the_original`, `crates/world/tests/retail.rs`);
+academy3's Luke, walked on the real map with its graph, matches his 78 frames the
+same way (`academy3s_luke_walks_as_in_the_original`).
+
+| View | Nav graph | Straight (before) | Stance (main) |
+|------|------|------|------|
+| t1_sour_intro_walking | 1.10 (1.8%) | 2.02 (3.3%) | 1.82 (3.1%) |
+
+- What differs is a frame: the original updates t1_sour's intro runner after its
+  walkers (entity numbers, not modelled), so they start 50 ms later there.
+- No other view changes: the 58 others render byte for byte as on main (main's build
+  in its own worktree and target folder). Rendered offscreen on Windows.

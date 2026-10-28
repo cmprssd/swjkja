@@ -66,8 +66,8 @@ that differs instead of being guessed at from pixels.
 ## Architecture
 
 <!-- progress:code -->
-10 crates in one Cargo workspace, 38,244 lines of Rust (sources, tests and examples)
-plus 630 lines of WGSL shaders, 346 tests. Each crate maps to one part of the
+10 crates in one Cargo workspace, 38,942 lines of Rust (sources, tests and examples)
+plus 630 lines of WGSL shaders, 348 tests. Each crate maps to one part of the
 original engine.
 <!-- /progress -->
 
@@ -102,8 +102,8 @@ flowchart BT
 | `icarus` | 307 | 1 | reads compiled ICARUS scripts | `icarus/` |
 | `shader` | 3,134 | 28 | `.shader` scripts and which material a surface draws | `tr_shader.cpp` |
 | `model` | 2,499 | 32 | MD3 and Ghoul2 (`.glm`/`.gla`) meshes, skins, animation | `tr_model.cpp`, `ghoul2/` |
-| `world` | 13,742 | 144 | patches, stitching, light grid, entities as they spawn, NPCs, scripts, box traces, shadows, the game's random numbers | `tr_curve.cpp`, `g_*.cpp`, `NPC_*.cpp`, `Q3_Interface.cpp` |
-| `render` | 12,647 | 83 | Vulkan renderer: materials stage by stage, fog, sky, deforms, flares, culling, models skinned on the GPU, frames in flight | `tr_*.cpp` (the vanilla renderer) |
+| `world` | 14,432 | 146 | patches, stitching, light grid, entities as they spawn, NPCs, scripts, box traces, shadows, the game's random numbers | `tr_curve.cpp`, `g_*.cpp`, `NPC_*.cpp`, `Q3_Interface.cpp` |
+| `render` | 12,655 | 83 | Vulkan renderer: materials stage by stage, fog, sky, deforms, flares, culling, models skinned on the GPU, frames in flight | `tr_*.cpp` (the vanilla renderer) |
 | `swjkja` | 950 | 7 | the map viewer window and its loading screen | `cl_*.cpp` (a small part) |
 <!-- /progress -->
 
@@ -138,7 +138,7 @@ Rules that shape it:
   ones"), with a recommendation. Choices that come up mid-build are made by Claude,
   marked *decided by Claude, pending review* in DECISIONS.md, and listed in the PR.
   <!-- progress:process -->
-  So far: 72 decision entries, 15 chosen by the owner, 53 made by Claude for review.
+  So far: 73 decision entries, 15 chosen by the owner, 54 made by Claude for review.
   <!-- /progress -->
 - **$0 development.** No GitHub Actions: `.local-ci` runs on this machine (format,
   shell syntax, a build of exactly the committed tree, then clippy and tests on
@@ -199,25 +199,25 @@ timeline
 ### How close the pictures are
 
 <!-- progress:views -->
-58 reference views, 1280x720, rendered by both engines and compared (mean absolute
-difference per channel, 0-255; measured 2026-10-27 at PR #108):
+59 reference views, 1280x720, rendered by both engines and compared (mean absolute
+difference per channel, 0-255; measured 2026-10-28 at PR #112):
 
 | Kind | Views | Mean difference |
 |------|------:|------|
 | Multiplayer world (sky, fog, fog volumes, flares, animated stages, curve LOD) | 19 | 0.00-0.03 |
 | Static and brush-entity models, rotating fans and drums | 18 | 0.00-3.73 |
-| Single-player NPCs (spawned, scripted, turned, walked) | 21 | 0.00-0.24 |
-| **All** | **58** | **median 0.01; 56 under 0.5, 57 under 1.0** |
+| Single-player NPCs (spawned, scripted, turned, walked) | 22 | 0.00-1.10 |
+| **All** | **59** | **median 0.01; 56 under 0.5, 57 under 1.0** |
 
 ```mermaid
 xychart-beta
-    title "Views by mean difference (58 views)"
+    title "Views by mean difference (59 views)"
     x-axis ["< 0.25", "0.25-0.5", "0.5-1", "1-2", "> 2"]
     y-axis "views" 0 --> 59
-    bar [56, 0, 1, 0, 1]
+    bar [56, 0, 1, 1, 1]
 ```
 
-The largest: ffa5_pipes (3.73), hevil_fan_west (0.63), academy3_luke_walking (0.24).
+The largest: ffa5_pipes (3.73), t1_sour_intro_walking (1.10), hevil_fan_west (0.63).
 <!-- /progress -->
 
 Explained, and not renderer errors: ffa5_pipes has the original's first-person
