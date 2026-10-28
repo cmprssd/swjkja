@@ -8,7 +8,7 @@ use swjkja_bsp::{Bsp, SurfaceKind};
 use swjkja_world::collision::Collision;
 use swjkja_world::rand::Rand;
 use swjkja_world::static_model::Rules;
-use swjkja_world::{Geometry, Options, World, npc, script};
+use swjkja_world::{Geometry, Options, World, nav, npc, script};
 
 #[test]
 fn every_retail_map_builds() {
@@ -864,4 +864,318 @@ fn every_single_player_maps_weather_reads_and_scans() {
         .map(|&(n, z, o)| (n, z, o.iter().map(|s| s.to_string()).collect::<Vec<_>>()))
         .collect();
     assert_eq!(found, expected);
+}
+
+/// t1_sour's nav graph takes its intro walkers to introNav1 by bay_tre_13, as the
+/// original's first think steers them (traced: Kyle heads straight for it, at
+/// 288.43 degrees from where he stands).
+#[test]
+fn t1_sours_intro_walkers_path_to_their_navgoal_by_the_nearest_waypoint() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let bsp = Bsp::parse(&vfs.read("maps/t1_sour.bsp").unwrap()).unwrap();
+    let world = Collision::new(&bsp);
+    let g = nav::Graph::build(&bsp, 1, &world);
+    let named = |name: &str| {
+        g.nodes
+            .iter()
+            .position(|n| n.name.as_deref() == Some(name))
+            .unwrap()
+    };
+    let (goal, by) = (named("introNav1"), named("bay_tre_13"));
+    let (mins, maxs) = ([-16.0, -16.0, -24.0], [16.0, 16.0, 40.0]);
+    for at in [[6248.0, -2552.0, 24.125], [6200.0, -2488.0, 24.125]] {
+        let Some(nav::Nearest::Node(start)) = g.nearest(&world, at, None, Some(goal)) else {
+            panic!("no nearest point to {at:?}");
+        };
+        assert_eq!(start, by, "{at:?}");
+        // STEER::SafeToGoTo's graph test does not let them go straight.
+        let goal_at = g.nodes[goal].point;
+        assert!(
+            !(g.neighboring(start, goal)
+                && g.in_safe_radius(at, start, goal)
+                && g.in_safe_radius(goal_at, goal, start)),
+            "{at:?}"
+        );
+        let path = g.find_path(&world, at, mins, maxs, start, goal).unwrap();
+        let points: Vec<usize> = path.iter().map(|p| p.node).collect();
+        assert_eq!(points, [goal, by], "{at:?}");
+        assert_eq!(path[1].point, [6272.0, -2624.0, 24.0]);
+    }
+}
+
+/// Where the original walks `names` on `map` (traced with `d_npcfreeze 3`, each
+/// frame as (who, level time, origin) to the trace's four decimals), here a frame
+/// earlier: the frames they are not there.
+fn walks_off_the_trace(
+    vfs: &swjkja_fs::Vfs,
+    map: &str,
+    names: &[&str],
+    traced: &[(usize, i32, [f32; 3])],
+) -> Vec<(usize, i32, Option<[f32; 3]>)> {
+    let bsp = Bsp::parse(&vfs.read(map).unwrap()).unwrap();
+    let rules = Rules::for_map(map);
+    let Rules::SinglePlayer { skill } = rules else {
+        panic!("{map} is not single player");
+    };
+    let text = |folder: &str, ext: &str| {
+        let files: Vec<Vec<u8>> = vfs
+            .list(folder, ext)
+            .iter()
+            .filter_map(|f| vfs.read(&format!("{folder}/{f}")).ok())
+            .collect();
+        npc::join_parms(files.iter().map(Vec::as_slice))
+    };
+    let sabers = text("ext_data/sabers", ".sab");
+    let mut world = Collision::at_spawn(&bsp, rules);
+    swjkja_world::static_model::entity_models(&bsp.entities, rules, &sabers, &mut world);
+    let scripts = |s: &str| read_script(vfs, s);
+    let placements = npc::npc_models(
+        &bsp.entities,
+        rules,
+        &text("ext_data/npcs", ".npc"),
+        &sabers,
+        &world,
+        &scripts,
+    );
+    let mut level = script::Level::of(&bsp, &scripts);
+    level.collision = world;
+    level.nav = Some(nav::Graph::build(&bsp, skill, &Collision::new(&bsp)));
+    let holds = |_: &str| None;
+    let poses: Vec<_> = placements
+        .iter()
+        .filter_map(|p| p.ghoul2.as_ref()?.pose.as_ref())
+        .collect();
+    let npcs: Vec<script::Npc> = poses
+        .iter()
+        .map(|pose| script::Npc {
+            stance: pose,
+            script: pose.script.as_deref().map(Vec::as_slice),
+            holds: &holds,
+        })
+        .collect();
+    let voice = |name: &str| {
+        let bytes = swjkja_world::sound::files(name)
+            .iter()
+            .find_map(|f| vfs.read(f).ok())?;
+        swjkja_world::sound::length_ms(&bytes).map(|ms| ms.ceil() as i32)
+    };
+    let t = script::timelines(&npcs, &level, &voice);
+    let walkers: Vec<_> = names
+        .iter()
+        .map(|&name| {
+            let i = poses
+                .iter()
+                .position(|p| p.name.as_deref() == Some(name))
+                .unwrap();
+            (poses[i].origin, &t.npcs[i])
+        })
+        .collect();
+    let mut off = Vec::new();
+    for &(who, level, traced) in traced {
+        let (start, timeline) = walkers[who];
+        let at = timeline
+            .moves
+            .iter()
+            .find(|(l, _)| *l == level - FRAME_MS)
+            .map(|(_, o)| [0, 1, 2].map(|k| start[k] + o[k]));
+        if !at.is_some_and(|at| (0..3).all(|k| (at[k] - traced[k]).abs() < 0.001)) {
+            off.push((who, level, at));
+        }
+    }
+    off
+}
+
+/// A level frame (ms).
+const FRAME_MS: i32 = 50;
+
+/// t1_sour's intro walkers as the original walks them, every traced frame (both
+/// from rest, their first think at 2100): the player's stand-in, thinking first,
+/// takes the nav graph toward bay_tre_13 and steers left of Kyle standing in its
+/// way; Kyle heads straight for bay_tre_13. From the next think on, a clear trace
+/// sends both straight to introNav1, until at 3400 the stand-in, closing on Kyle,
+/// steers left of him again. Here they start a frame earlier: the original updates
+/// the intro's runner after them (by entity number), these runners first.
+#[test]
+// The traced positions as the trace logs them.
+#[allow(clippy::excessive_precision)]
+fn t1_sours_intro_walkers_walk_as_in_the_original() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let names = ["npc_fakePlayerIntro", "npc_fakeKyleIntro"];
+    let traced = [
+        (0, 2100, [6201.9834, -2489.8318, 24.1250]),
+        (1, 2100, [6248.8540, -2554.5615, 24.1250]),
+        (0, 2150, [6204.8486, -2492.4778, 24.1250]),
+        (1, 2150, [6250.0874, -2558.2615, 24.1250]),
+        (0, 2200, [6205.7314, -2496.6584, 24.1250]),
+        (1, 2200, [6249.4443, -2562.8105, 24.1250]),
+        (0, 2250, [6205.6123, -2501.3774, 24.1250]),
+        (1, 2250, [6248.1631, -2567.2490, 24.1250]),
+        (0, 2300, [6205.0459, -2505.9539, 24.1250]),
+        (1, 2300, [6246.5210, -2571.4756, 24.1250]),
+        (0, 2350, [6204.1709, -2510.4199, 24.1250]),
+        (1, 2350, [6244.6357, -2575.5483, 24.1250]),
+        (0, 2400, [6203.0767, -2514.8103, 24.1250]),
+        (1, 2400, [6242.5781, -2579.5146, 24.1250]),
+        (0, 2450, [6201.8354, -2519.1472, 24.1250]),
+        (1, 2450, [6240.4067, -2583.4080, 24.1250]),
+        (0, 2500, [6200.4922, -2523.4475, 24.1250]),
+        (1, 2500, [6238.1289, -2587.2932, 24.1250]),
+        (0, 2550, [6199.0806, -2527.7229, 24.1250]),
+        (1, 2550, [6235.7988, -2591.1450, 24.1250]),
+        (0, 2600, [6197.6216, -2531.9810, 24.1250]),
+        (1, 2600, [6233.4600, -2594.9316, 24.1250]),
+        (0, 2650, [6196.1313, -2536.2275, 24.1250]),
+        (1, 2650, [6231.0967, -2598.7026, 24.1250]),
+        (0, 2700, [6194.6191, -2540.4661, 24.1250]),
+        (1, 2700, [6228.6895, -2602.5049, 24.1250]),
+        (0, 2750, [6193.0923, -2544.6992, 24.1250]),
+        (1, 2750, [6226.2710, -2606.3000, 24.1250]),
+        (0, 2800, [6191.5557, -2548.9287, 24.1250]),
+        (1, 2800, [6223.8447, -2610.0901, 24.1250]),
+        (0, 2850, [6190.0122, -2553.1558, 24.1250]),
+        (1, 2850, [6221.4136, -2613.8770, 24.1250]),
+        (0, 2900, [6188.4814, -2557.3342, 24.1250]),
+        (1, 2900, [6218.9790, -2617.6614, 24.1250]),
+        (0, 2950, [6186.9473, -2561.5115, 24.1250]),
+        (1, 2950, [6216.5420, -2621.4443, 24.1250]),
+        (0, 3000, [6185.3940, -2565.7349, 24.1250]),
+        (1, 3000, [6214.1030, -2625.2261, 24.1250]),
+        (0, 3050, [6183.8394, -2569.9578, 24.1250]),
+        (1, 3050, [6211.6631, -2629.0071, 24.1250]),
+        (0, 3100, [6182.2837, -2574.1802, 24.1250]),
+        (1, 3100, [6209.2222, -2632.7876, 24.1250]),
+        (0, 3150, [6180.7271, -2578.4023, 24.1250]),
+        (1, 3150, [6206.7808, -2636.5679, 24.1250]),
+        (0, 3200, [6179.1875, -2582.5774, 24.1250]),
+        (1, 3200, [6204.3394, -2640.3479, 24.1250]),
+        (0, 3250, [6177.6475, -2586.7524, 24.1250]),
+        (1, 3250, [6201.8975, -2644.1277, 24.1250]),
+        (0, 3300, [6176.0898, -2590.9744, 24.1250]),
+        (1, 3300, [6199.4556, -2647.9075, 24.1250]),
+        (0, 3350, [6174.5322, -2595.1963, 24.1250]),
+        (1, 3350, [6197.0132, -2651.6870, 24.1250]),
+        (0, 3400, [6175.7051, -2599.5071, 24.1250]),
+        (1, 3400, [6194.5708, -2655.4666, 24.1250]),
+        (0, 3450, [6178.3062, -2603.6035, 24.1250]),
+        (1, 3450, [6192.1284, -2659.2461, 24.1250]),
+        (0, 3500, [6180.0645, -2606.6218, 24.1250]),
+        (1, 3500, [6189.6860, -2663.0256, 24.1250]),
+        (0, 3550, [6180.8418, -2609.4375, 24.1250]),
+        (1, 3550, [6187.2437, -2666.8052, 24.1250]),
+    ];
+    let off = walks_off_the_trace(&vfs, "maps/t1_sour.bsp", &names, &traced);
+    assert!(
+        off.is_empty(),
+        "{} frames off, the first {:?}",
+        off.len(),
+        off.first()
+    );
+}
+
+/// academy3's Luke walks to lukeNav1 by the nav graph's first think as the
+/// original does (traced from 14,850), here a frame earlier (the voice line before
+/// ends a frame apart: DECISIONS.md, 2026-10-26).
+#[test]
+#[allow(clippy::excessive_precision)]
+fn academy3s_luke_walks_as_in_the_original() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let traced = [
+        (0, 14850, [-1343.6440, -1339.1774, 744.1250]),
+        (0, 14900, [-1343.2881, -1340.3547, 744.1250]),
+        (0, 14950, [-1342.9408, -1341.5034, 744.1250]),
+        (0, 15000, [-1342.5935, -1342.6521, 744.1250]),
+        (0, 15050, [-1342.1160, -1344.2314, 744.1250]),
+        (0, 15100, [-1341.5951, -1345.9545, 744.1250]),
+        (0, 15150, [-1341.0308, -1347.8210, 744.1250]),
+        (0, 15200, [-1340.4231, -1349.8312, 744.1250]),
+        (0, 15250, [-1339.7720, -1351.9849, 744.1250]),
+        (0, 15300, [-1339.0774, -1354.2822, 744.1250]),
+        (0, 15350, [-1338.3481, -1356.6945, 744.1250]),
+        (0, 15400, [-1337.5841, -1359.2216, 744.1250]),
+        (0, 15450, [-1336.7883, -1361.8539, 744.1250]),
+        (0, 15500, [-1335.9926, -1364.4862, 744.1250]),
+        (0, 15550, [-1335.1968, -1367.1185, 744.1250]),
+        (0, 15600, [-1334.4010, -1369.7509, 744.1250]),
+        (0, 15650, [-1333.6196, -1372.3353, 744.1250]),
+        (0, 15700, [-1332.8383, -1374.9198, 744.1250]),
+        (0, 15750, [-1332.0425, -1377.5521, 744.1250]),
+        (0, 15800, [-1331.2467, -1380.1844, 744.1250]),
+        (0, 15850, [-1330.4509, -1382.8168, 744.1250]),
+        (0, 15900, [-1329.6552, -1385.4491, 744.1250]),
+        (0, 15950, [-1328.8738, -1388.0336, 744.1250]),
+        (0, 16000, [-1328.0924, -1390.6180, 744.1250]),
+        (0, 16050, [-1327.2966, -1393.2504, 744.1250]),
+        (0, 16100, [-1326.5009, -1395.8827, 744.1250]),
+        (0, 16150, [-1325.7051, -1398.5150, 744.1250]),
+        (0, 16200, [-1324.9093, -1401.1473, 744.1250]),
+        (0, 16250, [-1324.1135, -1403.7797, 744.1250]),
+        (0, 16300, [-1323.3177, -1406.4120, 744.1250]),
+        (0, 16350, [-1322.5220, -1409.0443, 744.1250]),
+        (0, 16400, [-1321.7262, -1411.6766, 744.1250]),
+        (0, 16450, [-1320.9304, -1414.3090, 744.1250]),
+        (0, 16500, [-1320.1346, -1416.9413, 744.1250]),
+        (0, 16550, [-1319.3533, -1419.5258, 744.1250]),
+        (0, 16600, [-1318.5719, -1422.1102, 744.1250]),
+        (0, 16650, [-1317.7905, -1424.6947, 744.1250]),
+        (0, 16700, [-1317.0092, -1427.2792, 744.1250]),
+        (0, 16750, [-1316.2134, -1429.9115, 744.1250]),
+        (0, 16800, [-1315.4176, -1432.5438, 744.1250]),
+        (0, 16850, [-1314.6362, -1435.1283, 744.1250]),
+        (0, 16900, [-1313.8549, -1437.7128, 744.1250]),
+        (0, 16950, [-1313.0735, -1440.2972, 744.1250]),
+        (0, 17000, [-1312.2921, -1442.8817, 744.1250]),
+        (0, 17050, [-1311.4962, -1445.5140, 744.1250]),
+        (0, 17100, [-1310.7003, -1448.1464, 744.1250]),
+        (0, 17150, [-1309.9044, -1450.7787, 744.1250]),
+        (0, 17200, [-1309.1086, -1453.4110, 744.1250]),
+        (0, 17250, [-1308.3129, -1456.0433, 744.1250]),
+        (0, 17300, [-1307.5171, -1458.6757, 744.1250]),
+        (0, 17350, [-1306.7212, -1461.3080, 744.1250]),
+        (0, 17400, [-1305.9253, -1463.9403, 744.1250]),
+        (0, 17450, [-1305.1294, -1466.5726, 744.1250]),
+        (0, 17500, [-1304.3336, -1469.2050, 744.1250]),
+        (0, 17550, [-1303.6390, -1471.5023, 744.1250]),
+        (0, 17600, [-1302.9619, -1473.7422, 744.1250]),
+        (0, 17650, [-1302.3455, -1475.7810, 744.1250]),
+        (0, 17700, [-1301.7898, -1477.6189, 744.1250]),
+        (0, 17750, [-1301.3384, -1479.1122, 744.1250]),
+        (0, 17800, [-1300.9911, -1480.2609, 744.1250]),
+        (0, 17850, [-1300.6873, -1481.2660, 744.1250]),
+        (0, 17900, [-1300.3834, -1482.2711, 744.1250]),
+        (0, 17950, [-1300.0969, -1483.2188, 744.1250]),
+        (0, 18000, [-1299.8104, -1484.1664, 744.1250]),
+        (0, 18050, [-1299.5499, -1485.0278, 744.1250]),
+        (0, 18100, [-1299.2894, -1485.8893, 744.1250]),
+        (0, 18150, [-1299.0464, -1486.6934, 744.1250]),
+        (0, 18200, [-1298.8033, -1487.4974, 744.1250]),
+        (0, 18250, [-1298.5776, -1488.2440, 744.1250]),
+        (0, 18300, [-1298.3519, -1488.9906, 744.1250]),
+        (0, 18350, [-1298.1349, -1489.7085, 744.1250]),
+        (0, 18400, [-1297.9178, -1490.4264, 744.1250]),
+        (0, 18450, [-1297.7181, -1491.0869, 744.1250]),
+        (0, 18500, [-1297.5184, -1491.7474, 744.1250]),
+        (0, 18550, [-1297.3361, -1492.3505, 744.1250]),
+        (0, 18600, [-1297.1537, -1492.9535, 744.1250]),
+        (0, 18650, [-1296.9801, -1493.5278, 744.1250]),
+        (0, 18700, [-1296.8065, -1494.1022, 744.1250]),
+    ];
+    let off = walks_off_the_trace(&vfs, "maps/academy3.bsp", &["npc_luke1"], &traced);
+    assert!(
+        off.is_empty(),
+        "{} frames off: {:?}",
+        off.len(),
+        &off[..off.len().min(4)]
+    );
 }

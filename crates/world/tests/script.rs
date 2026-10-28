@@ -74,6 +74,7 @@ fn stance(legs: &'static str, torso: &'static str) -> Pose {
 fn holds(name: &str) -> Option<(i32, i32)> {
     let frames = match name {
         "BOTH_STAND1" | "BOTH_STAND3" | "TORSO_WEAPONIDLE3" | "BOTH_SIT5" | "BOTH_CIN_1" => 21,
+        "BOTH_WALK1" | "BOTH_RUN1" | "BOTH_WALKBACK1" | "BOTH_RUNBACK1" => 21,
         "BOTH_STAND1IDLE1" => 40,
         "BOTH_STAND3IDLE1" => 151,
         "BOTH_SIT5_TALK1" => 41,
@@ -1136,7 +1137,11 @@ fn walk_then_play(name: &str) -> Vec<Node> {
 
 /// Luke's timeline, running `script` on [`navgoals`].
 fn walked(script: Vec<Node>) -> swjkja_world::script::Timeline {
-    let pose = walker();
+    walked_as(walker(), script)
+}
+
+/// The timeline of `pose`, running `script` on [`navgoals`].
+fn walked_as(pose: Pose, script: Vec<Node>) -> swjkja_world::script::Timeline {
     let npc = Npc {
         stance: &pose,
         script: Some(&script),
@@ -1211,10 +1216,12 @@ fn a_script_walks_its_npc_straight_to_a_navgoal() {
 
 #[test]
 fn a_navgoal_out_of_reach_or_cleared_moves_no_one() {
-    // 500 units away the original takes the nav grid, not modelled: he stays and
-    // the task never completes.
+    // 500 units away, on a level without a nav graph, he finds no path and stops
+    // (`STEER::Stop`): he stays, the task never completes, and he turns to his
+    // last path's yaw, never set (0).
     let t = walked(walk_then_play("far"));
-    assert_eq!((t.moves.len(), t.yaw.len(), cin(&t)), (0, 0, None));
+    assert_eq!((t.moves.len(), cin(&t)), (0, None));
+    assert_eq!(yaws(&t.yaw), [(1600, 25.994), (1700, 1.989), (1800, 0.0)]);
     // "NULL" clears a goal set in a task group, completing its task.
     let mut script = vec![task("walk", vec![set("SET_NAVGOAL", "lukeNav1")])];
     script.push(command(id::DO, vec![text("walk")]));
@@ -1224,4 +1231,61 @@ fn a_navgoal_out_of_reach_or_cleared_moves_no_one() {
     let t = walked(script);
     assert_eq!(t.moves.len(), 0);
     assert_eq!(cin(&t), Some(1550));
+}
+
+#[test]
+fn walking_npcs_walk_or_run_their_legs_forward_or_back() {
+    // Luke backs off toward lukeNav1 at first (forwardmove < 0: PMF_BACKWARDS_RUN),
+    // and walks forward once he has turned (his speed under 55 + 5: BUTTON_WALKING).
+    // Armed, his torso keeps its stance while he backs up. As he arrives his
+    // movement frame stands him, then his script plays BOTH_CIN_1 in the same frame.
+    let t = walked(walk_then_play("lukeNav1"));
+    assert_eq!(
+        changes(&t.legs)[1..5],
+        [
+            ("BOTH_WALKBACK1", 1600),
+            ("BOTH_WALK1", 1800),
+            ("BOTH_STAND1", 5450),
+            ("BOTH_CIN_1", 5450)
+        ]
+    );
+    assert_eq!(
+        changes(&t.torso)[1..4],
+        [
+            ("BOTH_WALK1", 1800),
+            ("BOTH_STAND1", 5450),
+            ("BOTH_CIN_1", 5450)
+        ]
+    );
+    // Unarmed, it follows his legs back too; with nothing played after, both
+    // return to the stance as he arrives.
+    let mut script = vec![task("walk", vec![set("SET_NAVGOAL", "lukeNav1")])];
+    script.extend(do_and_wait("walk"));
+    let unarmed = Pose {
+        unarmed: true,
+        ..walker()
+    };
+    let t = walked_as(unarmed, script);
+    for part in [&t.legs, &t.torso] {
+        assert_eq!(
+            changes(part)[1..4],
+            [
+                ("BOTH_WALKBACK1", 1600),
+                ("BOTH_WALK1", 1800),
+                ("BOTH_STAND1", 5450)
+            ]
+        );
+    }
+    // Running (SET_RUNNING), at 150 from his first think (MAX_FORCE), over 55 + 5.
+    let mut script = vec![set("SET_RUNNING", "true")];
+    script.extend(walk_then_play("lukeNav1"));
+    let t = walked(script);
+    assert_eq!(
+        changes(&t.legs)[1..4],
+        [
+            ("BOTH_RUNBACK1", 1600),
+            ("BOTH_RUN1", 1800),
+            ("BOTH_STAND1", 2550)
+        ]
+    );
 }

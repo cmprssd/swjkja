@@ -42,7 +42,8 @@ use swjkja_icarus::{Block, Member, Node, id};
 
 use crate::Vec3;
 use crate::brush_entity::{Motion, Slide, slid};
-use crate::collision::{CONTENTS_BOTCLIP, Collision, MASK_NPCSOLID};
+use crate::collision::{CONTENTS_BODY, CONTENTS_BOTCLIP, Collision, MASK_NPCSOLID, Trace};
+use crate::nav::{self, Graph, Nearest};
 use crate::static_model::{Pose, angle_normalize180, atof, vectoangles};
 
 /// The level time (ms) of the server's first frame on a map: four settling frames
@@ -415,7 +416,8 @@ const OVERCLIP: f32 = 1.001;
 /// The captures freeze the AI but for an NPC whose navgoal's task is pending
 /// (`d_npcfreeze 3`), which thinks as in the game: every [`BSTATE_MS`] its behavior
 /// (`NPC_BSDefault`) completes the task once it has reached the goal, or steers it
-/// straight there (`STEER::GoTo`); the frames between replay its last command.
+/// there (`NPC_MoveToGoal`: straight, or by the nav graph); the frames between
+/// replay its last command.
 #[derive(Debug, Default)]
 struct Walk {
     /// Where it is (`currentOrigin`) and its velocity (`ps.velocity`).
@@ -438,6 +440,182 @@ struct Walk {
     /// trace keeps it safe ("SafeToGoToDURATION").
     check: Option<i32>,
     safe_until: Option<i32>,
+    /// The command its last think gave (`ucmd`, replayed until the next):
+    /// `forwardmove`, `rightmove`, and whether it presses `BUTTON_WALKING`.
+    forward: i32,
+    right: i32,
+    walking: bool,
+    /// `PMF_BACKWARDS_RUN`: the last command that moved it forward or back moved
+    /// it back.
+    backwards: bool,
+    /// The nav point it was last found nearest (`waypoint`).
+    waypoint: Option<Nearest>,
+    /// The side it steers around things by (`avoidSide`), the side it last
+    /// steered by (`lastAvoidSteerSide`) and until when that side holds
+    /// (`lastAvoidSteerSideDebouncer`).
+    avoid_side: Side,
+    last_avoid_side: Side,
+    avoid_until: i32,
+}
+
+/// A side to steer by (`ESide`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Side {
+    #[default]
+    None,
+    Left,
+    Right,
+}
+
+/// Another NPC as a steering trace meets it (`CONTENTS_BODY`): its actor, its box
+/// where it stands, and its velocity.
+struct Obstacle {
+    actor: usize,
+    mins: Vec3,
+    maxs: Vec3,
+    velocity: Vec3,
+}
+
+/// An NPC's steering as one think builds it (`SSteerUser`, from
+/// `STEER::Activate`): where it is, its velocity and speed, the speed it steers
+/// at most, the steering so far, where it last sought (`mSeekLocation`) and the
+/// next point of its path, the points it projects to avoid collisions, and the
+/// NPC those leave out (`mIgnoreEntity`).
+struct Steer {
+    position: Vec3,
+    velocity: Vec3,
+    speed: f32,
+    max_speed: f32,
+    steering: Vec3,
+    seek_at: Vec3,
+    next: Option<Vec3>,
+    project_fwd: Vec3,
+    project_side: Vec3,
+    ignore: Option<usize>,
+}
+
+impl Steer {
+    /// `STEER::Seek` of `pos`, slowing within `slowing` (none at 0), weighted by
+    /// `weight`: the velocity there at its speed (a height under 10 left out) less
+    /// its own, added to the steering. How far `pos` is.
+    fn seek(&mut self, pos: Vec3, slowing: f32, weight: f32) -> f32 {
+        self.seek_at = pos;
+        let mut desired = sub(pos, self.position);
+        if desired[2].abs() < 10.0 {
+            desired[2] = 0.0;
+        }
+        let dist = length(desired);
+        if dist > 1e-10 {
+            let mut speed = self.max_speed;
+            if slowing != 0.0 && dist < slowing {
+                speed *= dist / slowing;
+            }
+            desired = desired.map(|x| x / dist * speed);
+        } else {
+            desired = [0.0; 3];
+        }
+        for k in 0..3 {
+            self.steering[k] += (desired[k] - self.velocity[k]) * weight;
+        }
+        if dist > 1e-10 { dist } else { 0.0 }
+    }
+}
+
+/// How long an NPC keeps steering around things by the same side: 500 to 2000 ms
+/// in the original (`Q_irand(500, STEER::SIDE_LOCKED_TIMER)`), a draw not
+/// replayed here; t1_sour's traced stand-in needs at least 1300.
+const SIDE_LOCKED_MS: i32 = 2000;
+
+/// `MIN_WALK_NORMAL`: steeper planes cannot be walked on.
+const MIN_WALK_NORMAL: f32 = 0.7;
+
+/// `MoveTrace` of a box from `start` to `end` through `world` and `bodies`
+/// (`CONTENTS_BODY`), botclip too unless it starts in it: whether it is clear,
+/// the trace, and the NPC it hit.
+fn move_trace_bodies(
+    world: &Collision,
+    bodies: &[Obstacle],
+    start: Vec3,
+    end: Vec3,
+    mins: Vec3,
+    maxs: Vec3,
+) -> (bool, Trace, Option<usize>) {
+    let run = |mask: i32| {
+        let (tr, hit) = trace_bodies(world, bodies, start, end, mins, maxs, mask);
+        (
+            !tr.all_solid && !tr.start_solid && tr.fraction == 1.0,
+            tr,
+            hit,
+        )
+    };
+    let first = run(MASK_NPCSOLID | CONTENTS_BOTCLIP);
+    if !first.0 && (first.1.all_solid || first.1.start_solid) {
+        return run(MASK_NPCSOLID);
+    }
+    first
+}
+
+/// `SV_Trace`: the world first, then, up to where it stops, each of `bodies` (an
+/// entity box, `SV_ClipMoveToEntities`), the nearest kept; the NPC hit.
+fn trace_bodies(
+    world: &Collision,
+    bodies: &[Obstacle],
+    start: Vec3,
+    end: Vec3,
+    mins: Vec3,
+    maxs: Vec3,
+    mask: i32,
+) -> (Trace, Option<usize>) {
+    let mut tr = world.trace(start, end, mins, maxs, mask);
+    if tr.fraction == 0.0 || mask & CONTENTS_BODY == 0 {
+        return (tr, None);
+    }
+    let world_fraction = tr.fraction;
+    let short = tr.end;
+    tr.fraction = 1.0;
+    let mut hit = None;
+    for b in bodies {
+        let mut c = Collision::default();
+        c.add_box(b.mins, b.maxs, CONTENTS_BODY);
+        let t = c.trace(start, short, mins, maxs, mask);
+        if t.all_solid {
+            if !tr.all_solid {
+                hit = Some(b.actor);
+            }
+            tr.all_solid = true;
+        } else if t.start_solid {
+            if !tr.start_solid {
+                hit = Some(b.actor);
+            }
+            tr.start_solid = true;
+        }
+        if t.fraction < tr.fraction {
+            let start_solid = tr.start_solid;
+            tr = t;
+            tr.start_solid |= start_solid;
+            hit = Some(b.actor);
+        }
+    }
+    tr.fraction *= world_fraction;
+    (tr, hit)
+}
+
+fn dot(a: Vec3, b: Vec3) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+/// `CVec3::Norm`.
+fn normalize(v: Vec3) -> Vec3 {
+    let l = length(v);
+    v.map(|x| x / l)
+}
+
+/// The node of a nearest point, if not an edge.
+fn node(n: Nearest) -> Option<usize> {
+    match n {
+        Nearest::Node(i) => Some(i),
+        Nearest::Edge(_) => None,
+    }
 }
 
 fn sub(a: Vec3, b: Vec3) -> Vec3 {
@@ -609,17 +787,44 @@ impl<'a> Body<'a> {
             || (0..3).all(|k| goal[k] > at[k] + mins[k] - 1.0 && goal[k] < at[k] + maxs[k] + 1.0)
     }
 
-    /// `STEER::SafeToGoTo` at level time `level`: within 110 units (and 50 up or
-    /// down) of `goal`, or within 400 while a trace of its path keeps it safe (a
-    /// clear one every 1.5 s, safe for 2 s: `MoveTrace` of its box, raised by
-    /// [`STEPSIZE`] from below). The nav graph's check (`NAV::OnNeighboringPoints`)
-    /// and the first trace's think, which the original spends on the grid
-    /// (`NAV::GoTo`), go straight here.
-    fn safe_to_go(&mut self, goal: Vec3, level: i32, world: &Collision) -> bool {
+    /// `STEER::SafeToGoTo` at level time `level` on the nav graph `nav`: within 110
+    /// units (and 50 up or down) of `goal`; within 500 when its nearest point and
+    /// the goal's neighbor and each stands within the safe radius of its own
+    /// (`NAV::OnNeighboringPoints`, `NAV::InSafeRadius`); or within 400 while a trace
+    /// of its path keeps it safe (one every 1.5 s, `MoveTrace` of its box raised by
+    /// [`STEPSIZE`] from below, past every NPC: a clear one keeps it safe for the
+    /// 2 s after, but not on the think that traced, which takes the graph). Without
+    /// a graph (a level the caller gave none) the graph's test is left out and the
+    /// think that traces clear goes straight too.
+    fn safe_to_go(
+        &mut self,
+        goal: Vec3,
+        level: i32,
+        world: &Collision,
+        nav: Option<&Graph>,
+    ) -> bool {
         let at = self.walk.origin;
         let dist = length(sub(goal, at));
         if dist < 110.0 && (goal[2] - at[2]).abs() < 50.0 {
             return true;
+        }
+        if dist >= 500.0 {
+            return false;
+        }
+        if let Some(g) = nav {
+            let target = g.nearest(world, goal, None, None);
+            let near = self.nearest_point(g, world, target.and_then(node));
+            let neighbors = match (near, target) {
+                (Some(Nearest::Node(a)), Some(Nearest::Node(b))) => {
+                    g.neighboring(a, b)
+                        && g.in_safe_radius(at, a, b)
+                        && g.in_safe_radius(goal, b, a)
+                }
+                _ => false,
+            };
+            if neighbors {
+                return true;
+            }
         }
         if dist >= 400.0 {
             return false;
@@ -634,60 +839,248 @@ impl<'a> Body<'a> {
         w.check = Some(level + 1500);
         let mut mins = self.stance.mins;
         mins[2] += STEPSIZE;
-        let maxs = self.stance.maxs;
-        let clear = |mask: i32| {
-            let tr = world.trace(at, goal, mins, maxs, mask);
-            (
-                !tr.all_solid && !tr.start_solid && tr.fraction == 1.0,
-                tr.start_solid || tr.all_solid,
-            )
-        };
-        let (mut ok, solid) = clear(MASK_NPCSOLID | CONTENTS_BOTCLIP);
-        if solid {
-            ok = clear(MASK_NPCSOLID).0;
-        }
-        if ok {
+        let clear = nav::move_trace(world, at, goal, mins, self.stance.maxs, true);
+        if clear {
             w.safe_until = Some(level + 2000);
         }
-        ok
+        clear && nav.is_none()
     }
 
-    /// `STEER::GoTo` to `goal` (radius `radius`) at level time `level`, then
-    /// `STEER::DeActivate`: where it wants to go (`Seek`, slowing within four times
-    /// the radius, at its walking or running speed) less its velocity, at most
-    /// [`MAX_FORCE`], added to its velocity at most that speed, sets its move
-    /// direction, its speed (none under 10; three quarters while it backs up, a
-    /// whole number) and the yaw it turns to. A path that is not safe takes the
-    /// nav grid in the original (`NAV::GoTo`), not modelled: it does not steer.
-    fn steer(&mut self, goal: Vec3, radius: f32, level: i32, world: &Collision) {
-        let max = if self.walk.running {
-            self.stance.run_speed
-        } else {
-            self.stance.walk_speed
+    /// `NAV::GetNearestNode` for it, now (`forceRecalcNow`), toward `goal`: from the
+    /// point it was last nearest (an edge's is not passed on), which this becomes.
+    fn nearest_point(
+        &mut self,
+        g: &Graph,
+        world: &Collision,
+        goal: Option<usize>,
+    ) -> Option<Nearest> {
+        let previous = self.walk.waypoint.and_then(node);
+        self.walk.waypoint = g.nearest(world, self.walk.origin, previous, goal);
+        self.walk.waypoint
+    }
+
+    /// `NAV::GoTo` toward `goal` on the graph `g` at level time `level`: the
+    /// shortest path from its nearest point to the goal's (`NAV::FindPath`; on an
+    /// edge, its first point, where the original draws one of the two), its next
+    /// point sought (`STEER::Path`, slowing within that point's radius), then
+    /// collisions avoided. Whether it has a path. The path is found anew on each
+    /// think that takes the graph (`NAV::UpdatePath` is left out): the thinks
+    /// between go straight.
+    fn nav_go_to(
+        &mut self,
+        s: &mut Steer,
+        g: &Graph,
+        goal: Vec3,
+        level: i32,
+        world: &Collision,
+        bodies: &[Obstacle],
+    ) -> bool {
+        let first = |n: Nearest| match n {
+            Nearest::Node(i) => i,
+            Nearest::Edge(e) => g.edges[e].a,
         };
-        if !self.safe_to_go(goal, level, world) {
-            return;
+        let Some(target) = g.nearest(world, goal, None, None).map(first) else {
+            return false;
+        };
+        let Some(start) = self.nearest_point(g, world, Some(target)).map(first) else {
+            return false;
+        };
+        let (mins, maxs) = (self.stance.mins, self.stance.maxs);
+        let path = g.find_path(world, self.walk.origin, mins, maxs, start, target);
+        let Some(next) = path.as_ref().and_then(|p| p.last()) else {
+            return false;
+        };
+        s.next = Some(next.point);
+        if s.seek(next.point, next.slowing_radius, 1.0) == 0.0 {
+            return false;
         }
-        let mut desired = sub(goal, self.walk.origin);
-        if desired[2].abs() < 10.0 {
-            desired[2] = 0.0;
-        }
-        let dist = length(desired);
-        if dist > 1e-10 {
-            let slowing = radius * 4.0;
-            let mut speed = max;
-            if slowing != 0.0 && dist < slowing {
-                speed *= dist / slowing;
-            }
-            desired = desired.map(|x| x / dist * speed);
-        }
-        let w = &mut self.walk;
-        let mut steering = sub(desired, w.velocity);
-        let mut velocity = w.velocity;
-        let mut speed = length(velocity);
+        self.avoid_collisions(s, level, world, bodies);
+        true
+    }
+
+    /// `STEER::AvoidCollisions` at level time `level` (none ignored: no NPC here
+    /// greets, fights or leads another): its velocity as the steering so far would
+    /// leave it, traced a second ahead (`TestCollision`), then 0.3 s ahead and 40
+    /// degrees toward the side it avoids by (straight ahead again while it has
+    /// none), half as strongly; a side found clear swaps the side. Whether it hit
+    /// something (`STEER::Blocked`, left out: it acts once blocked for 2 s).
+    fn avoid_collisions(
+        &mut self,
+        s: &mut Steer,
+        level: i32,
+        world: &Collision,
+        bodies: &[Obstacle],
+    ) -> bool {
+        s.ignore = None;
+        let mut steering = s.steering;
+        let mut velocity = s.velocity;
+        let mut speed = s.speed;
         if truncate(&mut steering, MAX_FORCE) > 1e-10 {
             velocity = [0, 1, 2].map(|k| velocity[k] + steering[k]);
-            speed = truncate(&mut velocity, max);
+            speed = truncate(&mut velocity, s.max_speed);
+        }
+        if speed <= 0.01 {
+            return false;
+        }
+        let side = self.walk.avoid_side;
+        let turn = if side == Side::Left { 40.0f32 } else { -40.0 }.to_radians();
+        let (sin, cos) = turn.sin_cos();
+        let aside = [
+            velocity[0] * cos - velocity[1] * sin,
+            velocity[0] * sin + velocity[1] * cos,
+            velocity[2],
+        ];
+        s.project_fwd = [0, 1, 2].map(|k| s.position[k] + velocity[k]);
+        s.project_side = [0, 1, 2].map(|k| s.position[k] + aside[k] * 0.3);
+        let front = self.test_collision(s, velocity, speed, Side::None, 1.0, level, world, bodies);
+        let beside = self.test_collision(s, velocity, speed, side, 0.5, level, world, bodies);
+        if !beside {
+            self.walk.avoid_side = if side == Side::Left {
+                Side::Right
+            } else {
+                Side::Left
+            };
+        }
+        front || beside
+    }
+
+    /// `TestCollision` of its move toward `side`'s projected point (`Side::None`:
+    /// ahead) at `velocity` and `speed`, weighted by `weight`: whether it would
+    /// hit something. Ahead, an NPC that moves slower its way is followed at its
+    /// speed and one standing on its next point is stopped behind; a shallow slope
+    /// is safe. Else it steers past what it hit, toward the side the plane leans
+    /// its way, kept for a while ([`SIDE_LOCKED_MS`]).
+    /// Doors are not told apart from the world (the original passes through them).
+    #[allow(clippy::too_many_arguments)]
+    fn test_collision(
+        &mut self,
+        s: &mut Steer,
+        velocity: Vec3,
+        speed: f32,
+        side: Side,
+        weight: f32,
+        level: i32,
+        world: &Collision,
+        bodies: &[Obstacle],
+    ) -> bool {
+        let to = if side == Side::None {
+            s.project_fwd
+        } else {
+            s.project_side
+        };
+        let mut mins = self.stance.mins;
+        mins[2] += STEPSIZE;
+        let (mut safe, tr, hit) =
+            move_trace_bodies(world, bodies, s.position, to, mins, self.stance.maxs);
+        if hit.is_some() && hit == s.ignore {
+            safe = true;
+        }
+        if safe || side != Side::None {
+            return !safe;
+        }
+        if let Some(b) = hit.and_then(|h| bodies.iter().find(|b| b.actor == h)) {
+            let contact_speed = length(b.velocity);
+            if contact_speed > 0.01 {
+                if contact_speed < speed {
+                    let similar = dot(normalize(velocity), normalize(b.velocity)).abs();
+                    if similar > 0.5 {
+                        let mut desired = s.velocity;
+                        truncate(&mut desired, contact_speed);
+                        for k in 0..3 {
+                            s.steering[k] += (desired[k] - velocity[k]) * similar;
+                        }
+                        s.ignore = Some(b.actor);
+                        safe = true;
+                    }
+                }
+            } else {
+                let next = s.next.unwrap_or(s.seek_at);
+                if (0..3).all(|k| next[k] > b.mins[k] - 1.0 && next[k] < b.maxs[k] + 1.0) {
+                    for k in 0..3 {
+                        s.steering[k] -= velocity[k];
+                    }
+                    s.ignore = Some(b.actor);
+                    safe = true;
+                }
+            }
+        }
+        if !safe && tr.normal[2] > 0.0 && tr.normal[2] < MIN_WALK_NORMAL {
+            safe = true;
+        }
+        let w = &mut self.walk;
+        if safe {
+            w.last_avoid_side = Side::None;
+            return false;
+        }
+        // The plane's normal crossed with up: along the plane.
+        let mut along = [tr.normal[1], -tr.normal[0], 0.0];
+        if w.last_avoid_side != Side::None && w.avoid_until < level {
+            w.last_avoid_side = Side::None;
+            w.avoid_until = level + SIDE_LOCKED_MS;
+        }
+        if w.last_avoid_side == Side::Right
+            || w.last_avoid_side == Side::None && dot(along, normalize(velocity)) < 0.0
+        {
+            along = along.map(|x| -x);
+            w.last_avoid_side = Side::Right;
+        } else {
+            w.last_avoid_side = Side::Left;
+        }
+        let out = speed * weight * 0.5;
+        let contact = [0, 1, 2].map(|k| tr.end[k] + along[k] * out);
+        // The original passes the weight as the slowing distance.
+        s.seek(contact, weight, 1.0);
+        true
+    }
+
+    /// `NPC_MoveToGoal` toward `goal` (radius `radius`) at level time `level`:
+    /// straight there (`STEER::GoTo`: `Seek`, slowing within four times the radius,
+    /// at its walking or running speed, then collisions avoided) when that is safe,
+    /// else by the nav graph `nav` (`NAV::GoTo`), else it stops (`STEER::Stop`).
+    /// Then `STEER::DeActivate`: the steering, at most [`MAX_FORCE`], added to its
+    /// velocity at most that speed, sets its move direction, its speed (none under
+    /// 10; three quarters while it backs up, a whole number), the yaw it turns to
+    /// and, with any speed, its command (walking under its walking speed and 5).
+    /// `bodies` are the other NPCs.
+    fn steer(
+        &mut self,
+        goal: Vec3,
+        radius: f32,
+        level: i32,
+        world: &Collision,
+        nav: Option<&Graph>,
+        bodies: &[Obstacle],
+    ) {
+        let mut s = Steer {
+            position: self.walk.origin,
+            velocity: self.walk.velocity,
+            speed: length(self.walk.velocity),
+            max_speed: if self.walk.running {
+                self.stance.run_speed
+            } else {
+                self.stance.walk_speed
+            },
+            steering: [0.0; 3],
+            seek_at: self.walk.origin,
+            next: None,
+            project_fwd: self.walk.origin,
+            project_side: self.walk.origin,
+            ignore: None,
+        };
+        if self.safe_to_go(goal, level, world, nav) {
+            s.seek(goal, radius * 4.0, 1.0);
+            self.avoid_collisions(&mut s, level, world, bodies);
+        } else if !nav.is_some_and(|g| self.nav_go_to(&mut s, g, goal, level, world, bodies)) {
+            for k in 0..3 {
+                s.steering[k] -= s.velocity[k];
+            }
+        }
+        let w = &mut self.walk;
+        let mut velocity = s.velocity;
+        let mut speed = s.speed;
+        if truncate(&mut s.steering, MAX_FORCE) > 1e-10 {
+            velocity = [0, 1, 2].map(|k| velocity[k] + s.steering[k]);
+            speed = truncate(&mut velocity, s.max_speed);
         }
         if speed < 10.0 {
             speed = 0.0;
@@ -702,9 +1095,13 @@ impl<'a> Body<'a> {
         // ps.speed is a whole number.
         w.speed = speed as i32 as f32;
         if speed > 0.0 {
+            // The command, from its current angles (AngleVectors' forward and right).
             let yaw = self.view[1].to_radians();
-            let forward = (yaw.cos() * w.dir[0] + yaw.sin() * w.dir[1]) * 127.0;
-            if forward.clamp(-127.0, 127.0).floor() < 0.0 {
+            let dot = |x: f32, y: f32| (x * w.dir[0] + y * w.dir[1]) * 127.0;
+            w.forward = dot(yaw.cos(), yaw.sin()).clamp(-127.0, 127.0).floor() as i32;
+            w.right = dot(yaw.sin(), -yaw.cos()).clamp(-127.0, 127.0).floor() as i32;
+            w.walking = speed < self.stance.walk_speed + 5.0;
+            if w.forward < 0 {
                 w.speed = (w.speed * 0.75) as i32 as f32;
             }
         }
@@ -902,10 +1299,17 @@ impl<'a> Actor<'a> {
     }
 
     /// The movement frame of level frame `level`, `msec` after the last: the timers
-    /// count down (`PM_DropTimers`), the stance returns to parts no longer held
-    /// (`PM_Footsteps`, `PM_TorsoAnimation`, which play an animation the skeleton
-    /// has, without restarting it), then `G_CheckClientIdle`. Nothing for an actor
-    /// without a body.
+    /// count down (`PM_DropTimers`), it walks ([`Body::walk_move`]), parts no longer
+    /// held play what its command asks (`PM_Footsteps`, `PM_TorsoAnimation`, which
+    /// play an animation the skeleton has, without restarting it), then
+    /// `G_CheckClientIdle`. Nothing for an actor without a body.
+    ///
+    /// A command that moves it walks or runs its legs, forward or back
+    /// (`BOTH_WALK1`, `BOTH_RUN1`, `BOTH_WALKBACK1`, `BOTH_RUNBACK1`), its torso
+    /// with them, but for an armed NPC backing up (its weapon's animation, not
+    /// modelled: it keeps its stance's); otherwise both parts return to the stance.
+    /// The classes that walk or run otherwise (the ATST, rancor, wampa, jawa, Galak
+    /// mech) and lit sabers are not modelled.
     fn movement(&mut self, level: i32, msec: i32, world: &Collision) {
         if self.body.is_none() {
             return;
@@ -924,11 +1328,34 @@ impl<'a> Actor<'a> {
         }
         let moving =
             body.walk.velocity != [0.0; 3] || (body.walk.dir != [0.0; 3] && body.walk.speed > 0.0);
-        for (p, anim) in [(0, body.stance.legs), (1, body.stance.torso)] {
-            let has = (body.holds)(anim).is_some();
-            if body.parts[p].timer == 0 && has && body.parts[p].anim != anim {
-                body.play(p, anim, level);
-            }
+        let w = &mut body.walk;
+        if w.forward < 0 {
+            w.backwards = true;
+        } else if w.forward > 0 || w.right != 0 {
+            w.backwards = false;
+        }
+        let legs = match (w.forward != 0 || w.right != 0, w.backwards, w.walking) {
+            (false, ..) => body.stance.legs,
+            (true, false, true) => "BOTH_WALK1",
+            (true, false, false) => "BOTH_RUN1",
+            (true, true, true) => "BOTH_WALKBACK1",
+            (true, true, false) => "BOTH_RUNBACK1",
+        };
+        let holds = body.holds;
+        let has = |anim| holds(anim).is_some();
+        if body.parts[0].timer == 0 && has(legs) && body.parts[0].anim != legs {
+            body.play(0, legs, level);
+        }
+        let legs = body.parts[0].anim.as_str();
+        let unarmed = body.unarmed.last().map_or(body.stance.unarmed, |u| u.1);
+        let torso = match legs {
+            "BOTH_WALK1" | "BOTH_RUN1" => legs,
+            "BOTH_WALKBACK1" | "BOTH_RUNBACK1" if unarmed => legs,
+            _ => body.stance.torso,
+        };
+        if body.parts[1].timer == 0 && has(torso) && body.parts[1].anim != torso {
+            let torso = torso.to_owned();
+            body.play(1, &torso, level);
         }
         let [legs, torso] = &body.parts;
         let mut idle = None;
@@ -1090,14 +1517,21 @@ impl<'a> Actor<'a> {
     /// (its task pending: the AI then runs, [`Walk`]), every [`BSTATE_MS`]: once
     /// it has reached the goal (`UpdateGoal`) the goal clears and the task
     /// completes, else it steers there ([`Body::steer`]). Returns whether it
-    /// thought, and whether it was unfrozen; a frozen NPC's move direction clears
-    /// (`NPC_Think`).
-    fn think(&mut self, level: i32, world: &Collision) -> (bool, bool) {
+    /// thought, and whether it was unfrozen; a frozen NPC's move direction and
+    /// command clear (`NPC_Think`).
+    fn think(
+        &mut self,
+        level: i32,
+        world: &Collision,
+        nav: Option<&Graph>,
+        bodies: &[Obstacle],
+    ) -> (bool, bool) {
         let Some(body) = &mut self.body else {
             return (false, false);
         };
         let Some(task) = body.slots[NAV] else {
             body.walk.dir = [0.0; 3];
+            (body.walk.forward, body.walk.right) = (0, 0);
             return (false, false);
         };
         if body.walk.next_think > level {
@@ -1105,13 +1539,14 @@ impl<'a> Actor<'a> {
         }
         body.walk.next_think = level + BSTATE_MS;
         body.walk.dir = [0.0; 3];
+        (body.walk.forward, body.walk.right) = (0, 0);
         let (goal, radius) = body.walk.goal.expect("a pending navgoal's goal");
         if body.reached(goal, radius) {
             body.walk.goal = None;
             body.slots[NAV] = None;
             self.complete(task);
         } else {
-            body.steer(goal, radius, level, world);
+            body.steer(goal, radius, level, world, nav, bodies);
         }
         (true, true)
     }
@@ -1408,6 +1843,9 @@ pub struct Level {
     pub radii: HashMap<String, f32>,
     /// The brushes NPCs walk among; the caller fills them.
     pub collision: Collision,
+    /// The nav graph NPCs find their way by ([`Graph::build`]), if the caller
+    /// built one.
+    pub nav: Option<Graph>,
     /// In spawn order; the caller fills them ([`Timelines::movers`]).
     pub movers: Vec<Mover>,
     /// What is used from outside the scripts, each at the first level frame at or
@@ -1551,6 +1989,7 @@ impl Level {
             tags,
             radii,
             collision: Collision::default(),
+            nav: None,
             movers: Vec::new(),
             uses: Vec::new(),
         }
@@ -1887,9 +2326,27 @@ impl<'a> World<'a> {
             self.script(r, level, 0);
         }
         let world = &self.level.collision;
+        let nav = self.level.nav.as_ref();
         for i in self.runners..self.actors.len() {
             self.check_voice(i, level);
-            let (thought, unfrozen) = self.actors[i].think(level, world);
+            // The other NPCs where they stand now: those before it have moved.
+            let bodies: Vec<Obstacle> = (self.runners..self.actors.len())
+                .filter(|&j| j != i)
+                .filter_map(|j| {
+                    let b = self.actors[j]
+                        .body
+                        .as_ref()
+                        .filter(|b| !b.stance.not_solid)?;
+                    let at = b.walk.origin;
+                    Some(Obstacle {
+                        actor: j,
+                        mins: [0, 1, 2].map(|k| at[k] + b.stance.mins[k]),
+                        maxs: [0, 1, 2].map(|k| at[k] + b.stance.maxs[k]),
+                        velocity: b.walk.velocity,
+                    })
+                })
+                .collect();
+            let (thought, unfrozen) = self.actors[i].think(level, world, nav, &bodies);
             self.actors[i].turn(level, thought || !unfrozen);
             self.actors[i].movement(level, msec, world);
             self.actors[i].reach(level);

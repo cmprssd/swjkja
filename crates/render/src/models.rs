@@ -383,6 +383,14 @@ impl StaticModels {
             level = script::Level::of(bsp, &scripts);
             level.uses = uses.to_vec();
             level.collision = world.clone();
+            // Its edges are tested against the world's brushes alone.
+            if let Rules::SinglePlayer { skill } = rules {
+                level.nav = Some(swjkja_world::nav::Graph::build(
+                    bsp,
+                    skill,
+                    &Collision::new(bsp),
+                ));
+            }
             // The brush entities, then the breakables: scripts find a name's last
             // spawned, so a breakable named as a brush entity takes the name here
             // whichever spawned last.
