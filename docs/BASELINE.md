@@ -2400,3 +2400,24 @@ same way (`academy3s_luke_walks_as_in_the_original`).
   walkers (entity numbers, not modelled), so they start 50 ms later there.
 - No other view changes: the 58 others render byte for byte as on main (main's build
   in its own worktree and target folder). Rendered offscreen on Windows.
+
+## Entity order, 2026-10-28
+
+Runners and NPCs update by entity number (DECISIONS.md, 2026-10-28). t1_sour's intro
+walkers match every traced frame (2100 to 3550) at its own time, with no frame
+offset (`t1_sours_intro_walkers_walk_as_in_the_original`). The old walk captures
+drew NPCs one snapshot past the view's time (the game stopped at the view + 50 and
+only movers are pinned), which the walk a frame early on main had cancelled out.
+Walk captures now stop at the view's time, and the two walk views were taken again.
+
+| View | New capture | Old capture | Old capture, main |
+|------|------|------|------|
+| t1_sour_intro_walking | 1.13 (1.9%) | 1.67 (2.8%) | 1.10 (1.8%) |
+| academy3_luke_walking | 1.11 (1.2%) | 0.24 (0.3%) | 0.24 (0.3%) |
+
+- t1_sour's walkers now stand where the reference has them; what differs is the
+  phase of their stride.
+- academy3's Luke is still simulated a frame early (the voice line before ends a
+  frame apart): drawn at 16,450 against the new capture he scores 0.08.
+- No other view changes: the 57 others render byte for byte as on main's renders at
+  44c6b86. Rendered offscreen on Windows.

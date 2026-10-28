@@ -52,9 +52,11 @@ for map in $maps; do
 		# floor). One capture without it found t3_stamp's crates already broken.
 		# With SCRIPTS=1 the AI alone is frozen (d_npcfreeze 2, a patch addition)
 		# and the game runs no frame the client would draw after the view's time
-		# (it draws one frame behind).
+		# (it draws one frame behind). With WALK=1 it stops at the view's time:
+		# cgame places NPCs from the last snapshot, not at the pinned time, so
+		# one more frame would draw walkers a frame on.
 		if [ "$sp" = 1 ] && [ "$scripts" = 1 ]; then
-			grep -v '^#' "$views" | awk -v m="$map" -v f="$freeze" '$1 == m {print "set d_npcfreeze " f "; set g_swjkjaStop " $9 + 50; exit}'
+			grep -v '^#' "$views" | awk -v m="$map" -v f="$freeze" -v w="${WALK:-0}" '$1 == m {print "set d_npcfreeze " f "; set g_swjkjaStop " $9 + (w == 1 ? 0 : 50); exit}'
 		elif [ "$sp" = 1 ]; then
 			echo "set d_npcfreeze 1"
 		fi

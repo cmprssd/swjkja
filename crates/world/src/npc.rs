@@ -19,6 +19,7 @@ use swjkja_shader::text::Cursor;
 
 use crate::Vec3;
 use crate::collision::{Collision, MASK_NPCSOLID, MIN_WORLD_COORD};
+use crate::entity_number::entity_numbers;
 use crate::rand::Rand;
 use crate::script::{FIRST_FRAME, FirstPass, first_pass};
 use crate::static_model::{
@@ -45,6 +46,8 @@ pub struct NpcSpawn {
     pub spawnscript: Option<String>,
     /// The name scripts find the NPC by ("NPC_targetname", its `targetname`).
     pub targetname: Option<String>,
+    /// The NPC's entity number ([`crate::entity_number`]).
+    pub number: i32,
 }
 
 /// The spawn function's choice of type for spawner class `class` (lowercase) with
@@ -316,8 +319,13 @@ pub fn npc_spawns(
     let Rules::SinglePlayer { skill } = rules else {
         return Vec::new();
     };
+    let numbers = entity_numbers(entities, skill);
     let mut spawns = Vec::new();
-    for e in entities.iter().filter(|e| spawns_at(e, skill)) {
+    for (i, e) in entities
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| spawns_at(e, skill))
+    {
         let Some(class) = e.get("classname").map(str::to_ascii_lowercase) else {
             continue;
         };
@@ -345,6 +353,7 @@ pub fn npc_spawns(
             flags,
             spawnscript,
             targetname,
+            number: numbers.npc[i].unwrap_or(0),
         });
     }
     spawns
@@ -1294,6 +1303,7 @@ pub fn npc_models(
                 walk_speed: look.walk_speed,
                 run_speed: look.run_speed,
                 not_solid: n.flags & 64 != 0,
+                number: n.number,
                 eyes: [
                     at[0],
                     at[1],
