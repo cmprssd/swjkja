@@ -380,7 +380,11 @@ impl StaticModels {
                 &world,
                 &scripts,
             ));
-            level = script::Level::of(bsp, &scripts);
+            let skill = match rules {
+                Rules::SinglePlayer { skill } => skill,
+                Rules::Multiplayer { .. } => 0,
+            };
+            level = script::Level::of(bsp, skill, &scripts);
             level.uses = uses.to_vec();
             level.collision = world.clone();
             // Its edges are tested against the world's brushes alone.

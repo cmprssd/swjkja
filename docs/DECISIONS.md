@@ -1295,3 +1295,42 @@ and drawing such pipes some other way, would match no view held still.
   early. In t1_sour: the original updates the intro's runner after the two
   walkers (by entity number), so they get its navgoal a frame after ours, where
   runners update first (2026-10-16). Entity numbers are not modelled yet.
+
+## 2026-10-28: Runners and NPCs update by entity number (decided by Claude, pending review)
+
+- **Replaces "script runners update before NPCs" (2026-10-16).** Each frame updates
+  the runners and NPCs by entity number, as `G_RunFrame` does; movers still update
+  after them. Both a runner and an NPC run their scripts in their own turn, so an
+  NPC numbered below the runner that sets its navgoal first thinks a frame later.
+- **Entity numbers are worked out from the map** (`crates/world/src/entity_number.rs`):
+  `G_Spawn`'s lowest free number from 1, and which entities free themselves and
+  when (as they spawn: skill, static models, waypoints, combat points, `ref_tag`s
+  without a target, `info_null`s with flag 1; at 100 ms: the other `ref_tag`s,
+  while touch doors spawn their triggers; at 300 ms: the other `info_null`s; at
+  350 ms: each NPC spawner spawns its NPC and its goal, then frees itself). This
+  gives every NPC the number the original's traces log on the five academies,
+  kor1, kor2 and t1_sour (`npcs_and_runners_are_numbered_as_in_the_original`).
+  t2_dpred's and t1_danger's later numbers come out lower: racks' goods, plats'
+  triggers, emplaced guns and the like are left out.
+- **A runner used during a frame starts in its own turn**, that frame if its turn
+  is still to come, else the next (`scriptrunner_run` starts the script and the
+  runner's update runs it). What the player begins with still starts the frame
+  after 2000.
+- **t1_sour's intro walkers now match every traced frame at its own time** (2100 to
+  3550): its runner is entity 336, after the walkers (144, 146). academy3's Luke
+  stays a frame early: the runner there is entity 2 and Luke 3, so the order is
+  the same as before, and his frame comes from the voice line before (2026-10-26).
+- **Found: the walk captures drew walking NPCs one snapshot late.** With
+  `SCRIPTS=1` the game stopped at the view's time plus 50 (`g_swjkjaStop`, so the
+  animations the next frame sets, stamped a frame earlier on the client's clock,
+  show), and the patch pins only movers' places to `cg_swjkjaTime`. NPCs are
+  placed from cgame's last snapshot, so they were drawn at the view + 50. On main
+  the walk a frame early hid this: against those captures t1_sour_intro_walking
+  went from 1.10 to 1.67.
+- **Walk captures now stop at the view's time** (`WALK=1`; recapture chosen by the
+  owner). The two walk views were taken again; their traces match the old ones
+  frame for frame (the old, longer trace files were kept). t1_sour_intro_walking
+  scores 1.13: the walkers stand where the reference has them, and the stride's
+  phase differs. academy3_luke_walking scores 1.11, where it was 0.24: Luke is
+  still simulated a frame early (the voice line), and the new capture shows it.
+  Drawn 50 ms earlier it scores 0.08.

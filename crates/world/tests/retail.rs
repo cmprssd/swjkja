@@ -468,7 +468,7 @@ fn intros_start_as_the_player_begins() {
     let mut begun = Vec::new();
     for name in &maps {
         let bsp = Bsp::parse(&vfs.read(name).unwrap()).unwrap();
-        let level = script::Level::of(&bsp, &|s| read_script(&vfs, s));
+        let level = script::Level::of(&bsp, 0, &|s| read_script(&vfs, s));
         for b in &level.begin {
             let runs = level.runners.iter().filter(|r| {
                 r.targetname
@@ -664,7 +664,7 @@ fn t1_fatals_used_elevator_rises_and_its_used_door_closes_again() {
     let bsp = Bsp::parse(&vfs.read("maps/t1_fatal.bsp").unwrap()).unwrap();
     let rules = Rules::for_map("maps/t1_fatal.bsp");
     let mut brushes = swjkja_world::brush_entity::brush_entities(&bsp.entities, &bsp.models, rules);
-    let mut level = script::Level::of(&bsp, &|s| read_script(&vfs, s));
+    let mut level = script::Level::of(&bsp, 0, &|s| read_script(&vfs, s));
     let movable: Vec<usize> = (0..brushes.len())
         .filter(|&i| brushes[i].script_name.is_some())
         .collect();
@@ -908,13 +908,14 @@ fn t1_sours_intro_walkers_path_to_their_navgoal_by_the_nearest_waypoint() {
 }
 
 /// Where the original walks `names` on `map` (traced with `d_npcfreeze 3`, each
-/// frame as (who, level time, origin) to the trace's four decimals), here a frame
-/// earlier: the frames they are not there.
+/// frame as (who, level time, origin) to the trace's four decimals), here `early`
+/// ms earlier: the frames they are not there.
 fn walks_off_the_trace(
     vfs: &swjkja_fs::Vfs,
     map: &str,
     names: &[&str],
     traced: &[(usize, i32, [f32; 3])],
+    early: i32,
 ) -> Vec<(usize, i32, Option<[f32; 3]>)> {
     let bsp = Bsp::parse(&vfs.read(map).unwrap()).unwrap();
     let rules = Rules::for_map(map);
@@ -941,7 +942,7 @@ fn walks_off_the_trace(
         &world,
         &scripts,
     );
-    let mut level = script::Level::of(&bsp, &scripts);
+    let mut level = script::Level::of(&bsp, 0, &scripts);
     level.collision = world;
     level.nav = Some(nav::Graph::build(&bsp, skill, &Collision::new(&bsp)));
     let holds = |_: &str| None;
@@ -980,7 +981,7 @@ fn walks_off_the_trace(
         let at = timeline
             .moves
             .iter()
-            .find(|(l, _)| *l == level - FRAME_MS)
+            .find(|(l, _)| *l == level - early)
             .map(|(_, o)| [0, 1, 2].map(|k| start[k] + o[k]));
         if !at.is_some_and(|at| (0..3).all(|k| (at[k] - traced[k]).abs() < 0.001)) {
             off.push((who, level, at));
@@ -997,8 +998,8 @@ const FRAME_MS: i32 = 50;
 /// takes the nav graph toward bay_tre_13 and steers left of Kyle standing in its
 /// way; Kyle heads straight for bay_tre_13. From the next think on, a clear trace
 /// sends both straight to introNav1, until at 3400 the stand-in, closing on Kyle,
-/// steers left of him again. Here they start a frame earlier: the original updates
-/// the intro's runner after them (by entity number), these runners first.
+/// steers left of him again. The intro's runner (entity 336) updates after them
+/// (144 and 146), so they think a frame after it sets their navgoals.
 #[test]
 // The traced positions as the trace logs them.
 #[allow(clippy::excessive_precision)]
@@ -1071,7 +1072,7 @@ fn t1_sours_intro_walkers_walk_as_in_the_original() {
         (0, 3550, [6180.8418, -2609.4375, 24.1250]),
         (1, 3550, [6187.2437, -2666.8052, 24.1250]),
     ];
-    let off = walks_off_the_trace(&vfs, "maps/t1_sour.bsp", &names, &traced);
+    let off = walks_off_the_trace(&vfs, "maps/t1_sour.bsp", &names, &traced, 0);
     assert!(
         off.is_empty(),
         "{} frames off, the first {:?}",
@@ -1081,8 +1082,9 @@ fn t1_sours_intro_walkers_walk_as_in_the_original() {
 }
 
 /// academy3's Luke walks to lukeNav1 by the nav graph's first think as the
-/// original does (traced from 14,850), here a frame earlier (the voice line before
-/// ends a frame apart: DECISIONS.md, 2026-10-26).
+/// original does (traced from 14,850), here a frame earlier: the voice line before
+/// ends a frame apart (DECISIONS.md, 2026-10-26; the intro's runner, entity 2,
+/// updates before Luke, 3, in both).
 #[test]
 #[allow(clippy::excessive_precision)]
 fn academy3s_luke_walks_as_in_the_original() {
@@ -1171,11 +1173,70 @@ fn academy3s_luke_walks_as_in_the_original() {
         (0, 18650, [-1296.9801, -1493.5278, 744.1250]),
         (0, 18700, [-1296.8065, -1494.1022, 744.1250]),
     ];
-    let off = walks_off_the_trace(&vfs, "maps/academy3.bsp", &["npc_luke1"], &traced);
+    let off = walks_off_the_trace(&vfs, "maps/academy3.bsp", &["npc_luke1"], &traced, FRAME_MS);
     assert!(
         off.is_empty(),
         "{} frames off: {:?}",
         off.len(),
         &off[..off.len().min(4)]
     );
+}
+
+/// The entity numbers the NPCs that begin each map take, as the original's traces
+/// log them (`swjkja npc <number>`), and those of the intros' runners there:
+/// t1_sour's comes after its walkers (144, 146), academy3's before Luke (3).
+#[test]
+fn npcs_and_runners_are_numbered_as_in_the_original() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let traced: [(&str, &[i32]); 8] = [
+        (
+            "academy1",
+            &[
+                2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 25,
+            ],
+        ),
+        (
+            "academy2",
+            &[2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21],
+        ),
+        ("academy3", &[3, 4, 7]),
+        (
+            "academy4",
+            &[1, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20],
+        ),
+        (
+            "academy6",
+            &[1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 29],
+        ),
+        ("kor1", &[142, 477, 511, 570]),
+        ("kor2", &[92, 94, 96, 98, 164, 166, 172, 242, 243]),
+        (
+            "t1_sour",
+            &[
+                13, 129, 144, 146, 161, 166, 171, 183, 193, 241, 321, 338, 340, 344, 346,
+            ],
+        ),
+    ];
+    for (map, npcs) in traced {
+        let bsp = Bsp::parse(&vfs.read(&format!("maps/{map}.bsp")).unwrap()).unwrap();
+        let numbers = swjkja_world::entity_number::entity_numbers(&bsp.entities, 0);
+        let mut got: Vec<i32> = numbers.npc.iter().flatten().copied().collect();
+        got.sort_unstable();
+        assert_eq!(got, npcs, "{map}");
+    }
+    let runner = |map: &str, name: &str| {
+        let bsp = Bsp::parse(&vfs.read(&format!("maps/{map}.bsp")).unwrap()).unwrap();
+        let level = script::Level::of(&bsp, 0, &|_| Some(Vec::new()));
+        let r = level
+            .runners
+            .iter()
+            .find(|r| r.targetname.as_deref() == Some(name));
+        r.unwrap().number
+    };
+    assert_eq!(runner("t1_sour", "set"), 336);
+    assert_eq!(runner("academy3", "t399"), 2);
 }

@@ -1,6 +1,7 @@
 # Views of NPCs that scripts walk to navgoals, in the format of views.txt; captured
 # with the walking NPC's AI running (SCRIPTS=1 ENTITIES=1 WALK=1
-# bench/capture-reference.sh reference/walk-views.txt), which logs its frames
+# bench/capture-reference.sh reference/walk-views.txt; the game stops at the view's
+# time, so walkers are drawn where they stand then), which logs its frames
 # ("swjkja walk") to academy3-npcs.txt. academy3_luke_walking looks west across the
 # room's south end as academy3's intro walks Luke (npc_luke1, walkSpeed 55) from
 # where he stands to lukeNav1 (SET_NAVGOAL, from 14,750 ms here), BOTH_CIN_1 held;

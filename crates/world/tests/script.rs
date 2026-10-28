@@ -452,6 +452,7 @@ fn intro(script: Vec<Node>) -> Level {
             targetname: Some("intro".to_owned()),
             script: Arc::new(script),
             delay: 0,
+            number: 0,
         }],
         begin: vec!["intro".to_owned()],
         ..Default::default()
@@ -1288,4 +1289,28 @@ fn walking_npcs_walk_or_run_their_legs_forward_or_back() {
             ("BOTH_STAND1", 2550)
         ]
     );
+}
+
+#[test]
+fn runners_and_npcs_update_by_entity_number() {
+    // The intro (entity 5) sets Luke's navgoal in the frame after the player
+    // begins (2050). Luke updating after it thinks then; before it, a frame later
+    // (t1_sour's intro walkers, 144 and 146, and its runner, 336).
+    let first_move = |number: i32| {
+        let mut level = intro(vec![affect("luke", false, walk_then_play("lukeNav1"))]);
+        level.runners[0].number = 5;
+        let goals = navgoals();
+        level.tags = goals.tags;
+        level.radii = goals.radii;
+        let pose = Pose { number, ..walker() };
+        let npc = Npc {
+            stance: &pose,
+            script: None,
+            holds: &holds,
+        };
+        let t = timelines(&[npc], &level, &|_| None).npcs.remove(0);
+        t.moves.first().map(|&(level, _)| level)
+    };
+    assert_eq!(first_move(7), Some(2050));
+    assert_eq!(first_move(3), Some(2100));
 }

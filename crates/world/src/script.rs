@@ -7,10 +7,10 @@
 //! the game's side in `Q3_Interface.cpp`.
 //!
 //! The game is stepped a server frame at a time in the original's order: in each
-//! frame each script runner's script, then each NPC's movement frame (`Pmove`: its
-//! animation timers count down, then its stance returns to the parts whose timers ran
-//! out; then `G_CheckClientIdle`) and script; a script runs command after command
-//! until one waits. Frames in which nothing can change are skipped.
+//! frame, by entity number ([`crate::entity_number`]), each script runner's script
+//! and each NPC's movement frame (`Pmove`: its animation timers count down, then
+//! its stance returns to the parts whose timers ran out; then `G_CheckClientIdle`)
+//! and script; a script runs command after command until one waits. Frames in which nothing can change are skipped.
 //!
 //! What scripts do to NPCs is modelled: their animations and hold times, what they
 //! look at (`SET_LOOK_TARGET`), the way they turn (`SET_DYAW`, `SET_DPITCH`,
@@ -1808,13 +1808,15 @@ fn voice_channel(channel: &str) -> bool {
 /// targets are used then (`ClientSpawn`).
 pub const PLAYER_BEGIN: i32 = 2000;
 
-/// A map's `target_scriptrunner`: the name it is used by, its script (`usescript`)
-/// and how long after it is used the script starts (`delay`, ms).
+/// A map's `target_scriptrunner`: the name it is used by, its script (`usescript`),
+/// how long after it is used the script starts (`delay`, ms), and its entity
+/// number ([`crate::entity_number`]).
 #[derive(Debug, Clone)]
 pub struct Runner {
     pub targetname: Option<String>,
     pub script: std::sync::Arc<Vec<Node>>,
     pub delay: i32,
+    pub number: i32,
 }
 
 /// An entity scripts can move (a brush entity, a breakable model): its name
@@ -1868,7 +1870,7 @@ pub fn frame_at(ms: i32) -> i32 {
 }
 
 impl Level {
-    /// The level scripts of map `bsp`, `scripts` reading a script by name: its
+    /// The level scripts of map `bsp` at skill `skill`, `scripts` reading a script by name: its
     /// script runners (`SP_target_scriptrunner`) but those that start inactive or
     /// run on what uses them (spawnflags 128 and 1; the player is not run here) or
     /// whose script does not load; and what the player uses as it begins: the
@@ -1877,17 +1879,23 @@ impl Level {
     /// triggers its box stands in there (`trigger_once`, `trigger_multiple`; its
     /// first move touches them), but those that need a button, a facing or an NPC,
     /// or start inactive (spawnflags 2, 4, 8, 16, 128).
-    pub fn of(bsp: &swjkja_bsp::Bsp, scripts: &dyn Fn(&str) -> Option<Vec<Node>>) -> Self {
+    pub fn of(
+        bsp: &swjkja_bsp::Bsp,
+        skill: u32,
+        scripts: &dyn Fn(&str) -> Option<Vec<Node>>,
+    ) -> Self {
         let entities = &bsp.entities;
+        let numbers = crate::entity_number::entity_numbers(entities, skill);
         let class = |e: &swjkja_bsp::Entity, c: &str| {
             e.get("classname")
                 .is_some_and(|v| v.eq_ignore_ascii_case(c))
         };
         let runners = entities
             .iter()
-            .filter(|e| class(e, "target_scriptrunner"))
-            .filter(|e| e.get("spawnflags").map_or(0, crate::style::atoi) & (1 | 128) == 0)
-            .filter_map(|e| {
+            .zip(&numbers.entity)
+            .filter(|(e, _)| class(e, "target_scriptrunner"))
+            .filter(|(e, _)| e.get("spawnflags").map_or(0, crate::style::atoi) & (1 | 128) == 0)
+            .filter_map(|(e, number)| {
                 let script = scripts(e.get("usescript")?)?;
                 let delay: f32 = e.get("delay").map_or(0.0, |d| {
                     d.split_ascii_whitespace()
@@ -1899,6 +1907,7 @@ impl Level {
                     targetname: e.get("targetname").map(str::to_owned),
                     script: std::sync::Arc::new(script),
                     delay: (delay * 1000.0) as i32,
+                    number: (*number)?,
                 })
             })
             .collect::<Vec<_>>();
@@ -2025,12 +2034,15 @@ pub struct Npc<'a> {
     pub holds: Holds<'a>,
 }
 
-/// Every actor's scripts stepped together: the map's script runners, then its
-/// NPCs, in each frame (the original's entity order puts most runners first).
+/// Every actor's scripts stepped together: the map's script runners and its NPCs by
+/// entity number in each frame, as `G_RunFrame` updates them, then its movers.
 struct World<'a> {
+    /// The runners, then the NPCs, then the movers.
     actors: Vec<Actor<'a>>,
-    /// How many of the actors are runners (they come first).
+    /// How many of the actors are runners.
     runners: usize,
+    /// The order actors update in each frame.
+    order: Vec<usize>,
     level: &'a Level,
     /// When each runner's script starts (level time), if it has been used.
     starts: Vec<Option<i32>>,
@@ -2048,8 +2060,9 @@ impl<'a> World<'a> {
     /// `target_scriptrunner_use` of the runners named `name` at `level`: each
     /// starts its script `delay` later, on its first think from then (`G_RunThink`
     /// runs its scripts right after), or with no delay at its next update: in this
-    /// frame if `before_frame` (used before the frame's entities run), else the next.
-    fn use_targets(&mut self, name: &str, level: i32, before_frame: bool) {
+    /// frame if its turn is still to come (by entity number), else the next; the
+    /// next if `after_frame` (used after the frame's entities ran).
+    fn use_targets(&mut self, name: &str, level: i32, after_frame: bool) {
         self.used.push(Use {
             name: name.to_owned(),
             at: level,
@@ -2063,10 +2076,8 @@ impl<'a> World<'a> {
             {
                 let start = if runner.delay > 0 {
                     level + runner.delay
-                } else if before_frame {
-                    level
                 } else {
-                    level + 1
+                    level + i32::from(after_frame)
                 };
                 self.starts[r] = Some(start);
             }
@@ -2313,21 +2324,24 @@ impl<'a> World<'a> {
         }
     }
 
-    /// One level frame: each runner's script, starting those due; then each NPC's
-    /// movement frame (`msec` after the last) and script.
+    /// One level frame, each actor in [`World::order`]: a runner's script, started
+    /// if due; an NPC's (or a mover's) movement frame (`msec` after the last) and
+    /// script.
     fn frame(&mut self, level: i32, msec: i32) {
-        for r in 0..self.runners {
-            if self.starts[r].is_some_and(|s| s <= level) && self.actors[r].stack.is_empty() {
-                self.starts[r] = Some(i32::MAX);
-                let script = self.level.runners[r].script.as_slice();
-                self.actors[r].run(script);
-            }
-            self.check_voice(r, level);
-            self.script(r, level, 0);
-        }
         let world = &self.level.collision;
         let nav = self.level.nav.as_ref();
-        for i in self.runners..self.actors.len() {
+        for k in 0..self.order.len() {
+            let i = self.order[k];
+            if i < self.runners {
+                if self.starts[i].is_some_and(|s| s <= level) && self.actors[i].stack.is_empty() {
+                    self.starts[i] = Some(i32::MAX);
+                    let script = self.level.runners[i].script.as_slice();
+                    self.actors[i].run(script);
+                }
+                self.check_voice(i, level);
+                self.script(i, level, 0);
+                continue;
+            }
             self.check_voice(i, level);
             // The other NPCs where they stand now: those before it have moved.
             let bodies: Vec<Obstacle> = (self.runners..self.actors.len())
@@ -2463,9 +2477,18 @@ pub fn timelines(
         });
         actors.push(actor);
     }
+    // By entity number, a runner before an NPC of the same (made-up levels number
+    // neither).
+    let mut order: Vec<usize> = (0..first_mover).collect();
+    order.sort_by_key(|&i| match &actors[i].body {
+        Some(b) => (b.stance.number, 1),
+        None => (level.runners[i].number, 0),
+    });
+    order.extend(first_mover..actors.len());
     let mut world = World {
         actors,
         runners: level.runners.len(),
+        order,
         level,
         starts: vec![None; level.runners.len()],
         signals: Vec::new(),
@@ -2483,7 +2506,10 @@ pub fn timelines(
     pinned.sort_by_key(|&(frame, _)| frame);
     let mut pinned = pinned.into_iter().peekable();
     let mut level_time = FIRST_FRAME;
-    for i in world.runners..world.actors.len() {
+    for i in world.order.clone() {
+        if i < world.runners {
+            continue;
+        }
         world.script(i, level_time, 0);
         world.actors[i].movement(level_time, BEGIN_MSEC, &level.collision);
     }
@@ -2495,7 +2521,7 @@ pub fn timelines(
             if next.is_none_or(|n| n >= begin_frame) && level_time < begin_frame {
                 // The player enters the world after frame PLAYER_BEGIN.
                 for name in &level.begin {
-                    world.use_targets(name, PLAYER_BEGIN, false);
+                    world.use_targets(name, PLAYER_BEGIN, true);
                 }
                 begun = true;
                 next = world.next_event(level_time);
@@ -2518,7 +2544,7 @@ pub fn timelines(
         }
         level_time = next;
         while let Some((_, name)) = pinned.next_if(|&(frame, _)| frame == level_time) {
-            world.use_targets(name, level_time, true);
+            world.use_targets(name, level_time, false);
         }
         world.frame(level_time, FRAME_MS);
     }

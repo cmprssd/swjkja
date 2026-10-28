@@ -9,6 +9,7 @@
 
 pub mod brush_entity;
 pub mod collision;
+pub mod entity_number;
 pub mod light_grid;
 pub mod mark;
 pub mod nav;

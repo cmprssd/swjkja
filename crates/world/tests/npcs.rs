@@ -395,9 +395,11 @@ fn npcs_stand_upright_at_their_spawner_scaled_from_their_feet() {
     // A blaster in the right hand, legs apart, the torso holding it idle; facing
     // its spawner's yaw, turning, walking and running at the default speeds, its
     // eyes 4 units below its box's top (from its origin before the scale lifts it).
+    // Entity 3: the two spawners hold 1 and 2 as it spawns.
     assert_eq!(
         g.pose,
         Some(Pose {
+            number: 3,
             yaw: 90.0,
             yaw_speed: 90.0,
             eyes: [1.0, 2.0, 39.0],
