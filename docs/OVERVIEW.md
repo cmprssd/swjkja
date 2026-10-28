@@ -160,7 +160,7 @@ Rules that shape it:
 
 <!-- progress:history -->
 126 commits, 112 merged PRs from 2026-10-07 to 2026-10-28, on 13 working days: 61
-feat, 34 fix, 10 docs, 4 bench, 2 chore, 1 ci. About 53,371 lines added and 4,096
+feat, 34 fix, 10 docs, 4 bench, 2 chore, 1 ci. About 54,192 lines added and 4,154
 removed; 157 tracked files.
 
 ```mermaid
