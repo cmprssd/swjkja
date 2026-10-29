@@ -12,10 +12,11 @@
 //! from the moment the script sets the target (the original takes about a second
 //! to get there, at a speed that depends on its frame rate).
 //!
-//! Before the look, cgame turns the spine of an NPC whose legs and torso play
-//! different animations back against its "Motion" bone ([`Spine`]:
-//! `CG_G2ClientSpineAngles`, `cg_motionBoneComp` 2): a torso animation is made to
-//! face where its own legs' pelvis would, not where another's does.
+//! Before the look, cgame turns the spine ([`Spine`]: `CG_G2ClientSpineAngles`) back
+//! to the view from the legs, which face where the NPC moves, and, when its legs
+//! and torso play different animations, against its "Motion" bone
+//! (`cg_motionBoneComp` 2): a torso animation is made to face where its own legs'
+//! pelvis would, not where another's does.
 
 use swjkja_model::gla::{Gla, Mat34};
 use swjkja_world::static_model::angles_to_axis;
@@ -138,15 +139,20 @@ impl Spine {
         })
     }
 
-    /// The spine's turn for a "Motion" bolt matrix `motion` (its columns the bone's
-    /// axes, in the entity's space): the lumbar bones' overrides and the thoracic's
-    /// angles (for [`Head::overrides`]). The turn is minus the angles the bolt's -y
-    /// faces, its roll from its -x (`cg_motionBoneComp` 2), shared out among the
-    /// three bones (`CG_G2ClientSpineAngles`).
-    pub fn turn(&self, gla: &Gla, motion: &Mat34) -> ([(usize, Mat34); 2], Vec3) {
-        let mut angles = eye_angles(motion);
-        angles[2] = -vectoangles([0, 1, 2].map(|r| -motion[r][0]))[0];
-        let view = angles.map(|a| normalize180(-normalize180(a)));
+    /// The spine's turn for a view `yaw` degrees from its legs' and, when its legs
+    /// and torso play different animations, a "Motion" bolt matrix `motion` (its
+    /// columns the bone's axes, in the entity's space): the lumbar bones' overrides
+    /// and the thoracic's angles (for [`Head::overrides`]). The turn is the yaw,
+    /// less the angles the bolt's -y faces, its roll from its -x
+    /// (`cg_motionBoneComp` 2), shared out among the three bones
+    /// (`CG_G2ClientSpineAngles`).
+    pub fn turn(&self, gla: &Gla, yaw: f32, motion: Option<&Mat34>) -> ([(usize, Mat34); 2], Vec3) {
+        let mut view = [0.0, yaw, 0.0];
+        if let Some(motion) = motion {
+            let mut angles = eye_angles(motion);
+            angles[2] = -vectoangles([0, 1, 2].map(|r| -motion[r][0]))[0];
+            view = [0, 1, 2].map(|i| normalize180(view[i] - normalize180(angles[i])));
+        }
         let shared = |share: Vec3| [0, 1, 2].map(|i| view[i] * share[i]);
         let lumbar = [
             (self.upper_lumbar, UPPER_LUMBAR_SHARE),
@@ -261,7 +267,7 @@ mod tests {
         };
         // Motion facing 30 degrees left: the spine turns 30 right, 45% on the
         // lower lumbar, 35% on the upper, 20% on the thoracic.
-        let ([(_, upper), (_, lower)], thoracic) = spine.turn(&gla, &yawed(30.0));
+        let ([(_, upper), (_, lower)], thoracic) = spine.turn(&gla, 0.0, Some(&yawed(30.0)));
         assert!(close(thoracic, [0.0, -6.0, 0.0]), "{thoracic:?}");
         let turned = |m: &Mat34, yaw: f32| {
             let r = bone_rotation([0.0, yaw, 0.0]);
@@ -270,8 +276,24 @@ mod tests {
         assert!(turned(&upper, -10.5), "{upper:?}");
         assert!(turned(&lower, -13.5), "{lower:?}");
         // Facing straight ahead: nothing to turn.
-        let (_, thoracic) = spine.turn(&gla, &yawed(0.0));
+        let (_, thoracic) = spine.turn(&gla, 0.0, Some(&yawed(0.0)));
         assert!(close(thoracic, [0.0; 3]), "{thoracic:?}");
+    }
+
+    #[test]
+    fn the_spine_turns_the_view_back_from_the_legs() {
+        let gla = Gla::default_skeleton();
+        let spine = Spine {
+            lower_lumbar: 0,
+            upper_lumbar: 0,
+            motion: 0,
+        };
+        // Legs turned 20 right of the view, the same animation on both parts.
+        let (_, thoracic) = spine.turn(&gla, 20.0, None);
+        assert!(close(thoracic, [0.0, 4.0, 0.0]), "{thoracic:?}");
+        // With the motion bone facing 30 left as well: 20 less 30.
+        let (_, thoracic) = spine.turn(&gla, 20.0, Some(&yawed(30.0)));
+        assert!(close(thoracic, [0.0, -2.0, 0.0]), "{thoracic:?}");
     }
 
     #[test]

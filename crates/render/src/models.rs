@@ -32,8 +32,9 @@
 //! sees (`R_SetupEntityLighting` turns the light into the model's scaled axes). An
 //! NPC's pose changes as time passes: its [`Rig`] gives its bones at a time, in
 //! world space, for the renderer to skin its surfaces by
-//! ([`StaticModels::bones`]), its spine turned against its "Motion" bone and its
-//! head toward what it looks at ([`crate::look`]).
+//! ([`StaticModels::bones`]), its legs toward where it moves, its spine turned back
+//! to its view and against its "Motion" bone, and its head toward what it looks at
+//! ([`crate::look`]).
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -47,7 +48,7 @@ use swjkja_model::glm::{self, Ghoul2Model};
 use swjkja_model::md3::{Md3, Md3Model};
 use swjkja_model::skin::Skin;
 use swjkja_world::Geometry;
-use swjkja_world::brush_entity::{Motion, slid};
+use swjkja_world::brush_entity::{Motion, Slide, slid};
 use swjkja_world::collision::Collision;
 use swjkja_world::npc;
 use swjkja_world::script::{self, Timeline};
@@ -510,9 +511,10 @@ impl StaticModels {
                     let rig = g.pose.as_ref().map(|pose| {
                         let files = files[n].as_ref().expect("an NPC's animations");
                         let timeline = timelines.next().expect("an NPC's timeline");
-                        turns = timeline.turns(pose.yaw);
                         slides = timeline.slides(p.origin);
-                        Rig::new(m, pose, files, timeline)
+                        let rig = Rig::new(m, pose, files, timeline);
+                        turns = rig.legs.clone();
+                        rig
                     });
                     // Baked with its spine turned, as drawn; its look is resolved later.
                     let pose = match &rig {
@@ -1080,6 +1082,12 @@ pub struct Rig {
     cinematic: Option<Arc<Gla>>,
     /// What its legs and torso play over time ([`script::timeline`]).
     timeline: Timeline,
+    /// Its view's turns and its legs', which it is drawn by (`lerpAngles` and
+    /// `pe.legs.yawAngle`: [`Timeline::turns`], [`Timeline::legs_turns`]).
+    view: Vec<Slide>,
+    legs: Vec<Slide>,
+    /// The way it faces as it begins.
+    yaw: f32,
     /// The animations it can play (those of its timeline, and `BOTH_STAND1`), by
     /// name, those its skeletons have, and the skeleton each plays on.
     anims: Vec<(String, animation::Animation, usize)>,
@@ -1133,10 +1141,18 @@ impl Rig {
             let bones: Vec<usize> = tag.flat_map(|v| v.bones.iter().map(|b| b.0)).collect();
             gla.chain(&bones)
         });
+        let view = timeline.turns(pose.yaw);
+        let legs = match pose.still_legs {
+            true => view.clone(),
+            false => timeline.legs_turns(pose.yaw),
+        };
         Self {
             body: model.clone(),
             cinematic: files.cinematic.clone(),
             timeline,
+            view,
+            legs,
+            yaw: pose.yaw,
             anims,
             switches,
             stopped,
@@ -1234,20 +1250,26 @@ impl Rig {
         self.body.gla.frames(&anims)
     }
 
-    /// Its spine's turn at game time `time` ([`Spine::turn`]), from its "Motion"
-    /// bone as the body plays (`motionBolt`), when its legs and torso play
-    /// different animations (`CG_G2ClientSpineAngles`); `None` otherwise or without
-    /// the bones.
+    /// Its spine's turn at game time `time` ([`Spine::turn`]): by how far its view
+    /// is turned from its legs, and against its "Motion" bone as the body plays
+    /// (`motionBolt`) when its legs and torso play different animations
+    /// (`CG_G2ClientSpineAngles`); `None` when neither turns it, or without the
+    /// bones.
     fn spine_turn(&self, time: i32) -> Option<([(usize, Mat34); 2], look::Vec3)> {
         let (spine, chain) = self.spine.as_ref()?;
-        if self.timeline.at(0, time).anim == self.timeline.at(1, time).anim {
+        let yaw_of = |turns: &[Slide]| slid(turns, time).map_or(self.yaw, |a| a[1]);
+        let yaw = look::normalize180(yaw_of(&self.view) - yaw_of(&self.legs));
+        let gla = self.gla(time);
+        let motion =
+            (self.timeline.at(0, time).anim != self.timeline.at(1, time).anim).then(|| {
+                let locals = gla.locals(&self.body_frames(time));
+                let pose = gla.pose_chain(&gla::ROOT, &locals, &[], chain);
+                gla::multiply(&pose[spine.motion], &gla.bones[spine.motion].base_pose)
+            });
+        if yaw == 0.0 && motion.is_none() {
             return None;
         }
-        let gla = self.gla(time);
-        let locals = gla.locals(&self.body_frames(time));
-        let pose = gla.pose_chain(&gla::ROOT, &locals, &[], chain);
-        let bolt = gla::multiply(&pose[spine.motion], &gla.bones[spine.motion].base_pose);
-        Some(spine.turn(gla, &bolt))
+        Some(spine.turn(gla, yaw, motion.as_ref()))
     }
 
     /// The overrides that turn its bones at game time `time` by its spine's turn
@@ -1656,6 +1678,7 @@ mod tests {
             unarmed: Vec::new(),
             yaw: Vec::new(),
             moves: Vec::new(),
+            velocity: Vec::new(),
         };
         let (at, stopped) = switches(&timeline, skeleton);
         assert_eq!(at, [(1550, 1), (9000, 0)]);
@@ -1677,6 +1700,7 @@ mod tests {
             unarmed: Vec::new(),
             yaw: Vec::new(),
             moves: Vec::new(),
+            velocity: Vec::new(),
         };
         let (at, stopped) = switches(&timeline, skeleton);
         assert_eq!(at, [(1550, 1)]);
@@ -1694,6 +1718,7 @@ mod tests {
             unarmed: Vec::new(),
             yaw: Vec::new(),
             moves: Vec::new(),
+            velocity: Vec::new(),
         };
         let (at, stopped) = switches(&timeline, skeleton);
         assert_eq!(at, [(0, 1)]);

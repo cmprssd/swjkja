@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use swjkja_bsp::{Bsp, SurfaceKind};
 use swjkja_model::animation;
+use swjkja_world::brush_entity::{Slide, slid};
 use swjkja_world::collision::Collision;
 use swjkja_world::rand::Rand;
 use swjkja_world::static_model::Rules;
@@ -1131,6 +1132,12 @@ fn t1_sours_intro_walkers_stride_as_in_the_original() {
             );
         }
     }
+    // The stand-in's legs at 3500 face the velocity the trace gives her frame at
+    // 3550 (15.5426, -56.3122: yaw -74.570), 27.114 left of her view's -101.684.
+    let t = &walkers[0].1;
+    let yaw = |turns: &[Slide]| slid(turns, 3500).unwrap()[1];
+    let turned = yaw(&t.legs_turns(0.0)) - yaw(&t.turns(0.0));
+    assert!((turned - 27.114).abs() < 0.01, "{turned}");
 }
 
 /// academy3's Luke walks to lukeNav1 by the nav graph's first think as the

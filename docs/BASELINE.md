@@ -2442,3 +2442,18 @@ intro walkers' legs and torsos end with the start and speed the trace logs: 2754
   (`CG_G2PlayerAngles`), not modelled yet.
 - No other view changes: the 58 others render byte for byte as #113's renders
   (rendered offscreen on Windows).
+
+## Legs toward the move, 2026-10-29
+
+cgame turns an NPC's legs toward its velocity, within 60 degrees of where it faces,
+and its spine turns the torso back (DECISIONS.md, 2026-10-29). t1_sour's stand-in at
+3500 moves 27.1 degrees left of where she faces: her legs now point that way.
+
+| View | Legs toward the move | Walk speeds (main) |
+|------|------|------|
+| t1_sour_intro_walking | 0.31 (0.5%) | 0.54 (1.0%) |
+
+- Her legs no longer splay across the view; her feet are still spread a little
+  wider than the reference's.
+- No other view changes: the 58 others render byte for byte as #114's renders
+  (rendered offscreen on Windows).
