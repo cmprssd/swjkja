@@ -1,10 +1,11 @@
 use std::sync::Arc;
 use swjkja_icarus::{Block, Member, Node, id};
 
+use swjkja_model::animation::Animation;
 use swjkja_world::brush_entity::{BrushEntity, Slide};
 use swjkja_world::script::{
-    Change, FirstPass, Level, Mover, Npc, Runner, Use, first_pass, frame_at, script_path, timeline,
-    timelines,
+    Change, Clock, FirstPass, Level, Mover, Npc, Runner, Use, first_pass, frame_at, script_path,
+    timeline, timelines,
 };
 use swjkja_world::static_model::Pose;
 
@@ -70,8 +71,8 @@ fn stance(legs: &'static str, torso: &'static str) -> Pose {
     }
 }
 
-/// Animations' holds and lengths (ms): (frames - 1) and frames at 20 per second.
-fn holds(name: &str) -> Option<(i32, i32)> {
+/// Looping animations at 20 frames per second: held (frames - 1) * 50 ms.
+fn holds(name: &str) -> Option<Animation> {
     let frames = match name {
         "BOTH_STAND1" | "BOTH_STAND3" | "TORSO_WEAPONIDLE3" | "BOTH_SIT5" | "BOTH_CIN_1" => 21,
         "BOTH_WALK1" | "BOTH_RUN1" | "BOTH_WALKBACK1" | "BOTH_RUNBACK1" => 21,
@@ -81,7 +82,16 @@ fn holds(name: &str) -> Option<(i32, i32)> {
         "BOTH_SIT5_TALK3" => 61,
         _ => return None,
     };
-    Some(((frames - 1) * 50, frames * 50))
+    Some(at_20_fps(frames))
+}
+
+fn at_20_fps(count: usize) -> Animation {
+    Animation {
+        first: 0,
+        count,
+        looping: true,
+        frame_lerp: 50,
+    }
 }
 
 fn changes(c: &[Change]) -> Vec<(&str, i32)> {
@@ -123,7 +133,7 @@ fn npcs_standing_still_play_their_idle_after_five_seconds() {
     assert_eq!(at(&t, 6550), ("BOTH_STAND3IDLE1", "BOTH_STAND3IDLE1", 6550));
     // No idle animation (the stance has none, or the skeleton lacks it).
     let t = timeline(&stance("BOTH_STAND4", "BOTH_STAND4"), None, &|n| {
-        (n == "BOTH_STAND4").then_some((1000, 1050))
+        (n == "BOTH_STAND4").then_some(at_20_fps(21))
     });
     assert_eq!(at(&t, 12345), ("BOTH_STAND4", "BOTH_STAND4", 1550));
     let t = timeline(&still, None, &|n| {
@@ -137,16 +147,19 @@ fn npcs_blend_into_their_idle_and_back_over_100_ms() {
     let t = timeline(&stance("BOTH_STAND3", "TORSO_WEAPONIDLE3"), None, &holds);
     // The idle starts at 5000, blending from the stance that started at 1550.
     assert_eq!(t.blending_at(0, 4999), None);
-    assert_eq!(t.blending_at(0, 5000), Some(("BOTH_STAND3", 1550, 0.0)));
+    assert_eq!(
+        t.blending_at(0, 5000),
+        Some(("BOTH_STAND3", Clock::from(1550), 0.0))
+    );
     assert_eq!(
         t.blending_at(1, 5050),
-        Some(("TORSO_WEAPONIDLE3", 1550, 0.5))
+        Some(("TORSO_WEAPONIDLE3", Clock::from(1550), 0.5))
     );
     assert_eq!(t.blending_at(0, 5100), None);
     // The stance comes back at 12500, blending from the idle.
     assert_eq!(
         t.blending_at(1, 12525),
-        Some(("BOTH_STAND3IDLE1", 5000, 0.25))
+        Some(("BOTH_STAND3IDLE1", Clock::from(5000), 0.25))
     );
     assert_eq!(t.blending_at(0, 12345), None);
     // The stance on the first frame does not (its BOTH_STAND1 is left out).
@@ -192,7 +205,10 @@ fn a_held_animation_gives_way_to_the_stance_then_the_idle() {
             ("BOTH_STAND1IDLE1", 14350),
         ]
     );
-    assert_eq!(t.blending_at(0, 2350), Some(("BOTH_CIN_1", 1550, 0.5)));
+    assert_eq!(
+        t.blending_at(0, 2350),
+        Some(("BOTH_CIN_1", Clock::from(1550), 0.5))
+    );
 }
 
 #[test]
@@ -246,7 +262,10 @@ fn a_looping_script_waits_on_times_and_on_its_animations() {
     );
     assert_eq!(at(&t, 12345), ("BOTH_SIT5_TALK3", "BOTH_SIT5_TALK3", 9600));
     // Seated again, it blends from the stance of that same frame.
-    assert_eq!(t.blending_at(0, 6075), Some(("BOTH_STAND1", 6050, 0.25)));
+    assert_eq!(
+        t.blending_at(0, 6075),
+        Some(("BOTH_STAND1", Clock::from(6050), 0.25))
+    );
     // An hour on, it still runs.
     assert!(t.legs.last().unwrap().start > 3_590_000);
 }

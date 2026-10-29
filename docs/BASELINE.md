@@ -2421,3 +2421,24 @@ Walk captures now stop at the view's time, and the two walk views were taken aga
   frame apart): drawn at 16,450 against the new capture he scores 0.08.
 - No other view changes: the 57 others render byte for byte as on main's renders at
   44c6b86. Rendered offscreen on Windows.
+
+## Walk speeds, 2026-10-29
+
+Walks and runs play as fast as their NPC moves (`g_noFootSlide`; DECISIONS.md,
+2026-10-29), each part on Ghoul2's clock: a speed change carries on from the frame
+reached, and the client's clock holds at 2050 through the frame at 2150. t1_sour's
+intro walkers' legs and torsos end with the start and speed the trace logs: 2754 at
+1.1684 for the player's stand-in, 2050 at 1.5 for Kyle
+(`t1_sours_intro_walkers_stride_as_in_the_original`).
+
+| View | Walk speeds | Own speed (main) |
+|------|------|------|
+| t1_sour_intro_walking | 0.54 (1.0%) | 1.13 (1.9%) |
+
+- Kyle's stride now matches the reference: drawn 50 ms earlier he differs visibly.
+- The player's stand-in is at the same frame of her walk (17.4 of 26) as the trace
+  gives, but her legs look turned: she steers left of Kyle from 3400 and moves at an
+  angle to where she faces, and cgame turns the legs toward the move
+  (`CG_G2PlayerAngles`), not modelled yet.
+- No other view changes: the 58 others render byte for byte as #113's renders
+  (rendered offscreen on Windows).

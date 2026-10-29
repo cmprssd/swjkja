@@ -1334,3 +1334,39 @@ and drawing such pipes some other way, would match no view held still.
   phase differs. academy3_luke_walking scores 1.11, where it was 0.24: Luke is
   still simulated a frame early (the voice line), and the new capture shows it.
   Drawn 50 ms earlier it scores 0.08.
+
+## 2026-10-29: Walks play as fast as their NPC moves (decided by Claude, pending review)
+
+- **A walk or run plays at the speed its NPC moves** (`g_noFootSlide`, on by
+  default): `PM_SetAnimFinal` scales the animation's own speed by the last
+  movement frame's speed (`resultspeed`) over the animation's stride (50 a second
+  for walks, 150 for runs, 75 for a crouched walk, the hazard trooper's 50 and the
+  rancor's 173), from 0.01 to 1.5. Droids (R2, R5, protocol, gonk, mouse, probe,
+  seeker), the howler and the wampa play at their own speed. The dual and staff
+  styles' strides (100 for walks, 250 for staff runs) are left out: the saber
+  style an NPC ends up with is not modelled.
+- **A part's clock is Ghoul2's** (`script::Clock`): when its bone began
+  (`startTime`) and its speed. A part already playing the animation is set again
+  only when the speed changes, and it carries on from the frame it has reached
+  (`setFrame`), which moves its start back, truncated to the millisecond. A
+  re-set does not blend, and ends a blend in progress. A part set without
+  restarting while the other part plays the same animation at another frame takes
+  up the other's frame (`g_synchSplitAnims`). This is one function
+  (`Body::play`) for footsteps and scripts alike, so a script's walk on an NPC
+  standing still plays at 0.01.
+- **`Holds` gives the animation itself** (`swjkja_model::animation::Animation`,
+  a new dependency of the world crate) instead of its hold and length: the
+  frame reached needs its first frame, frame count and rate.
+- **Found: the client's clock stays at 2050 through the frame at 2150.** With 2100
+  for the walkers' second frame, both walks start again at 2063 when their speed
+  reaches the cap. The trace has Kyle at 2050 with speed 1.5. Replaying the trace's
+  own positions through Ghoul2's timing gives its 2754 for the player's stand-in
+  only when the second frame is stamped at the first's time: the client is still
+  drawing its first frame (2026-10-18). So animations set at level 2100 and 2150
+  both start at 2050.
+- t1_sour's intro walkers' legs and torsos end where the trace has them, start
+  and speed (`t1_sours_intro_walkers_stride_as_in_the_original`).
+- **Found: what is left of t1_sour_intro_walking is the stand-in's legs' yaw**
+  (0.54, from 1.13). She walks at the frame the trace gives, but she steers left of
+  Kyle from 3400 and moves at an angle to where she faces: cgame turns the legs
+  toward the move (`CG_G2PlayerAngles`), which is not modelled.

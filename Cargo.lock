@@ -1548,6 +1548,7 @@ dependencies = [
  "swjkja-bsp",
  "swjkja-fs",
  "swjkja-icarus",
+ "swjkja-model",
  "swjkja-shader",
 ]
 

@@ -1168,10 +1168,25 @@ pub fn npc_gear(
             still_since: 0,
             script: None,
             bad_bones: bad_bones(class),
+            strides: strides(class),
             ..Pose::default()
         },
         attached,
     )
+}
+
+/// How fast class `class`'s walks and runs carry it at their own speed
+/// (`PM_SetAnimFinal`'s `moveSpeedOfAnim`), `None` for the classes it leaves at
+/// their own speed (the howler, wampa, gonk, mouse, probe, protocol droid, R2 and
+/// R5 droids and the seeker).
+fn strides(class: &str) -> Option<[f32; 2]> {
+    match class {
+        "class_howler" | "class_wampa" | "class_gonk" | "class_mouse" | "class_probe"
+        | "class_protocol" | "class_r2d2" | "class_r5d2" | "class_seeker" => None,
+        "class_hazard_trooper" => Some([50.0, 50.0]),
+        "class_rancor" => Some([173.0, 173.0]),
+        _ => Some([50.0, 150.0]),
+    }
 }
 
 /// `G_ClassHasBadBones`: whether class `class`'s bones are too odd for cgame to

@@ -94,17 +94,38 @@ impl Animation {
         }
     }
 
-    /// The frames a bone playing it from its start shows `elapsed` milliseconds
-    /// later (`G2_TimingModel`, as `PM_SetAnimFinal` sets it: 20 frames per second
-    /// is speed 1): its frame, the next one and how far it has lerped toward that.
-    /// A looping animation wraps around its frames, its last lerping into its
-    /// first; one that does not stays on its last. One played backwards stays at
-    /// its start (left out: no standing animation plays backwards).
+    /// How long the game holds it (ms): `PM_SetAnimFinal`'s `animDurMSec`.
+    pub fn hold(&self) -> i32 {
+        (self.count as i32 - 1) * self.frame_lerp.abs()
+    }
+
+    /// Its full length (ms): `PM_AnimLength`.
+    pub fn length(&self) -> i32 {
+        self.count as i32 * self.frame_lerp.abs()
+    }
+
+    /// Its own speed, in frames per 50 ms (`PM_SetAnimFinal`'s `animSpeed`: 20
+    /// frames per second is speed 1), negative when it plays backwards.
+    pub fn speed(&self) -> f32 {
+        50.0 / self.frame_lerp as f32
+    }
+
+    /// The frames a bone playing it from its start at its own speed shows
+    /// `elapsed` milliseconds later ([`frame_at_speed`](Self::frame_at_speed)).
     pub fn frame_at(&self, elapsed: i32) -> (usize, usize, f32) {
+        self.frame_at_speed(elapsed, self.speed())
+    }
+
+    /// The frames a bone playing it from its start at `speed` (frames per 50 ms)
+    /// shows `elapsed` milliseconds later (`G2_TimingModel`): its frame, the next
+    /// one and how far it has lerped toward that. A looping animation wraps around
+    /// its frames, its last lerping into its first; one that does not stays on its
+    /// last. One played backwards stays at its start (left out: no standing
+    /// animation plays backwards).
+    pub fn frame_at_speed(&self, elapsed: i32, speed: f32) -> (usize, usize, f32) {
         if self.frame_lerp < 0 {
             return (self.start(), self.start(), 0.0);
         }
-        let speed = 50.0 / self.frame_lerp as f32;
         let time = elapsed.max(0) as f32 / 50.0;
         let (first, size) = (self.first as f32, self.count as f32);
         let end = first + size;
@@ -134,6 +155,15 @@ impl Animation {
         (frame, next, g - g.trunc())
     }
 
+    /// The frame a bone playing it from its start at `speed` has reached
+    /// `elapsed` milliseconds later, with the fraction it has gone toward the next
+    /// (`G2_Get_Bone_Anim_Index`'s `currentFrame`), where `PM_SetAnimFinal`
+    /// carries on from when only the speed changes.
+    pub fn frame_reached(&self, elapsed: i32, speed: f32) -> f32 {
+        let (frame, _, lerp) = self.frame_at_speed(elapsed, speed);
+        frame as f32 + lerp
+    }
+
     /// Where a bone playing it from its start for `elapsed` milliseconds blends
     /// from when another animation replaces it, as [`frame_at`](Self::frame_at)
     /// gives it: the frame it reached (`G2_Set_Bone_Anim_Index`'s `blendFrame`)
@@ -141,7 +171,12 @@ impl Animation {
     /// gone: `G2_TransformBone` weighs the reached frame by that fraction, the
     /// next by the rest. One played backwards blends from its frame alone.
     pub fn blend_from(&self, elapsed: i32) -> (usize, usize, f32) {
-        let (frame, next, lerp) = self.frame_at(elapsed);
+        self.blend_from_speed(elapsed, self.speed())
+    }
+
+    /// [`blend_from`](Self::blend_from) for a bone playing it at `speed`.
+    pub fn blend_from_speed(&self, elapsed: i32, speed: f32) -> (usize, usize, f32) {
+        let (frame, next, lerp) = self.frame_at_speed(elapsed, speed);
         if self.frame_lerp < 0 {
             return (frame, frame, 0.0);
         }

@@ -7,7 +7,7 @@ change is proven against the original game, and how the work itself is run.
 of the same story, before and after, are on the [progress page](#progress-page).
 
 <!-- progress:asof -->
-Numbers in the generated parts below are as of 2026-10-28 (113 merged PRs), counted
+Numbers in the generated parts below are as of 2026-10-29 (114 merged PRs), counted
 by `scripts/progress.py`.
 <!-- /progress -->
 The hand-written parts (speed, the retail files read) give their own dates.
@@ -66,8 +66,8 @@ that differs instead of being guessed at from pixels.
 ## Architecture
 
 <!-- progress:code -->
-10 crates in one Cargo workspace, 39,200 lines of Rust (sources, tests and examples)
-plus 630 lines of WGSL shaders, 350 tests. Each crate maps to one part of the
+10 crates in one Cargo workspace, 39,438 lines of Rust (sources, tests and examples)
+plus 630 lines of WGSL shaders, 351 tests. Each crate maps to one part of the
 original engine.
 <!-- /progress -->
 
@@ -101,9 +101,9 @@ flowchart BT
 | `console` | 1,011 | 12 | command buffer, cvars, config files | `cmd.cpp`, `cvar.cpp` |
 | `icarus` | 307 | 1 | reads compiled ICARUS scripts | `icarus/` |
 | `shader` | 3,134 | 28 | `.shader` scripts and which material a surface draws | `tr_shader.cpp` |
-| `model` | 2,499 | 32 | MD3 and Ghoul2 (`.glm`/`.gla`) meshes, skins, animation | `tr_model.cpp`, `ghoul2/` |
-| `world` | 14,686 | 148 | patches, stitching, light grid, entities as they spawn, NPCs, scripts, box traces, shadows, the game's random numbers | `tr_curve.cpp`, `g_*.cpp`, `NPC_*.cpp`, `Q3_Interface.cpp` |
-| `render` | 12,659 | 83 | Vulkan renderer: materials stage by stage, fog, sky, deforms, flares, culling, models skinned on the GPU, frames in flight | `tr_*.cpp` (the vanilla renderer) |
+| `model` | 2,534 | 32 | MD3 and Ghoul2 (`.glm`/`.gla`) meshes, skins, animation | `tr_model.cpp`, `ghoul2/` |
+| `world` | 14,885 | 149 | patches, stitching, light grid, entities as they spawn, NPCs, scripts, box traces, shadows, the game's random numbers | `tr_curve.cpp`, `g_*.cpp`, `NPC_*.cpp`, `Q3_Interface.cpp` |
+| `render` | 12,663 | 83 | Vulkan renderer: materials stage by stage, fog, sky, deforms, flares, culling, models skinned on the GPU, frames in flight | `tr_*.cpp` (the vanilla renderer) |
 | `swjkja` | 950 | 7 | the map viewer window and its loading screen | `cl_*.cpp` (a small part) |
 <!-- /progress -->
 
@@ -138,7 +138,7 @@ Rules that shape it:
   ones"), with a recommendation. Choices that come up mid-build are made by Claude,
   marked *decided by Claude, pending review* in DECISIONS.md, and listed in the PR.
   <!-- progress:process -->
-  So far: 74 decision entries, 15 chosen by the owner, 55 made by Claude for review.
+  So far: 75 decision entries, 15 chosen by the owner, 56 made by Claude for review.
   <!-- /progress -->
 - **$0 development.** No GitHub Actions: `.local-ci` runs on this machine (format,
   shell syntax, a build of exactly the committed tree, then clippy and tests on
@@ -159,16 +159,16 @@ Rules that shape it:
 ### History
 
 <!-- progress:history -->
-127 commits, 113 merged PRs from 2026-10-07 to 2026-10-28, on 13 working days: 62
-feat, 34 fix, 10 docs, 4 bench, 2 chore, 1 ci. About 54,568 lines added and 4,208
+128 commits, 114 merged PRs from 2026-10-07 to 2026-10-29, on 14 working days: 63
+feat, 34 fix, 10 docs, 4 bench, 2 chore, 1 ci. About 54,947 lines added and 4,289
 removed; 158 tracked files.
 
 ```mermaid
 xychart-beta
     title "PRs merged per working day"
-    x-axis ["Oct 7", "Oct 10", "Oct 11", "Oct 14", "Oct 15", "Oct 16", "Oct 17", "Oct 18", "Oct 19", "Oct 21", "Oct 26", "Oct 27", "Oct 28"]
+    x-axis ["Oct 7", "Oct 10", "Oct 11", "Oct 14", "Oct 15", "Oct 16", "Oct 17", "Oct 18", "Oct 19", "Oct 21", "Oct 26", "Oct 27", "Oct 28", "Oct 29"]
     y-axis "PRs" 0 --> 25
-    bar [23, 19, 9, 1, 2, 8, 10, 10, 8, 9, 8, 4, 2]
+    bar [23, 19, 9, 1, 2, 8, 10, 10, 8, 9, 8, 4, 2, 1]
 ```
 <!-- /progress -->
 
@@ -200,25 +200,24 @@ timeline
 
 <!-- progress:views -->
 59 reference views, 1280x720, rendered by both engines and compared (mean absolute
-difference per channel, 0-255; measured 2026-10-28 at PR #113):
+difference per channel, 0-255; measured 2026-10-29 at PR #114):
 
 | Kind | Views | Mean difference |
 |------|------:|------|
 | Multiplayer world (sky, fog, fog volumes, flares, animated stages, curve LOD) | 19 | 0.00-0.03 |
 | Static and brush-entity models, rotating fans and drums | 18 | 0.00-3.73 |
-| Single-player NPCs (spawned, scripted, turned, walked) | 22 | 0.00-1.13 |
-| **All** | **59** | **median 0.01; 55 under 0.5, 56 under 1.0** |
+| Single-player NPCs (spawned, scripted, turned, walked) | 22 | 0.00-1.11 |
+| **All** | **59** | **median 0.01; 55 under 0.5, 57 under 1.0** |
 
 ```mermaid
 xychart-beta
     title "Views by mean difference (59 views)"
     x-axis ["< 0.25", "0.25-0.5", "0.5-1", "1-2", "> 2"]
     y-axis "views" 0 --> 58
-    bar [55, 0, 1, 2, 1]
+    bar [55, 0, 2, 1, 1]
 ```
 
-The largest: ffa5_pipes (3.73), t1_sour_intro_walking (1.13), academy3_luke_walking
-(1.11).
+The largest: ffa5_pipes (3.73), academy3_luke_walking (1.11), hevil_fan_west (0.63).
 <!-- /progress -->
 
 Explained, and not renderer errors: ffa5_pipes has the original's first-person

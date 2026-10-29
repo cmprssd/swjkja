@@ -39,6 +39,7 @@
 use std::collections::HashMap;
 
 use swjkja_icarus::{Block, Member, Node, id};
+use swjkja_model::animation::Animation;
 
 use crate::Vec3;
 use crate::brush_entity::{Motion, Slide, slid};
@@ -78,14 +79,35 @@ pub const HORIZON: i32 = 3_600_000;
 const STAND: &str = "BOTH_STAND1";
 
 /// One part's change of animation: what it plays from `start` (ms, on the clock the
-/// client draws by), and what it blends from, the animation before and when that
-/// started, if it changed after the first frame (`G2_Set_Bone_Anim_Index` keeps the
-/// old animation's frame for [`BLEND_MS`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// client draws by) and by which clock, and what it blends from, the animation
+/// before and its clock, if it changed after the first frame
+/// (`G2_Set_Bone_Anim_Index` keeps the old animation's frame for [`BLEND_MS`]).
+#[derive(Debug, Clone, PartialEq)]
 pub struct Change {
     pub start: i32,
     pub anim: String,
-    pub from: Option<(String, i32)>,
+    pub from: Option<(String, Clock)>,
+    pub clock: Clock,
+}
+
+/// How a bone times its animation (`boneInfo_t`): when it played its first frame
+/// (`startTime`, ms: earlier than the change when it carries on from a frame
+/// reached at another speed) and its speed in frames per 50 ms (`animSpeed`), or
+/// `None` for the animation's own.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Clock {
+    pub begun: i32,
+    pub speed: Option<f32>,
+}
+
+impl Clock {
+    /// From `start`, at the animation's own speed.
+    pub fn from(start: i32) -> Self {
+        Self {
+            begun: start,
+            speed: None,
+        }
+    }
 }
 
 /// The legs' and the torso's animations over time, from the first frame, and what
@@ -185,22 +207,21 @@ impl Timeline {
         &changes[after.saturating_sub(1)]
     }
 
-    /// What part `part` blends from at `time` and how far the blend has gone (0 to
-    /// 1), or `None` outside a blend.
-    pub fn blending_at(&self, part: usize, time: i32) -> Option<(&str, i32, f32)> {
+    /// What part `part` blends from at `time`, by which clock, and how far the
+    /// blend has gone (0 to 1), or `None` outside a blend.
+    pub fn blending_at(&self, part: usize, time: i32) -> Option<(&str, Clock, f32)> {
         let c = self.at(part, time);
         let elapsed = time - c.start;
-        let (anim, start) = c.from.as_ref()?;
+        let (anim, clock) = c.from.as_ref()?;
         (0..BLEND_MS)
             .contains(&elapsed)
-            .then(|| (anim.as_str(), *start, elapsed as f32 / BLEND_MS as f32))
+            .then(|| (anim.as_str(), *clock, elapsed as f32 / BLEND_MS as f32))
     }
 }
 
-/// An animation's hold and full length (ms) as the game times it
-/// (`PM_SetAnimFinal`'s `animDurMSec`, `PM_AnimLength`), or `None` when the
-/// skeleton lacks it (`PM_HasAnimation`).
-pub type Holds<'a> = &'a dyn Fn(&str) -> Option<(i32, i32)>;
+/// An animation as the NPC's skeleton has it (its animation file's line), or
+/// `None` when the skeleton lacks it (`PM_HasAnimation`).
+pub type Holds<'a> = &'a dyn Fn(&str) -> Option<Animation>;
 
 /// Task slots an animation's completion is kept in (`TID_ANIM_BOTH`, `_LOWER`,
 /// `_UPPER`).
@@ -342,7 +363,7 @@ fn condition(b: &Block) -> bool {
 /// One part's animation as the game holds it.
 struct Part {
     anim: String,
-    start: i32,
+    clock: Clock,
     /// `legsAnimTimer` / `torsoAnimTimer`: ms left to hold, 0 for none, -1 forever.
     timer: i32,
 }
@@ -431,6 +452,8 @@ struct Walk {
     speed: f32,
     /// `lastPathAngles`' yaw: its velocity's when it last steered with any speed.
     path_yaw: f32,
+    /// How fast its last movement frame moved it (`resultspeed`, units a second).
+    result_speed: f32,
     /// When its behavior next thinks (`nextBStateThink`).
     next_think: i32,
     /// `SCF_RUNNING`: it runs to its goals, else walks (`NPC_BSDefault` presses
@@ -711,10 +734,15 @@ struct Actor<'a> {
 /// When an animation started in level frame `level` starts for the client: one
 /// frame earlier, but in the frames before the client draws its first (up to the
 /// one after the player begins), where its clock is still at 0 and the level's time
-/// is taken (`PM_SetAnimFinal`'s `cg.time ? cg.time : level.time`).
+/// is taken (`PM_SetAnimFinal`'s `cg.time ? cg.time : level.time`), and in the two
+/// frames after, while the client is still drawing its first: its clock stays at
+/// that frame's time.
 fn client_time(level: i32) -> i32 {
-    if level <= PLAYER_BEGIN + FRAME_MS {
+    let first_drawn = PLAYER_BEGIN + FRAME_MS;
+    if level <= first_drawn {
         level
+    } else if level <= first_drawn + 2 * FRAME_MS {
+        first_drawn
     } else {
         level - FRAME_MS
     }
@@ -1158,17 +1186,93 @@ impl<'a> Body<'a> {
         moved
     }
 
-    fn play(&mut self, part: usize, anim: &str, level: i32) {
-        let start = client_time(level);
+    /// `PM_SetAnimFinal` for part `part` (0 the legs, 1 the torso) in level frame
+    /// `level`: it plays `anim` at [`Body::anim_speed`] from its first frame, but
+    /// for a part already playing it, unless `restart`: that carries on from the
+    /// frame it has reached when the speed changes (`G2_Set_Bone_Anim_Index`'s
+    /// `setFrame`, which moves its start back), and is left alone otherwise. A part
+    /// set without `restart` while the other plays `anim` at another frame takes
+    /// up the other's (`g_synchSplitAnims`). A part that carries on does not blend,
+    /// and ends a blend in progress. Nothing when the skeleton lacks `anim`.
+    fn play(&mut self, part: usize, anim: &str, level: i32, restart: bool) {
+        let Some(a) = (self.holds)(anim) else { return };
+        let time = client_time(level);
+        let speed = self.anim_speed(anim, &a);
+        let new_speed = speed.unwrap_or(a.speed());
+        let playing = |p: &Part| p.clock.speed.unwrap_or(a.speed());
+        let reached =
+            |p: &Part| (p.anim == anim).then(|| a.frame_reached(time - p.clock.begun, playing(p)));
+        let (mine, other) = (reached(&self.parts[part]), reached(&self.parts[1 - part]));
+        let frame = match (restart, mine, other) {
+            (false, _, Some(other)) if mine != Some(other) => Some(other),
+            (false, Some(_), _) if playing(&self.parts[part]) == new_speed => return,
+            (false, mine, _) => mine,
+            (true, ..) => None,
+        };
+        let begun = frame.map_or(time, |f| {
+            let back = f64::from(f - a.first as f32) * 50.0 / f64::from(new_speed);
+            (f64::from(time) - back) as i32
+        });
+        let blends = restart || mine.is_none();
+        let clock = Clock { begun, speed };
         let p = &mut self.parts[part];
-        let from = (level != FIRST_FRAME).then(|| (p.anim.clone(), p.start));
+        let from = (blends && level != FIRST_FRAME).then(|| (p.anim.clone(), p.clock));
         p.anim = anim.to_owned();
-        p.start = start;
+        p.clock = clock;
         self.changes[part].push(Change {
-            start,
+            start: time,
             anim: anim.to_owned(),
             from,
+            clock,
         });
+    }
+
+    /// The speed it plays `anim` (`a`) at, `None` for the animation's own: with
+    /// `g_noFootSlide`, a walk or run played forward goes as much faster or slower
+    /// than its own as the body's last movement frame went than the animation's
+    /// stride ([`Pose::strides`]; 75 for a crouched walk), from 0.01 to 1.5. Not for
+    /// the classes without strides, nor for dual and staff saber styles' strides
+    /// (left out).
+    fn anim_speed(&self, anim: &str, a: &Animation) -> Option<f32> {
+        let walking = matches!(
+            anim,
+            "BOTH_WALK1"
+                | "BOTH_WALK2"
+                | "BOTH_WALK_STAFF"
+                | "BOTH_WALK_DUAL"
+                | "BOTH_WALK5"
+                | "BOTH_WALK6"
+                | "BOTH_WALK7"
+                | "BOTH_WALKBACK1"
+                | "BOTH_WALKBACK2"
+                | "BOTH_WALKBACK_STAFF"
+                | "BOTH_WALKBACK_DUAL"
+        );
+        let running = matches!(
+            anim,
+            "BOTH_RUN1"
+                | "BOTH_RUN2"
+                | "BOTH_RUN4"
+                | "BOTH_RUN_STAFF"
+                | "BOTH_RUN_DUAL"
+                | "BOTH_RUNBACK1"
+                | "BOTH_RUNBACK2"
+                | "BOTH_RUNBACK_STAFF"
+                | "BOTH_RUN1START"
+                | "BOTH_RUN1STOP"
+                | "BOTH_RUNSTRAFE_LEFT1"
+                | "BOTH_RUNSTRAFE_RIGHT1"
+        );
+        let crouched = matches!(anim, "BOTH_CROUCH1WALK" | "BOTH_CROUCH1WALKBACK");
+        let [walk, run] = self.stance.strides?;
+        let stride = match (crouched, walking, running) {
+            (true, ..) => 75.0,
+            (_, true, _) => walk,
+            (_, _, true) => run,
+            _ => return None,
+        };
+        let speed = a.speed();
+        (speed >= 0.0).then(|| (speed * (self.walk.result_speed / stride)).clamp(0.01, 1.5))
     }
 }
 
@@ -1276,7 +1380,7 @@ impl<'a> Actor<'a> {
     /// animation's hold. False when the skeleton lacks it.
     fn set_held(&mut self, parts: &[usize], anim: &str, restart: bool, level: i32) -> bool {
         let body = self.body.as_ref().unwrap();
-        let Some((hold, _)) = (body.holds)(anim) else {
+        let Some(hold) = (body.holds)(anim).map(|a| a.hold()) else {
             return false;
         };
         let differs: Vec<bool> = parts
@@ -1291,7 +1395,7 @@ impl<'a> Actor<'a> {
         for (&p, &d) in parts.iter().zip(&differs) {
             // An animation already playing is not played again, nor held anew.
             if d {
-                self.body.as_mut().unwrap().play(p, anim, level);
+                self.body.as_mut().unwrap().play(p, anim, level, restart);
                 self.set_timer(p, hold);
             }
         }
@@ -1322,10 +1426,13 @@ impl<'a> Actor<'a> {
         }
         let body = self.body.as_mut().unwrap();
         let w = &body.walk;
+        let before = w.origin;
         if (w.velocity != [0.0; 3] || w.dir != [0.0; 3]) && body.walk_move(msec, world) {
             let offset = sub(body.walk.origin, body.stance.origin);
             body.moves.push((level, offset));
         }
+        let moved = length(sub(body.walk.origin, before));
+        body.walk.result_speed = moved / msec as f32 * 1000.0;
         let moving =
             body.walk.velocity != [0.0; 3] || (body.walk.dir != [0.0; 3] && body.walk.speed > 0.0);
         let w = &mut body.walk;
@@ -1341,10 +1448,8 @@ impl<'a> Actor<'a> {
             (true, true, true) => "BOTH_WALKBACK1",
             (true, true, false) => "BOTH_RUNBACK1",
         };
-        let holds = body.holds;
-        let has = |anim| holds(anim).is_some();
-        if body.parts[0].timer == 0 && has(legs) && body.parts[0].anim != legs {
-            body.play(0, legs, level);
+        if body.parts[0].timer == 0 {
+            body.play(0, legs, level, false);
         }
         let legs = body.parts[0].anim.as_str();
         let unarmed = body.unarmed.last().map_or(body.stance.unarmed, |u| u.1);
@@ -1353,9 +1458,9 @@ impl<'a> Actor<'a> {
             "BOTH_WALKBACK1" | "BOTH_RUNBACK1" if unarmed => legs,
             _ => body.stance.torso,
         };
-        if body.parts[1].timer == 0 && has(torso) && body.parts[1].anim != torso {
+        if body.parts[1].timer == 0 {
             let torso = torso.to_owned();
-            body.play(1, &torso, level);
+            body.play(1, &torso, level, false);
         }
         let [legs, torso] = &body.parts;
         let mut idle = None;
@@ -1363,9 +1468,9 @@ impl<'a> Actor<'a> {
             body.idle_time = body.idle_time.max(level);
         } else if level - body.idle_time > 5000
             && let Some(anim) = idle_for(&legs.anim)
-            && let Some((_, length)) = (body.holds)(anim)
+            && let Some(a) = (body.holds)(anim)
         {
-            idle = Some((anim, length));
+            idle = Some((anim, a.length()));
         }
         if let Some((anim, length)) = idle {
             self.set_held(&[0, 1], anim, false, level);
@@ -2432,7 +2537,7 @@ pub fn timelines(
 ) -> Timelines {
     let part = || Part {
         anim: STAND.to_owned(),
-        start: FIRST_FRAME,
+        clock: Clock::from(FIRST_FRAME),
         timer: 0,
     };
     let mut actors: Vec<Actor> = level
@@ -2552,6 +2657,7 @@ pub fn timelines(
         start: FIRST_FRAME,
         anim: anim.to_owned(),
         from: None,
+        clock: Clock::from(FIRST_FRAME),
     };
     let start = |mut c: Vec<Change>| {
         if c.first().is_none_or(|c| c.start != FIRST_FRAME) {
