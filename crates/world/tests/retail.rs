@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use swjkja_bsp::{Bsp, SurfaceKind};
+use swjkja_model::animation;
 use swjkja_world::collision::Collision;
 use swjkja_world::rand::Rand;
 use swjkja_world::static_model::Rules;
@@ -917,6 +918,30 @@ fn walks_off_the_trace(
     traced: &[(usize, i32, [f32; 3])],
     early: i32,
 ) -> Vec<(usize, i32, Option<[f32; 3]>)> {
+    let walkers = walkers(vfs, map, names, &|_| None);
+    let mut off = Vec::new();
+    for &(who, level, traced) in traced {
+        let (start, timeline) = &walkers[who];
+        let at = timeline
+            .moves
+            .iter()
+            .find(|(l, _)| *l == level - early)
+            .map(|(_, o)| [0, 1, 2].map(|k| start[k] + o[k]));
+        if !at.is_some_and(|at| (0..3).all(|k| (at[k] - traced[k]).abs() < 0.001)) {
+            off.push((who, level, at));
+        }
+    }
+    off
+}
+
+/// Where `names` on `map` begin and what they do, their skeletons having the
+/// animations `holds` gives.
+fn walkers(
+    vfs: &swjkja_fs::Vfs,
+    map: &str,
+    names: &[&str],
+    holds: script::Holds,
+) -> Vec<([f32; 3], script::Timeline)> {
     let bsp = Bsp::parse(&vfs.read(map).unwrap()).unwrap();
     let rules = Rules::for_map(map);
     let Rules::SinglePlayer { skill } = rules else {
@@ -945,7 +970,6 @@ fn walks_off_the_trace(
     let mut level = script::Level::of(&bsp, 0, &scripts);
     level.collision = world;
     level.nav = Some(nav::Graph::build(&bsp, skill, &Collision::new(&bsp)));
-    let holds = |_: &str| None;
     let poses: Vec<_> = placements
         .iter()
         .filter_map(|p| p.ghoul2.as_ref()?.pose.as_ref())
@@ -955,7 +979,7 @@ fn walks_off_the_trace(
         .map(|pose| script::Npc {
             stance: pose,
             script: pose.script.as_deref().map(Vec::as_slice),
-            holds: &holds,
+            holds,
         })
         .collect();
     let voice = |name: &str| {
@@ -965,29 +989,16 @@ fn walks_off_the_trace(
         swjkja_world::sound::length_ms(&bytes).map(|ms| ms.ceil() as i32)
     };
     let t = script::timelines(&npcs, &level, &voice);
-    let walkers: Vec<_> = names
+    names
         .iter()
         .map(|&name| {
             let i = poses
                 .iter()
                 .position(|p| p.name.as_deref() == Some(name))
                 .unwrap();
-            (poses[i].origin, &t.npcs[i])
+            (poses[i].origin, t.npcs[i].clone())
         })
-        .collect();
-    let mut off = Vec::new();
-    for &(who, level, traced) in traced {
-        let (start, timeline) = walkers[who];
-        let at = timeline
-            .moves
-            .iter()
-            .find(|(l, _)| *l == level - early)
-            .map(|(_, o)| [0, 1, 2].map(|k| start[k] + o[k]));
-        if !at.is_some_and(|at| (0..3).all(|k| (at[k] - traced[k]).abs() < 0.001)) {
-            off.push((who, level, at));
-        }
-    }
-    off
+        .collect()
 }
 
 /// A level frame (ms).
@@ -1079,6 +1090,47 @@ fn t1_sours_intro_walkers_walk_as_in_the_original() {
         off.len(),
         off.first()
     );
+}
+
+/// t1_sour's intro walkers' legs and torsos at the last traced frame (3550, on the
+/// client's clock 3500), as the original's trace logs their bones: each walk plays
+/// as fast as its last frame moved it over the walk's stride (50 a second,
+/// `g_noFootSlide`). The player's stand-in, its steps slowing and quickening,
+/// carries on from where it was each time, back to 2754, at 1.1684 (58.42 units
+/// a second); Kyle has gone faster than 75 a second from his first step, at the
+/// most, 1.5, since he began at 2050.
+#[test]
+fn t1_sours_intro_walkers_stride_as_in_the_original() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let map = "maps/t1_sour.bsp";
+    let text = |skeleton: &str| {
+        let file = animation::config_file(&vfs, skeleton)?;
+        Some(String::from_utf8_lossy(&vfs.read(&file).ok()?).into_owned())
+    };
+    let humanoid = text(animation::HUMANOID).unwrap();
+    let cinematic = text(&animation::cinematic_skeleton(map));
+    let holds = |name: &str| {
+        let cinematic = cinematic.as_deref().and_then(|c| animation::find(c, name));
+        cinematic.or_else(|| animation::find(&humanoid, name))
+    };
+    let names = ["npc_fakePlayerIntro", "npc_fakeKyleIntro"];
+    let walkers = walkers(&vfs, map, &names, &holds);
+    for ((_, t), (begun, speed)) in walkers.iter().zip([(2754, 1.1684), (2050, 1.5)]) {
+        for part in [0, 1] {
+            let c = t.at(part, 3500);
+            assert_eq!(c.anim, "BOTH_WALK1");
+            assert_eq!(c.clock.begun, begun, "{part}");
+            assert!(
+                (c.clock.speed.unwrap() - speed).abs() < 0.0001,
+                "{:?}",
+                c.clock
+            );
+        }
+    }
 }
 
 /// academy3's Luke walks to lukeNav1 by the nav graph's first think as the

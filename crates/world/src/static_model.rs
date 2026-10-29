@@ -137,6 +137,11 @@ pub struct Pose {
     /// How fast it walks and runs ([`crate::npc::NpcLook::walk_speed`]).
     pub walk_speed: f32,
     pub run_speed: f32,
+    /// How fast its walks and its runs, played at their own speed, carry it
+    /// (`PM_SetAnimFinal`'s `moveSpeedOfAnim`), which they play as much faster or
+    /// slower as it moves (`g_noFootSlide`); `None` for the classes whose play at
+    /// their own speed.
+    pub strides: Option<[f32; 2]>,
     /// Whether it holds no weapon (`WP_NONE`) as it begins.
     pub unarmed: bool,
     /// Whether nothing meets it (its spawner's `SFB_NOTSOLID`, 64: contents 0).

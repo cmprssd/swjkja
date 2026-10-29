@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 swjkja-bsp = { path = "../bsp" }
 swjkja-icarus = { path = "../icarus" }
+swjkja-model = { path = "../model" }
 swjkja-shader = { path = "../shader" }
 
 [dev-dependencies]

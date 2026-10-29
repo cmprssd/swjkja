@@ -465,6 +465,8 @@ fn pose(legs: &'static str, torso: &'static str) -> Pose {
         script: None,
         name: None,
         bad_bones: false,
+        // A humanoid's: walks carry it 50 a second, runs 150.
+        strides: Some([50.0, 150.0]),
         ..Pose::default()
     }
 }

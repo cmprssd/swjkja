@@ -1067,12 +1067,9 @@ impl AnimFiles {
             })
     }
 
-    /// An animation's hold and full length (ms) as the game times it.
-    fn holds(&self, name: &str) -> Option<(i32, i32)> {
-        self.find(name).map(|(a, _)| {
-            let lerp = a.frame_lerp.abs();
-            ((a.count as i32 - 1) * lerp, a.count as i32 * lerp)
-        })
+    /// An animation as its skeleton has it.
+    fn holds(&self, name: &str) -> Option<animation::Animation> {
+        self.find(name).map(|(a, _)| a)
     }
 }
 
@@ -1215,14 +1212,20 @@ impl Rig {
             if on != skeleton || stopped[i].is_some_and(|s| s <= time) {
                 continue;
             }
-            let mut blend = gla::Blend::from(frame(anim.frame_at(time - change.start)));
-            if let Some((old, old_start, weight)) = self.timeline.blending_at(part, time) {
+            let played = |a: &animation::Animation, c: script::Clock| {
+                (time - c.begun, c.speed.unwrap_or(a.speed()))
+            };
+            let (elapsed, speed) = played(&anim, change.clock);
+            let mut blend = gla::Blend::from(frame(anim.frame_at_speed(elapsed, speed)));
+            if let Some((old, old_clock, weight)) = self.timeline.blending_at(part, time) {
                 let blends = old != change.anim
                     && find(&change.anim).is_some_and(|(a, _)| a.frame_lerp >= 0)
                     && i.checked_sub(1)
                         .is_none_or(|j| stopped[j].is_none_or(|s| s > change.start));
                 if let (true, Some((from, _))) = (blends, find(old).or(stand)) {
-                    blend.from = frame(from.blend_from(change.start - old_start));
+                    let (_, speed) = played(&from, old_clock);
+                    let elapsed = change.start - old_clock.begun;
+                    blend.from = frame(from.blend_from_speed(elapsed, speed));
                     blend.weight = weight;
                 }
             }
@@ -1623,6 +1626,7 @@ mod tests {
                 start,
                 anim: anim.to_owned(),
                 from: None,
+                clock: script::Clock::from(start),
             })
             .collect()
     }

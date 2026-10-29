@@ -25,3 +25,4 @@ be515c9  Scripts move brush entities
 a037837  Specular, environment maps and rack goods as the original's
 4d176ee  NPCs turn and walk as scripts ask
 44c6b86  Walking legs and the nav graph
+301a623  NPCs update by entity number
