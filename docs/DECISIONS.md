@@ -1370,3 +1370,31 @@ and drawing such pipes some other way, would match no view held still.
   (0.54, from 1.13). She walks at the frame the trace gives, but she steers left of
   Kyle from 3400 and moves at an angle to where she faces: cgame turns the legs
   toward the move (`CG_G2PlayerAngles`), which is not modelled.
+
+## 2026-10-29: Legs turn toward the move (decided by Claude, pending review)
+
+- **The legs face where the NPC moves, within 60 degrees of where it faces**
+  (`CG_PlayerLegsYawFromMovement`, for every class but the gonk, interrogator and
+  sentry): toward its velocity's yaw, the other way when it backs up
+  (`PMF_BACKWARDS_RUN`), not at all when it stands still or moves more than 150
+  degrees from its view. cgame moves them part of the way each rendered frame (by
+  the frame's interpolation, 5 degrees at most), at a speed that depends on its
+  frame rate; they are drawn where they get to once the capture has stopped the
+  game, as the trailing legs (2026-10-26) and the settled look (2026-10-15) are.
+  Between frames they turn from one frame's to the next over its 50 ms
+  (`Timeline::legs_turns`), as the view does.
+- **The velocity is the next frame's**: as the client draws the frame at T, the
+  server has run the frame at T + 50 (the trace logs the stand-in at 3550's origin
+  for a view at 3500), and cgame reads the NPC's `ps.velocity` from it. The
+  timeline records the velocity and the backing-up flag after each movement frame
+  that changes them.
+- **The spine turns the torso back to the view** (`CG_G2ClientSpineAngles`): by
+  the yaw between view and legs, shared out over the lumbar and thoracic bones as
+  the motion bone's turn is, whether or not the legs and torso play the same
+  animation; the motion bone's turn is subtracted from it when they differ.
+- t1_sour's stand-in's legs at 3500 face the trace's velocity at 3550 (27.1
+  degrees left of her view; `t1_sours_intro_walkers_stride_as_in_the_original`).
+  t1_sour_intro_walking goes from 0.54 to 0.31; her feet are still spread a
+  little wider than the reference's. Whether the original's legs had fully
+  settled is not logged (the capture would need `renderInfo.legsYaw` traced, a
+  GUI run).

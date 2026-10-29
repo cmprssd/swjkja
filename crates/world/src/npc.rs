@@ -1168,6 +1168,7 @@ pub fn npc_gear(
             still_since: 0,
             script: None,
             bad_bones: bad_bones(class),
+            still_legs: matches!(class, "class_gonk" | "class_interrogator" | "class_sentry"),
             strides: strides(class),
             ..Pose::default()
         },

@@ -133,6 +133,10 @@ pub struct Timeline {
     /// How far it has moved from where it began after each level frame that moves
     /// it (walking to a navgoal): the level time and the offset.
     pub moves: Vec<(i32, Vec3)>,
+    /// Its velocity (`ps.velocity`) and whether it backs up (`PMF_BACKWARDS_RUN`)
+    /// after each level frame that changes either: the level time, the velocity
+    /// and the flag. cgame turns its legs toward it ([`Timeline::legs_turns`]).
+    pub velocity: Vec<(i32, Vec3, bool)>,
 }
 
 impl Timeline {
@@ -169,6 +173,49 @@ impl Timeline {
                 slide
             })
             .collect()
+    }
+
+    /// Its legs' turns, for an NPC that begins facing `yaw`, as cgame draws them
+    /// once they have caught up: each frame's yaw ([`Timeline::turns`]) turned
+    /// toward the velocity of the frame after it, which the server has run as the
+    /// client draws the frame ([`legs_offset`]), from frame to frame over the 50 ms
+    /// between their snapshots. cgame moves the legs part of the way there each
+    /// rendered frame (`CG_PlayerLegsYawFromMovement`, by the frame's
+    /// interpolation, 5 degrees at most), at a speed that depends on its frame
+    /// rate; once the capture has stopped the game they get there.
+    pub fn legs_turns(&self, yaw: f32) -> Vec<Slide> {
+        let mut levels: Vec<i32> = self.yaw.iter().map(|y| y.0).collect();
+        levels.extend(self.velocity.iter().map(|v| v.0 - FRAME_MS));
+        levels.sort_unstable();
+        levels.dedup();
+        let (mut view, mut from) = (yaw, yaw);
+        let mut yaws = self.yaw.iter().peekable();
+        let mut turns = Vec::new();
+        for level in levels {
+            while let Some(&&(l, to)) = yaws.peek()
+                && l <= level
+            {
+                view += angle_subtract(to, view);
+                yaws.next();
+            }
+            let after = self.velocity.partition_point(|v| v.0 <= level + FRAME_MS);
+            let (velocity, backwards) = after.checked_sub(1).map_or(([0.0; 3], false), |i| {
+                (self.velocity[i].1, self.velocity[i].2)
+            });
+            let legs = view + legs_offset(view, velocity, backwards);
+            let to = from + angle_subtract(legs, from);
+            if to != from {
+                turns.push(Slide {
+                    start: level - FRAME_MS,
+                    from: [0.0, from, 0.0],
+                    to: [0.0, to, 0.0],
+                    duration: FRAME_MS,
+                    linear: true,
+                });
+                from = to;
+            }
+        }
+        turns
     }
 
     /// Its moves, for an NPC drawn at `origin` as it begins, as cgame draws them:
@@ -415,6 +462,7 @@ struct Body<'a> {
     yaw: Vec<(i32, f32)>,
     walk: Walk,
     moves: Vec<(i32, Vec3)>,
+    velocity: Vec<(i32, Vec3, bool)>,
 }
 
 /// Milliseconds between an unfrozen NPC's behavior thinks (`nextBStateThink`,
@@ -713,6 +761,23 @@ fn angle_delta(angle1: f32, angle2: f32) -> f32 {
     let a =
         (360.0f32 / 65536.0) * (((angle1 - angle2) * (65536.0f32 / 360.0)) as i32 & 65535) as f32;
     if a > 180.0 { a - 360.0 } else { a }
+}
+
+/// How far cgame turns the legs of an NPC facing `yaw` from it toward its
+/// `velocity` once they have caught up (`CG_PlayerLegsYawFromMovement`): to the
+/// velocity's yaw, within 60 degrees, the other way when it backs up
+/// (`PMF_BACKWARDS_RUN`); not at all when it stands still or moves more than 150
+/// degrees from where it faces.
+pub fn legs_offset(yaw: f32, velocity: Vec3, backwards: bool) -> f32 {
+    if velocity[0] == 0.0 && velocity[1] == 0.0 {
+        return 0.0;
+    }
+    let offset = -angle_delta(yaw, vectoangles(velocity)[1]);
+    if offset.abs() > 150.0 {
+        return 0.0;
+    }
+    let offset = offset.clamp(-60.0, 60.0);
+    if backwards { -offset } else { offset }
 }
 
 /// An entity that runs scripts (its `CSequencer` and `CTaskManager`): an NPC, with
@@ -1441,6 +1506,16 @@ impl<'a> Actor<'a> {
         } else if w.forward > 0 || w.right != 0 {
             w.backwards = false;
         }
+        let heading = (w.velocity, w.backwards);
+        if body
+            .velocity
+            .last()
+            .map_or(([0.0; 3], false), |v| (v.1, v.2))
+            != heading
+        {
+            body.velocity.push((level, heading.0, heading.1));
+        }
+        let w = &mut body.walk;
         let legs = match (w.forward != 0 || w.right != 0, w.backwards, w.walking) {
             (false, ..) => body.stance.legs,
             (true, false, true) => "BOTH_WALK1",
@@ -2565,6 +2640,7 @@ pub fn timelines(
                 ..Walk::default()
             },
             moves: Vec::new(),
+            velocity: Vec::new(),
         };
         actors.push(Actor::new(n.stance.name.as_deref(), Some(body), n.script));
     }
@@ -2683,6 +2759,7 @@ pub fn timelines(
                 unarmed: b.unarmed,
                 yaw: b.yaw,
                 moves: b.moves,
+                velocity: b.velocity,
             }
         })
         .collect();

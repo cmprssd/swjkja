@@ -126,6 +126,10 @@ pub struct Pose {
     /// Whether its class's bones are too odd for cgame to turn its spine against
     /// its "Motion" bone (`G_ClassHasBadBones`).
     pub bad_bones: bool,
+    /// Whether cgame keeps its legs facing where it faces as it moves: the gonk,
+    /// interrogator and sentry (`CG_G2PlayerAngles` turns every other class's
+    /// toward the move).
+    pub still_legs: bool,
     /// The way it faces as it begins (degrees: its spawner's yaw).
     pub yaw: f32,
     /// How fast it turns (`stats.yawSpeed`, [`crate::npc::NpcLook::yaw_speed`]).

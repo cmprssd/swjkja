@@ -1102,6 +1102,7 @@ fn turns_are_drawn_from_frame_to_frame_the_shorter_way_round() {
         unarmed: Vec::new(),
         yaw: vec![(1600, -170.0), (1650, 175.0)],
         moves: Vec::new(),
+        velocity: Vec::new(),
     };
     let slide = |start, from: f32, to: f32| Slide {
         start,
@@ -1114,6 +1115,50 @@ fn turns_are_drawn_from_frame_to_frame_the_shorter_way_round() {
     assert_eq!(
         t.turns(170.0),
         [slide(1550, 170.0, 190.0), slide(1600, 190.0, 175.0)]
+    );
+}
+
+#[test]
+fn legs_turn_toward_the_move_within_60_degrees() {
+    use swjkja_world::script::legs_offset;
+    // Facing 0, moving 30 left: the legs turn 30 left; 90 left, 60 at most.
+    let toward = |yaw: f32| [yaw.to_radians().cos(), yaw.to_radians().sin(), 0.0];
+    assert!((legs_offset(0.0, toward(30.0), false) - 30.0).abs() < 0.01);
+    assert_eq!(legs_offset(0.0, toward(90.0), false), 60.0);
+    assert_eq!(legs_offset(0.0, toward(-90.0), false), -60.0);
+    // Backing up and to the right: the other way.
+    assert!((legs_offset(0.0, toward(-30.0), true) - 30.0).abs() < 0.01);
+    // Straight back, or standing: not at all.
+    assert_eq!(legs_offset(0.0, toward(180.0), true), 0.0);
+    assert_eq!(legs_offset(0.0, [0.0, 0.0, -10.0], false), 0.0);
+}
+
+#[test]
+fn legs_are_drawn_toward_the_next_frames_move() {
+    let t = swjkja_world::script::Timeline {
+        legs: Vec::new(),
+        torso: Vec::new(),
+        look: Vec::new(),
+        more_light: Vec::new(),
+        unarmed: Vec::new(),
+        yaw: vec![(1600, 10.0)],
+        moves: Vec::new(),
+        // Moving along +y (90) from 1650, still from 1750.
+        velocity: vec![(1650, [0.0, 50.0, 0.0], false), (1750, [0.0; 3], false)],
+    };
+    let slide = |start, from: f32, to: f32| Slide {
+        start,
+        from: [0.0, from, 0.0],
+        to: [0.0, to, 0.0],
+        duration: 50,
+        linear: true,
+    };
+    // The frame at 1600 turns the view to 10 and is drawn with the next frame's
+    // move: the legs 60 on from it, the most they turn. The frame at 1700 is drawn
+    // with the stop that follows: back to the view.
+    assert_eq!(
+        t.legs_turns(0.0),
+        [slide(1550, 0.0, 70.0), slide(1650, 70.0, 10.0)]
     );
 }
 
