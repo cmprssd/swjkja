@@ -4,6 +4,22 @@
 //! mixer plays it for, which is when a script waiting on a voice line goes on
 //! (`G_CheckTasksCompleted`: the entity's voice no longer plays).
 
+/// The sound a script names `name` plays (`PlayIcarusSound`): lowercased, and as
+/// the original's default player, who is female (`sex` "f"), hears it
+/// (`G_AddSexToPlayerString`): a line under "jaden_male/" from "jaden_fmle/", else
+/// one whose file starts "mr_" from "ms_".
+pub fn as_played(name: &str) -> String {
+    let mut s = name.to_ascii_lowercase();
+    if let Some(at) = s.find("jaden_male/") {
+        s.replace_range(at..at + 10, "jaden_fmle");
+    } else if let Some(at) = s.rfind('/')
+        && s[at..].starts_with("/mr_")
+    {
+        s.replace_range(at + 2..at + 3, "s");
+    }
+    s
+}
+
 /// The files a sound named `name` is read from, in the order the original tries
 /// them (`S_LoadSound`): its name without extension, as a WAV, then as an MP3.
 pub fn files(name: &str) -> [String; 2] {
@@ -137,6 +153,22 @@ mod tests {
         b.extend((data as u32).to_le_bytes());
         b.extend(vec![0; data]);
         b
+    }
+
+    #[test]
+    fn the_player_is_heard_as_the_female_jaden() {
+        assert_eq!(
+            as_played("sound/chars/Jaden_Male/09jak002.mp3"),
+            "sound/chars/jaden_fmle/09jak002.mp3"
+        );
+        assert_eq!(
+            as_played("sound/chars/kyle/mr_kyk001.mp3"),
+            "sound/chars/kyle/ms_kyk001.mp3"
+        );
+        assert_eq!(
+            as_played("sound/chars/luke/09luk001.mp3"),
+            "sound/chars/luke/09luk001.mp3"
+        );
     }
 
     #[test]

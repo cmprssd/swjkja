@@ -130,6 +130,10 @@ pub struct Timeline {
     /// drops every bolted model, `G_RemoveWeaponModels`; another weapon brings one
     /// back): from when (ms, on the client's clock) and whether it is unarmed.
     pub unarmed: Vec<(i32, bool)>,
+    /// Each change of whether the NPC is invisible (`SET_INVISIBLE`, `EF_NODRAW`):
+    /// from when (ms, on the client's clock) and whether it is; one invisible as it
+    /// spawns begins with one from `i32::MIN`.
+    pub invisible: Vec<(i32, bool)>,
     /// Its yaw (`ps.viewangles`) after each level frame that turns it: the level
     /// time and the yaw (degrees, -180..180).
     pub yaw: Vec<(i32, f32)>,
@@ -153,6 +157,12 @@ impl Timeline {
     pub fn unarmed_at(&self, time: i32) -> bool {
         let after = self.unarmed.partition_point(|(start, _)| *start <= time);
         after.checked_sub(1).is_some_and(|i| self.unarmed[i].1)
+    }
+
+    /// Whether the NPC is invisible at `time`: not drawn, nor its shadow.
+    pub fn invisible_at(&self, time: i32) -> bool {
+        let after = self.invisible.partition_point(|(start, _)| *start <= time);
+        after.checked_sub(1).is_some_and(|i| self.invisible[i].1)
     }
 
     /// Its turns, for an NPC that begins facing `yaw`, as cgame draws them: from
@@ -471,6 +481,10 @@ struct Body<'a> {
     look: Vec<(i32, Option<String>)>,
     more_light: Vec<(i32, bool)>,
     unarmed: Vec<(i32, bool)>,
+    invisible: Vec<(i32, bool)>,
+    /// Whether other NPCs' moves meet it (`contents` with `CONTENTS_BODY`): not
+    /// for `SFB_NOTSOLID`, nor once `SET_INVISIBLE` or `SET_SOLID false` clears it.
+    solid: bool,
     /// `client->idleTime`.
     idle_time: i32,
     /// The task each slot (the animations', the turn's, the navgoal's) waits on,
@@ -2113,6 +2127,26 @@ impl<'a> Actor<'a> {
                 }
                 false
             }
+            "SET_INVISIBLE" => {
+                // Q3_SetInvisible: anything but "true" shows it; hiding it clears
+                // its contents, showing it leaves them.
+                let on = text.eq_ignore_ascii_case("true");
+                let body = self.body.as_mut().unwrap();
+                if body.invisible.last().map(|(_, i)| *i).unwrap_or(false) != on {
+                    body.invisible.push((client_time(level), on));
+                }
+                if on {
+                    body.solid = false;
+                }
+                false
+            }
+            "SET_SOLID" => {
+                // Q3_SetSolid: "true" gives it CONTENTS_BODY (a spot it would
+                // telefrag waits for a solidifier: left out), else CONTENTS_CORPSE
+                // or none, which moves do not meet.
+                self.body.as_mut().unwrap().solid = text.eq_ignore_ascii_case("true");
+                false
+            }
             "SET_DYAW" | "SET_DPITCH" => {
                 let angle = atof(&text);
                 let body = self.body.as_mut().unwrap();
@@ -2836,7 +2870,8 @@ impl<'a> World<'a> {
                         let pending = if b.id == id::SOUND {
                             let (channel, name) = (text(b, 0), text(b, 1));
                             voice_channel(channel) && {
-                                let length = (self.voice)(name).unwrap_or(0);
+                                let length =
+                                    (self.voice)(&crate::sound::as_played(name)).unwrap_or(0);
                                 let a = &mut self.actors[i];
                                 if let Some((old, _)) =
                                     a.voice.replace((task, level + VOICE_LAG + length))
@@ -3021,10 +3056,7 @@ impl<'a> World<'a> {
             let bodies: Vec<Obstacle> = (self.runners..self.actors.len())
                 .filter(|&j| j != i)
                 .filter_map(|j| {
-                    let b = self.actors[j]
-                        .body
-                        .as_ref()
-                        .filter(|b| !b.stance.not_solid)?;
+                    let b = self.actors[j].body.as_ref().filter(|b| b.solid)?;
                     let at = b.walk.origin;
                     Some(Obstacle {
                         actor: j,
@@ -3123,6 +3155,12 @@ pub fn timelines(
             look: Vec::new(),
             more_light: Vec::new(),
             unarmed: Vec::new(),
+            invisible: if n.stance.invisible {
+                vec![(i32::MIN, true)]
+            } else {
+                Vec::new()
+            },
+            solid: !n.stance.not_solid,
             idle_time: n.stance.still_since,
             slots: [None; 5],
             // Its first movement frame keeps the view in 65536ths of a turn
@@ -3254,6 +3292,7 @@ pub fn timelines(
                 look: b.look,
                 more_light: b.more_light,
                 unarmed: b.unarmed,
+                invisible: b.invisible,
                 yaw: b.yaw,
                 moves: b.moves,
                 velocity: b.velocity,

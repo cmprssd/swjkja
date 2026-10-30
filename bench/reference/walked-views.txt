@@ -6,3 +6,6 @@ academy3  academy3_luke_walked    -1180 -1440 780   10 175 0   21000   64
 yavin2    yavin2_intro_walked     2650 -5450 150   12 165 0   30000   64
 # academy4_luke_walked: once Luke has reached lukenav1.
 academy4  academy4_luke_walked    -1180 -1150 780   10 185 0   76000   64
+# academy2_students_walked: once jedi3 to jedi6 have reached their navgoals by the
+# north stairs.
+academy2  academy2_students_walked    -1460 -700 760    5 90 0   80000   64

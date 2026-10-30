@@ -1490,3 +1490,41 @@ and drawing such pipes some other way, would match no view held still.
   original's voice lines play in real time, so its clock late in an intro drifts
   from capture to capture (2026-10-27). Our goal is set where the second capture
   sets it.
+
+## 2026-10-30: Invisible NPCs run their scripts, and the player is the female Jaden (decided by Claude, pending review)
+
+- **Traced scene: academy2's intro** (`WALK=1`, three captures: to 66,000 ms, to
+  80,000 ms, and once more to 80,000 with the original's signals logged), whose six
+  students walk to their navgoals, jedi3 to jedi6 800 units to the north stairs.
+  Before this, each walked the trace's path a frame or more late, and jedi4 and jedi6
+  were never moved to their tags: they stalled short of the stairs.
+- **An NPC whose spawnscript makes it invisible is kept, hidden** (`SET_INVISIBLE`,
+  `EF_NODRAW`: neither it nor its shadow drawn), and its script runs. It had been
+  left out, so nothing received the signals its script waits on: academy2's
+  `npc_luke2` waits on "newluke" and "luke2 line 6", then moves jedi4 and jedi6 to
+  movejedi4here and movejedi6here (77,450 in the original) and later walks Luke to
+  lukeNav1. It is shown when a script says so (`SET_INVISIBLE false`); hiding it
+  clears its contents, so other NPCs' moves no longer meet it, and so does
+  `SET_SOLID false` (`Q3_SetSolid`: `CONTENTS_CORPSE` or none; `true` gives
+  `CONTENTS_BODY` back; the solidifier that waits for a clear spot is left out).
+- **Found with a new log of the original's signals** ("swjkja signal", sent and
+  received with their level time, `d_npcfreeze 3`; the patch logs them in
+  `CIcarus::Signal` and `ClearSignal`): ours and the original's intros send the same
+  signals in the same order, but two of ours came 450 ms late, both after Jaden's
+  lines. **The player's lines are the female Jaden's**: a script's sound is
+  lowercased and, the `sex` cvar being "f" (its default, and the captures'
+  config's), "jaden_male/" read from "jaden_fmle/", else a file starting "mr_" from
+  "ms_" (`PlayIcarusSound`, `G_AddSexToPlayerString`). Those lines are shorter.
+  A choice of the male Jaden would be a setting; none is modelled.
+- **All six walk every traced frame that moves one** (529, to four decimals) with no
+  offset on the 66,000 ms capture's clock (`a2-walk`). The two 80,000 ms captures
+  have the same frames 100 and 150 ms later: the original's voice lines play in real
+  time (2026-10-27), and its drift grows to 200 and 250 ms by the teleport.
+  Checked in a scratch run with Kyle's third line 100 ms longer, so the teleport
+  lands on the same walk frame as in the second capture: jedi4 then walks every
+  traced frame after it too. jedi6 does not: its tag drops it 25 units from jedi4,
+  their boxes overlapping, and the original's next `Pmove` starts inside jedi4's box
+  (other NPCs in `Pmove`'s traces are still left out, 2026-10-30).
+- Views: academy2_students_walking (66,000 ms) and academy2_students_walked
+  (80,000 ms) look north up the classroom; `npc_luke2` now stands where the
+  reference has him.

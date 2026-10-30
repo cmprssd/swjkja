@@ -307,6 +307,30 @@ fn a_loop_of_none_runs_once() {
 }
 
 #[test]
+fn a_script_hides_and_shows_its_npc() {
+    // Invisible as it spawns (its first pass hides it again: no change), shown
+    // after a 1000 ms wait by anything but "true".
+    let script = vec![
+        set("SET_INVISIBLE", "true"),
+        command(id::WAIT, vec![float(1000.0)]),
+        set("SET_INVISIBLE", "false"),
+    ];
+    let hidden = Pose {
+        invisible: true,
+        ..stance("BOTH_STAND1", "BOTH_STAND1")
+    };
+    let t = timeline(&hidden, Some(&script), &holds);
+    assert_eq!(t.invisible, [(i32::MIN, true), (2550, false)]);
+    assert!(t.invisible_at(0));
+    assert!(t.invisible_at(2549));
+    assert!(!t.invisible_at(2550));
+    // Without a script, as it spawns.
+    assert!(timeline(&hidden, None, &holds).invisible_at(12345));
+    let t = timeline(&stance("BOTH_STAND1", "BOTH_STAND1"), None, &holds);
+    assert!(!t.invisible_at(12345));
+}
+
+#[test]
 fn a_script_draws_its_npc_with_more_light() {
     // Set in the first pass, set again (no change), then cleared by anything but
     // "true" after a 1000 ms wait.
@@ -1100,6 +1124,7 @@ fn turns_are_drawn_from_frame_to_frame_the_shorter_way_round() {
         look: Vec::new(),
         more_light: Vec::new(),
         unarmed: Vec::new(),
+        invisible: Vec::new(),
         yaw: vec![(1600, -170.0), (1650, 175.0)],
         moves: Vec::new(),
         velocity: Vec::new(),
@@ -1141,6 +1166,7 @@ fn legs_are_drawn_toward_the_next_frames_move() {
         look: Vec::new(),
         more_light: Vec::new(),
         unarmed: Vec::new(),
+        invisible: Vec::new(),
         yaw: vec![(1600, 10.0)],
         moves: Vec::new(),
         // Moving along +y (90) from 1650, still from 1750.

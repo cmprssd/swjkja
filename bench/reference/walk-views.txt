@@ -21,3 +21,8 @@ yavin2    yavin2_intro_walking    2650 -5450 150   12 165 0   19500   64
 # (npc_luke1) to lukenav1 from putlukehere, where it puts him (SET_ORIGIN,
 # SET_ANGLES: a unit above the floor, facing 135).
 academy4  academy4_luke_walking   -1180 -1150 780   10 185 0   70000   64
+# academy2_students_walking looks north up the classroom as academy2's intro walks
+# its six students (npc_jedi1 to npc_jedi6, SET_WALKING) to their navgoals, jedi3 to
+# jedi6 800 units off by the north stairs, and Kyle (npc_kyle1) from movekylehere to
+# kyleNav1.
+academy2  academy2_students_walking   -1460 -1250 760   5 90 0   66000   64
