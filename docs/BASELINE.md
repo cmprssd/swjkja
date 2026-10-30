@@ -2524,3 +2524,28 @@ DECISIONS.md, 2026-10-30). Two views (`bench/reference/walk-views.txt`,
 - The 61 other views render byte for byte as #117's renders. Main's academy4 views
   were rendered by main's build in its own worktree and target folder (the two
   binaries differ). Rendered offscreen on Windows.
+
+## Invisible NPCs and the female Jaden, 2026-10-30
+
+academy2's intro walks its six students to their navgoals, four of them 800 units to
+the north stairs. On main they walk 150 ms behind the original (Jaden's lines read
+from "jaden_male/", longer than the "jaden_fmle/" the original plays) and jedi4 and
+jedi6 never jump to their tags, the invisible Luke whose script moves them being
+left out. Now all six walk every traced frame that moves one (529, to four
+decimals) on the walking capture's clock with no offset
+(`academy2s_students_walk_to_the_stairs_as_in_the_original`; DECISIONS.md,
+2026-10-30). Two views (`bench/reference/walk-views.txt`, `walked-views.txt`) look
+north up the classroom at 66,000 and 80,000 ms.
+
+| View | This PR | Main |
+|------|------|------|
+| academy2_students_walking | 0.46 (0.9%) | 1.32 (1.9%) |
+| academy2_students_walked | 0.03 (0.1%) | 0.18 (0.5%) |
+
+- What is left in the walking view: the walkers' legs a little out of step, and a
+  student at the left edge posed differently. In the walked view, jedi6, whose walk
+  after its teleport is not matched (DECISIONS.md), stands close to where the
+  original has it.
+- The 63 other views render byte for byte as #118's renders. Main's views were
+  rendered by main's build in its own worktree and target folder (the two binaries
+  differ). Rendered offscreen on Windows.

@@ -28,7 +28,7 @@ Retail-data tests read the install above; if the drive is unplugged `.local-ci` 
 
 ## Rules
 
-- **Windows on the owner's desktop need a go-ahead.** The viewer, benchmarks and reference captures open game windows; `bench/lib.sh`'s `require_idle` refuses while the PC was used in the last 120 s. Batch GUI runs, say how long they take, and set `SWJKJA_ALLOW_WINDOW=1` only after the owner agrees to a run now.
+- **Windows on the owner's desktop:** reference captures (`bench/capture-reference.sh`) run without asking: say that one is running and how long it takes. The viewer and benchmarks still need a go-ahead. `bench/lib.sh`'s `require_idle` refuses while the PC was used in the last 120 s; set `SWJKJA_ALLOW_WINDOW=1` for a capture, or for another window once the owner agrees to a run now.
 - **Matching the original is measured**: a slice is done when its reference view matches (the score is in the PR) and, for speed work, when BASELINE.md shows it beats the original on the same scene.
 - **A/B builds in worktrees:** `scripts/cargo-msvc.sh` builds the main checkout's target, and a stale shared target can reuse old crates. Give the worktree its own `CARGO_TARGET_DIR` and `cmp` the binaries before timing.
 - `.gitignore` is a whitelist, so game data never gets committed: a new kind of file is ignored until you add it there deliberately (the committed-tree check in `.local-ci` catches a missed one).

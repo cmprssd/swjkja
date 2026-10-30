@@ -30,3 +30,4 @@ d462964  Walks as fast as their NPC moves
 480bb18  Legs turn toward the move
 d2a38ca  Voice lines as the original counts them
 f6887d0  NPCs keep their paths and take stairs
+f905f64  Scripts put NPCs at tags

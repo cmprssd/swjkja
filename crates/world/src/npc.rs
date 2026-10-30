@@ -1260,7 +1260,8 @@ fn stance(class: &str, weapon_number: usize, dual_pistols: bool) -> (&'static st
 ///
 /// `scripts` reads a spawnscript by name (`scripts/<name>.IBI`). Its first pass
 /// ([`first_pass`]) may put the NPC's weapon away (nothing bolted to it, and the
-/// unarmed stance) or make it invisible (left out); the NPC keeps the script, which
+/// unarmed stance) or make it invisible (not drawn until a script shows it); the
+/// NPC keeps the script, which
 /// [`crate::script::timeline`] runs.
 pub fn npc_models(
     entities: &[Entity],
@@ -1291,9 +1292,6 @@ pub fn npc_models(
             let first = script
                 .as_deref()
                 .map_or_else(FirstPass::default, |s| first_pass(s));
-            if first.invisible {
-                return None;
-            }
             if first.unarmed {
                 (pose.legs, pose.torso) = stance(&look.class, 0, false);
                 pose.unarmed = true;
@@ -1319,6 +1317,7 @@ pub fn npc_models(
                 walk_speed: look.walk_speed,
                 run_speed: look.run_speed,
                 not_solid: n.flags & 64 != 0,
+                invisible: first.invisible,
                 number: n.number,
                 eyes: [
                     at[0],

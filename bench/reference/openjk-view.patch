@@ -301,10 +301,24 @@ index d1c794e..3feb12a 100644
  		{//If we were following a roff, we don't do normal pmoves.
  			//FIXME: firing angles (no aim offset) or regular angles?
 diff --git a/code/game/Q3_Interface.cpp b/code/game/Q3_Interface.cpp
-index eb344d2..b2f6336 100644
+index eb344d2..bc57748 100644
 --- a/code/game/Q3_Interface.cpp
 +++ b/code/game/Q3_Interface.cpp
-@@ -9754,6 +9754,12 @@ void	CQuake3GameInterface::Remove( int entID, const char *name )
+@@ -9751,9 +9751,26 @@ void	CQuake3GameInterface::Remove( int entID, const char *name )
+ 	}
+ }
+ 
++// swjkja reference capture: with d_npcfreeze 3, each signal a script sends or
++// receives is logged ("swjkja signal") at its level time.
++extern cvar_t *debugNPCFreeze;
++void SwjkjaLogSignal( const char *what, const char *identifier )
++{
++	if ( debugNPCFreeze && debugNPCFreeze->integer == 3 )
++	{
++		gi.Printf( "swjkja signal %s %d %s\n", what, level.time, identifier );
++	}
++}
++
  // Get a random (float) number.
  float	CQuake3GameInterface::Random( float min, float max )
  {
@@ -400,6 +414,31 @@ index a349d4f..2368b69 100644
  
  	//ResetTeamCounters();
  	NAV::DecayDangerSenses();
+diff --git a/code/icarus/IcarusImplementation.cpp b/code/icarus/IcarusImplementation.cpp
+index ba17235..6ffedef 100644
+--- a/code/icarus/IcarusImplementation.cpp
++++ b/code/icarus/IcarusImplementation.cpp
+@@ -141,8 +141,12 @@ void CIcarus::Delete( void )
+ #endif
+ }
+ 
++// swjkja reference capture: logs each signal sent and received (Q3_Interface.cpp).
++void SwjkjaLogSignal( const char *what, const char *identifier );
++
+ void CIcarus::Signal( const char *identifier )
+ {
++	SwjkjaLogSignal( "send", identifier );
+ 	m_signals[ identifier ] = 1;
+ }
+ 
+@@ -160,6 +164,7 @@ bool CIcarus::CheckSignal( const char *identifier )
+ 
+ void CIcarus::ClearSignal( const char *identifier )
+ {
++	SwjkjaLogSignal( "recv", identifier );
+ 	m_signals.erase( identifier );
+ }
+ 
 diff --git a/code/rd-vanilla/tr_WorldEffects.cpp b/code/rd-vanilla/tr_WorldEffects.cpp
 index 5464b70..d46b7cf 100644
 --- a/code/rd-vanilla/tr_WorldEffects.cpp

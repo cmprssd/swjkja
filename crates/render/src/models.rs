@@ -683,6 +683,15 @@ impl StaticModels {
             .is_some_and(|rig| rig.timeline.more_light_at(time))
     }
 
+    /// Whether instance `n` is an NPC its script has made invisible at `time`
+    /// (`SET_INVISIBLE`: `EF_NODRAW`, which cgame neither draws nor shadows).
+    pub fn invisible(&self, n: usize, time: i32) -> bool {
+        self.instances[n]
+            .rig
+            .as_ref()
+            .is_some_and(|rig| rig.timeline.invisible_at(time))
+    }
+
     /// Whether piece `piece` of instance `n` is drawn at `time`: not a bolted
     /// model's once the NPC's script has put its weapon away (`SET_WEAPON
     /// WP_NONE`: `G_RemoveWeaponModels`).
@@ -778,6 +787,9 @@ impl StaticModels {
     /// adds). `bones` is its [`StaticModels::bones`] at `time` if already posed.
     /// `None` for a model that is not an NPC.
     pub fn shadow(&self, n: usize, time: i32, bones: Option<&[Mat34]>) -> Option<(Vec3, f32)> {
+        if self.invisible(n, time) {
+            return None;
+        }
         let m = &self.instances[n];
         let rig = m.rig.as_ref()?;
         let yaw = slid(&m.motion.turns, time)
@@ -826,6 +838,9 @@ impl StaticModels {
         vis: &WorldVis,
         ms: i32,
     ) -> Option<usize> {
+        if self.invisible(n, ms) {
+            return None;
+        }
         let m = &self.instances[n];
         let moved = m.moved(ms);
         let origin = m.origin_at(ms);
@@ -1676,6 +1691,7 @@ mod tests {
             look: Vec::new(),
             more_light: Vec::new(),
             unarmed: Vec::new(),
+            invisible: Vec::new(),
             yaw: Vec::new(),
             moves: Vec::new(),
             velocity: Vec::new(),
@@ -1698,6 +1714,7 @@ mod tests {
             look: Vec::new(),
             more_light: Vec::new(),
             unarmed: Vec::new(),
+            invisible: Vec::new(),
             yaw: Vec::new(),
             moves: Vec::new(),
             velocity: Vec::new(),
@@ -1716,6 +1733,7 @@ mod tests {
             look: Vec::new(),
             more_light: Vec::new(),
             unarmed: Vec::new(),
+            invisible: Vec::new(),
             yaw: Vec::new(),
             moves: Vec::new(),
             velocity: Vec::new(),

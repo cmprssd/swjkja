@@ -150,6 +150,9 @@ pub struct Pose {
     pub unarmed: bool,
     /// Whether nothing meets it (its spawner's `SFB_NOTSOLID`, 64: contents 0).
     pub not_solid: bool,
+    /// Whether its spawnscript's first pass makes it invisible (`SET_INVISIBLE`,
+    /// `EF_NODRAW`): not drawn until a script shows it.
+    pub invisible: bool,
     /// Its entity number ([`crate::entity_number`]), which orders its updates.
     pub number: i32,
     /// Where a script's view target is measured from or to (`SET_VIEWTARGET`):
