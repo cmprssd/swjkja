@@ -2505,3 +2505,22 @@ trace has them a frame later
   arithmetic; both score as before (0.00 and 0.01). The 57 others render byte for
   byte as #116's renders. Main's yavin2 views were rendered by main's build in its
   own worktree and target folder. Rendered offscreen on Windows.
+
+## Teleports, 2026-10-30
+
+academy4's intro puts Luke (`npc_luke1`) at putlukehere (`SET_ORIGIN`, `SET_ANGLES`)
+before walking him to lukenav1, 120 units off. On main he walks from where he stood,
+on the stage, so he ends on the stairs; now he starts at the tag, drops the unit to
+the floor and walks every traced frame (44, to four decimals) as the original's
+second capture has them (`academy4s_luke_walks_from_where_the_intro_puts_him`;
+DECISIONS.md, 2026-10-30). Two views (`bench/reference/walk-views.txt`,
+`walked-views.txt`) look west across the stage at 70,000 and 76,000 ms.
+
+| View | Teleports | Main |
+|------|------|------|
+| academy4_luke_walking | 0.01 (0.0%) | 1.11 (1.3%) |
+| academy4_luke_walked | 0.01 (0.0%) | 0.35 (0.4%) |
+
+- The 61 other views render byte for byte as #117's renders. Main's academy4 views
+  were rendered by main's build in its own worktree and target folder (the two
+  binaries differ). Rendered offscreen on Windows.

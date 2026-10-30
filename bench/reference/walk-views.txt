@@ -17,3 +17,7 @@ t1_sour   t1_sour_intro_walking   6359 -2708 70   5 162 0   3500   64
 # units off and down the stairs into the garden: Kyle has crossed it, Rosh is
 # halfway down the stairs.
 yavin2    yavin2_intro_walking    2650 -5450 150   12 165 0   19500   64
+# academy4_luke_walking looks west across the stage as academy4's intro walks Luke
+# (npc_luke1) to lukenav1 from putlukehere, where it puts him (SET_ORIGIN,
+# SET_ANGLES: a unit above the floor, facing 135).
+academy4  academy4_luke_walking   -1180 -1150 780   10 185 0   70000   64

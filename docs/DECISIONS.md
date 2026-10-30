@@ -1467,3 +1467,26 @@ and drawing such pipes some other way, would match no view held still.
 - **Every traced frame of both walkers matches** (Kyle 100, Rosh 96, to four
   decimals), a frame later than the original: Kyle's navgoal is set a frame later
   here, when the voice line before it ends (that line's end is not traced).
+
+## 2026-10-30: Scripts put NPCs at tags (decided by Claude, pending review)
+
+- **`SET_ORIGIN` puts an NPC there at once** (`Q3_Set`'s `G_SetOrigin`, not
+  `Q3_SetOrigin`'s teleport: no extra unit up, no knockback time, its velocity kept),
+  its nearest nav point forgotten; it is then on nothing until its next movement
+  frame finds the ground (`PM_GroundTrace`), so a tag above the floor drops it there.
+  academy4's "putlukehere" is a unit up: Luke stands at 673 the frame the script
+  runs, at 672.125 the next. Such a frame is no longer skipped as one where nothing
+  changes. This replaces part of 2026-10-16's "Moves are left out".
+- **`SET_ANGLES` sets the view at once** (`SetClientViewAngle`, kept in 65536ths of
+  a turn as the next command keeps it) and turns to its yaw (`Q3_SetDYaw`); its task
+  completes at once.
+- **A tag in a `set` gives its origin or angles** (ICARUS' `GetTag`, the kind as a
+  float member: 54 `TYPE_ORIGIN`, 53 `TYPE_ANGLES`); a tag's angles are its own, or
+  for a `ref_tag` with a "target" those toward that entity (`ref_link`). A vector
+  value is read too. Tags with an owner are still not kept.
+- **academy4's Luke now walks every traced frame** (44, to four decimals) from where
+  the intro puts him, on the clock of the scene's second capture (`a4-walked`), with
+  no offset; the first capture (`a4-walk`) logs the same positions 100 ms later: the
+  original's voice lines play in real time, so its clock late in an intro drifts
+  from capture to capture (2026-10-27). Our goal is set where the second capture
+  sets it.

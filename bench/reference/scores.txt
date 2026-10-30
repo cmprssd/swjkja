@@ -1,4 +1,4 @@
-# measured 2026-10-30 at PR #117
+# measured 2026-10-30 at PR #118
 # Every reference view's score: compare.py's output (reference-shots against a render of
 # all of them), updated by the PR that renders them all; scripts/progress.py reads it.
 view             mean diff  >16 off  undrawn
@@ -8,6 +8,8 @@ academy3_luke_walked      0.01     0.0%     0.0%
 academy3_luke_walking      0.07     0.1%     0.0%
 academy4_class        0.06     0.1%     0.1%
 academy4_jaden_turned      0.03     0.0%     0.2%
+academy4_luke_walked      0.01     0.0%     0.0%
+academy4_luke_walking      0.01     0.0%     0.0%
 academy6_class        0.09     0.1%     0.1%
 bounty_bomb           0.00     0.0%     0.0%
 ctf1_fog_above        0.00     0.0%     1.2%

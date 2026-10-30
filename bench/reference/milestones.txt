@@ -29,3 +29,4 @@ a037837  Specular, environment maps and rack goods as the original's
 d462964  Walks as fast as their NPC moves
 480bb18  Legs turn toward the move
 d2a38ca  Voice lines as the original counts them
+f6887d0  NPCs keep their paths and take stairs

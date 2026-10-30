@@ -1305,6 +1305,58 @@ fn a_navgoal_out_of_reach_or_cleared_moves_no_one() {
     assert_eq!(cin(&t), Some(1550));
 }
 
+/// `set(name, tag(tag, kind))` as the compiler writes it: the marker, the tag's
+/// name, and what of it (`TYPE_ANGLES` 53, `TYPE_ORIGIN` 54) as a float.
+fn set_tag(name: &str, tag: &str, kind: f32) -> Node {
+    let marker = Member {
+        id: id::TAG,
+        data: Vec::new(),
+    };
+    command(id::SET, vec![text(name), marker, text(tag), float(kind)])
+}
+
+#[test]
+fn a_script_puts_its_npc_at_a_tag() {
+    // academy4's "putlukehere": a tag a unit above the floor, here 100 units
+    // south-east of Luke, facing 135.
+    let mut level = navgoals();
+    level
+        .tags
+        .insert("putlukehere".to_owned(), [-1300.0, -1400.0, 745.125]);
+    level
+        .tag_angles
+        .insert("putlukehere".to_owned(), [0.0, 135.0, 0.0]);
+    let script = vec![
+        wait(1000.0),
+        set_tag("SET_ORIGIN", "putLukeHere", 54.0),
+        set_tag("SET_ANGLES", "putLukeHere", 53.0),
+        hold_forever(),
+    ];
+    let pose = walker();
+    let npc = Npc {
+        stance: &pose,
+        script: Some(&script),
+        holds: &holds,
+    };
+    let t = timelines(&[npc], &level, &|_| None).npcs.remove(0);
+    let at: Vec<_> = t
+        .moves
+        .iter()
+        .map(|(l, o)| (*l, [0, 1, 2].map(|k| pose.origin[k] + o[k])))
+        .collect();
+    // At the tag the frame the script runs (G_SetOrigin), on the floor the next
+    // (PM_GroundTrace finds nothing under him: he falls), facing 135 at once
+    // (SetClientViewAngle) and turning nowhere else (Q3_SetDYaw).
+    assert_eq!(
+        at,
+        [
+            (2600, [-1300.0, -1400.0, 745.125]),
+            (2650, [-1300.0, -1400.0, 744.125])
+        ]
+    );
+    assert_eq!(t.yaw, [(2600, 135.0)]);
+}
+
 #[test]
 fn walking_npcs_walk_or_run_their_legs_forward_or_back() {
     // Luke backs off toward lukeNav1 at first (forwardmove < 0: PMF_BACKWARDS_RUN),
