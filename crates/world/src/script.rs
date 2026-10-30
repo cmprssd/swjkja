@@ -29,7 +29,8 @@
 //! completing on the mover's first turn there, and turn as `rotate` turns them
 //! (`Lerp2Angles`), its task completing as the turn's time runs out. An NPC walks to
 //! the navgoal a script sets (`SET_NAVGOAL`), its AI running until it gets there
-//! ([`Walk`]). Other commands that move an NPC (`SET_ORIGIN`, ...) are left out
+//! ([`Walk`]), and stands where `SET_ORIGIN` puts it (a tag's origin or a point),
+//! facing as `SET_ANGLES` turns it. Other commands that move an NPC are left out
 //! (those that complete later never do, as with the AI frozen), and so are cameras
 //! (but when one is first enabled)
 //! and the other commands. A random number is its range's low end
@@ -373,6 +374,26 @@ impl Value {
             Value::Float(f) => Some(*f),
             Value::Text(_) => None,
         }
+    }
+}
+
+/// The vector `set` command `b` gives (ICARUS' `GetTag` for a tag's origin or
+/// angles, as `Set` prints it: `%f`, six decimals, round-tripping these), if any.
+fn vector(b: &Block, map: &Level) -> Option<Vec3> {
+    let float = |n: usize| b.members.get(n).and_then(Member::float).unwrap_or(0.0);
+    match b.members.get(1)?.id {
+        id::TAG => {
+            let name = text(b, 2).to_ascii_lowercase();
+            // TYPE_ORIGIN, TYPE_ANGLES.
+            let tags = match b.members.get(3)?.float()? as i32 {
+                54 => &map.tags,
+                53 => &map.tag_angles,
+                _ => return None,
+            };
+            tags.get(&name).copied()
+        }
+        id::VECTOR => Some([float(2), float(3), float(4)]),
+        _ => None,
     }
 }
 
@@ -1068,6 +1089,30 @@ impl<'a> Body<'a> {
             self.yaw.push((level, self.view[1]));
         }
         exact
+    }
+
+    /// `SET_ORIGIN` in level frame `level` (`G_SetOrigin`): it stands at `to` at
+    /// once, its velocity kept, its nearest nav point forgotten; its next movement
+    /// frame finds the ground again (`PM_GroundTrace`: a tag above the floor drops
+    /// it there).
+    fn set_origin(&mut self, to: Vec3, level: i32) {
+        let w = &mut self.walk;
+        w.origin = to;
+        w.waypoint = None;
+        w.on_ground = false;
+        self.moves.push((level, sub(to, self.stance.origin)));
+    }
+
+    /// `Q3_SetAngles` in level frame `level`: its view takes `angles` at once
+    /// (`SetClientViewAngle`, kept in 65536ths of a turn from the next command) and
+    /// it turns to their yaw (`Q3_SetDYaw`).
+    fn set_angles(&mut self, angles: Vec3, level: i32) {
+        let yaw = self.view[1];
+        self.view = [short_angle(angles[0]), short_angle(angles[1])];
+        if self.view[1] != yaw {
+            self.yaw.push((level, self.view[1]));
+        }
+        self.set_yaw(angles[1]);
     }
 
     /// `Q3_SetDYaw` (no NPC here has an enemy).
@@ -2312,7 +2357,8 @@ impl<'a> Actor<'a> {
 
     /// The first level frame after `level` at which something of its own can
     /// change, if any: a timer running out, a timed wait ending, a voice line
-    /// playing out, or the idle starting.
+    /// playing out, the idle starting, or a move (the next frame, while it walks,
+    /// moves or stands on nothing).
     fn next_event(&self, level: i32) -> Option<i32> {
         let frame_from = |t: i32| level + ((t - level).max(1) + FRAME_MS - 1) / FRAME_MS * FRAME_MS;
         let mut next: Option<i32> = None;
@@ -2343,7 +2389,8 @@ impl<'a> Actor<'a> {
         if body.slots[FACE].is_some() || !body.exact() {
             at(level + FRAME_MS);
         }
-        if body.slots[NAV].is_some() || body.walk.velocity != [0.0; 3] {
+        let w = &body.walk;
+        if body.slots[NAV].is_some() || w.velocity != [0.0; 3] || !w.on_ground {
             at(level + FRAME_MS);
         }
         for p in &body.parts {
@@ -2445,6 +2492,9 @@ pub struct Level {
     /// The radius of each tag (`TAG_GetRadius`): 16 for a `ref_tag`, a navgoal's
     /// "radius" (12 without one).
     pub radii: HashMap<String, f32>,
+    /// The angles of each tag (`TAG_GetAngles`): its own, or for a `ref_tag` with a
+    /// "target" those toward the first entity of that name (`ref_link`).
+    pub tag_angles: HashMap<String, Vec3>,
     /// The brushes NPCs walk among; the caller fills them.
     pub collision: Collision,
     /// The nav graph NPCs find their way by ([`Graph::build`]), if the caller
@@ -2571,13 +2621,22 @@ impl Level {
         // number.
         let mut tags = HashMap::new();
         let mut radii = HashMap::new();
+        let mut tag_angles = HashMap::new();
         for e in entities {
             let navgoal = class(e, "waypoint_navgoal");
             if (navgoal || class(e, "ref_tag"))
                 && e.get("ownername").is_none()
                 && let Some(name) = e.get("targetname")
             {
-                let (mut origin, _) = crate::static_model::origin_and_angles(e);
+                let (mut origin, mut angles) = crate::static_model::origin_and_angles(e);
+                let aimed = e
+                    .get("target")
+                    .filter(|_| !navgoal)
+                    .and_then(|t| entities.iter().find(|o| o.get("targetname") == Some(t)));
+                if let Some(target) = aimed {
+                    let to = crate::static_model::origin_and_angles(target).0;
+                    angles = vectoangles(normalized(sub(to, origin)));
+                }
                 let mut radius = 16.0;
                 if navgoal {
                     origin[2] += 0.125;
@@ -2589,7 +2648,8 @@ impl Level {
                 let name = name.to_ascii_lowercase();
                 if !tags.contains_key(&name) {
                     tags.insert(name.clone(), origin);
-                    radii.insert(name, radius);
+                    radii.insert(name.clone(), radius);
+                    tag_angles.insert(name, angles);
                 }
             }
         }
@@ -2599,6 +2659,7 @@ impl Level {
             runs,
             tags,
             radii,
+            tag_angles,
             collision: Collision::default(),
             nav: None,
             movers: Vec::new(),
@@ -2791,6 +2852,17 @@ impl<'a> World<'a> {
                                 let name = v.as_ref().map(Value::text).unwrap_or_default();
                                 let eyes = self.eyes_of(&name);
                                 self.actors[i].view_target(eyes, task)
+                            } else if matches!(text(b, 0), "SET_ORIGIN" | "SET_ANGLES")
+                                && let Some(to) = vector(b, self.level)
+                            {
+                                if let Some(body) = &mut self.actors[i].body {
+                                    if text(b, 0) == "SET_ORIGIN" {
+                                        body.set_origin(to, level);
+                                    } else {
+                                        body.set_angles(to, level);
+                                    }
+                                }
+                                false
                             } else {
                                 let map = self.level;
                                 self.actors[i].set(text(b, 0), v.as_ref(), task, level, map)

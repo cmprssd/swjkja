@@ -1467,6 +1467,88 @@ fn yavin2s_intro_walkers_walk_down_the_stairs_as_in_the_original() {
     );
 }
 
+/// academy4's intro puts Luke at putlukehere (`SET_ORIGIN`, `SET_ANGLES`: a unit
+/// above the floor, which he drops to, facing 135), then walks him to lukenav1, 120
+/// units off, as the original does, every traced frame: on the walked capture's
+/// clock (the other capture of the scene has him 100 ms later, the original's voice
+/// lines playing in real time).
+#[test]
+#[allow(clippy::excessive_precision)]
+fn academy4s_luke_walks_from_where_the_intro_puts_him() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let names = ["npc_luke1"];
+    // The traced positions as the trace logs them, from where he stands to walk
+    // (a4-walked-npcs.txt).
+    let traced = [
+        (0, 64750, [-1426.6248, -1106.4729, 672.1250]),
+        (0, 64800, [-1427.3063, -1104.8069, 672.1250]),
+        (0, 64850, [-1428.0446, -1103.0021, 672.1250]),
+        (0, 64900, [-1428.8397, -1101.0585, 672.1250]),
+        (0, 64950, [-1429.6803, -1099.0038, 672.1250]),
+        (0, 65000, [-1430.5663, -1096.8380, 672.1250]),
+        (0, 65050, [-1431.5090, -1094.5334, 672.1250]),
+        (0, 65100, [-1432.5087, -1092.0900, 672.1250]),
+        (0, 65150, [-1433.5499, -1089.5447, 672.1250]),
+        (0, 65200, [-1434.5912, -1086.9994, 672.1250]),
+        (0, 65250, [-1435.6324, -1084.4541, 672.1250]),
+        (0, 65300, [-1436.6737, -1081.9088, 672.1250]),
+        (0, 65350, [-1437.7150, -1079.3635, 672.1250]),
+        (0, 65400, [-1438.7562, -1076.8182, 672.1250]),
+        (0, 65450, [-1439.7975, -1074.2729, 672.1250]),
+        (0, 65500, [-1440.8387, -1071.7277, 672.1250]),
+        (0, 65550, [-1441.8800, -1069.1824, 672.1250]),
+        (0, 65600, [-1442.9213, -1066.6371, 672.1250]),
+        (0, 65650, [-1443.9625, -1064.0918, 672.1250]),
+        (0, 65700, [-1445.0038, -1061.5465, 672.1250]),
+        (0, 65750, [-1445.9692, -1059.1864, 672.1250]),
+        (0, 65800, [-1446.9347, -1056.8263, 672.1250]),
+        (0, 65850, [-1447.7866, -1054.7438, 672.1250]),
+        (0, 65900, [-1448.5818, -1052.8002, 672.1250]),
+        (0, 65950, [-1449.2633, -1051.1342, 672.1250]),
+        (0, 66000, [-1449.8313, -1049.7458, 672.1250]),
+        (0, 66050, [-1450.2402, -1048.7462, 672.1250]),
+        (0, 66100, [-1450.6492, -1047.7466, 672.1250]),
+        (0, 66150, [-1451.0354, -1046.8025, 672.1250]),
+        (0, 66200, [-1451.4216, -1045.8584, 672.1250]),
+        (0, 66250, [-1451.7852, -1044.9698, 672.1250]),
+        (0, 66300, [-1452.1487, -1044.0813, 672.1250]),
+        (0, 66350, [-1452.4781, -1043.2761, 672.1250]),
+        (0, 66400, [-1452.8076, -1042.4709, 672.1250]),
+        (0, 66450, [-1453.1143, -1041.7212, 672.1250]),
+        (0, 66500, [-1453.4209, -1040.9714, 672.1250]),
+        (0, 66550, [-1453.7048, -1040.2772, 672.1250]),
+        (0, 66600, [-1453.9888, -1039.5830, 672.1250]),
+        (0, 66650, [-1454.2614, -1038.9166, 672.1250]),
+        (0, 66700, [-1454.5339, -1038.2502, 672.1250]),
+        (0, 66750, [-1454.7838, -1037.6394, 672.1250]),
+        (0, 66800, [-1455.0337, -1037.0286, 672.1250]),
+        (0, 66850, [-1455.2722, -1036.4454, 672.1250]),
+        (0, 66900, [-1455.5107, -1035.8623, 672.1250]),
+    ];
+    // Where he stands before his first step, as the trace logs him at 64700,
+    let w = walkers(&vfs, "maps/academy4.bsp", &names, &|_| None);
+    let (start, t) = &w[0];
+    let (_, o) = t.moves.iter().rfind(|(l, _)| *l < 64750).unwrap();
+    assert_eq!(
+        [0, 1, 2].map(|k| start[k] + o[k]),
+        [-1426.0, -1108.0, 672.125]
+    );
+    // facing putlukehere's 135 as SET_ANGLES leaves his view.
+    let (_, yaw) = t.yaw.iter().rfind(|(l, _)| *l < 64750).unwrap();
+    assert_eq!(*yaw, 135.0);
+    let off = walks_off_the_trace(&vfs, "maps/academy4.bsp", &names, &traced, 0);
+    assert!(
+        off.is_empty(),
+        "{} frames off: {:?}",
+        off.len(),
+        &off[..off.len().min(4)]
+    );
+}
+
 /// The entity numbers the NPCs that begin each map take, as the original's traces
 /// log them (`swjkja npc <number>`), and those of the intros' runners there:
 /// t1_sour's comes after its walkers (144, 146), academy3's before Luke (3).
