@@ -1528,3 +1528,29 @@ and drawing such pipes some other way, would match no view held still.
 - Views: academy2_students_walking (66,000 ms) and academy2_students_walked
   (80,000 ms) look north up the classroom; `npc_luke2` now stands where the
   reference has him.
+
+## 2026-10-30: Other NPCs in Pmove's traces (decided by Claude, pending review)
+
+- **`Pmove`'s traces meet the other NPCs' boxes** (`pm->trace`, `SV_Trace`): the
+  ground trace, the slides and the steps, as steering's traces already did. A trace
+  that starts in a box but leaves it is `startsolid`; one that ends in it too is
+  `allsolid` and does not move (`PM_SlideMove`), or finds no ground
+  (`PM_CorrectAllSolid`). The boxes are traced up to where the world stops the move
+  and the fraction scaled, as `SV_Trace` does, and no box is traced once one leaves
+  it all in solid. This replaces part of 2026-10-30's "Left out" (How NPCs keep
+  their paths and take stairs).
+- **An NPC's moves meet other NPCs only if it is solid** (`pm->tracemask`, its
+  `clipmask`): `SFB_NOTSOLID` spawns it with no contents and a clipmask without
+  `CONTENTS_BODY`; `SET_SOLID` gives or takes both (`Q3_SetSolid`), and
+  `SET_INVISIBLE` clears its contents but leaves its clipmask.
+- **Found: an NPC's command is built from `currentAngles`** (`G_UcmdMoveForDir`),
+  which `ClientThink` copies from the view after each `Pmove`; `SET_ANGLES` sets the
+  view (`SetClientViewAngle`), not them. So the first think after a teleport steers
+  as if it still faced the old way: jedi6, dropped at movejedi6here facing 225,
+  walks its first frame along 156° where its move direction is 347°.
+- **academy2's jedi6 and jedi4 walk every traced frame after the teleport** (72, to
+  four decimals, 77,450 to 79,550 ms on the second capture's clock, a2-walked).
+  jedi6 is spawned not solid (spawnflags 98), so it walks out of jedi4's box, which
+  it starts inside. The capture logs every frame 100 ms later than ours, and the
+  original's voice lines drift 100 ms more by the teleport (real time,
+  2026-10-27); the test plays Kyle's third line 100 ms longer.

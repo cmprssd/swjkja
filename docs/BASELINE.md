@@ -2549,3 +2549,25 @@ north up the classroom at 66,000 and 80,000 ms.
 - The 63 other views render byte for byte as #118's renders. Main's views were
   rendered by main's build in its own worktree and target folder (the two binaries
   differ). Rendered offscreen on Windows.
+
+## Other NPCs in Pmove's traces, 2026-10-30
+
+academy2's `npc_luke2` drops jedi4 and jedi6 at their tags 25 units apart, their
+boxes overlapping. On main jedi6 then walks off the original's path. Now `Pmove`
+traces the other NPCs' boxes, jedi6 (spawned not solid) walks through jedi4's, and
+an NPC's command after `SET_ANGLES` is built from the yaw it faced before. Both walk
+every traced frame after the teleport (72, to four decimals;
+`academy2s_students_walk_apart_after_their_teleport`; DECISIONS.md, 2026-10-30).
+
+| View | This PR | Main |
+|------|------|------|
+| academy2_students_walking | 0.41 (0.8%) | 0.46 (0.9%) |
+| academy2_students_walked | 0.03 (0.1%) | 0.03 (0.1%) |
+
+- In the walking view (66,000 ms, before the teleport) a student at the right of the
+  group now stands closer to the reference's pose. That comes from the NPC boxes in
+  `Pmove` (a render with commands built from the view, as on main, is the same);
+  every traced frame of the six walkers was already exact, and this frame's
+  difference is not traced. In the walked view jedi6, at the right edge, moved.
+- The 63 other views render byte for byte as #119's renders (`cmp` against #119's
+  renders of all 65). Rendered offscreen on Windows.

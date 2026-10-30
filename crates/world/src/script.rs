@@ -485,6 +485,10 @@ struct Body<'a> {
     /// Whether other NPCs' moves meet it (`contents` with `CONTENTS_BODY`): not
     /// for `SFB_NOTSOLID`, nor once `SET_INVISIBLE` or `SET_SOLID false` clears it.
     solid: bool,
+    /// Whether its moves meet other NPCs (`clipmask` with `CONTENTS_BODY`): not
+    /// for `SFB_NOTSOLID`; `SET_SOLID` gives or takes it with its contents
+    /// (`Q3_SetSolid`), `SET_INVISIBLE` leaves it.
+    meets_bodies: bool,
     /// `client->idleTime`.
     idle_time: i32,
     /// The task each slot (the animations', the turn's, the navgoal's) waits on,
@@ -493,6 +497,10 @@ struct Body<'a> {
     /// Its view's pitch and yaw (`ps.viewangles`) and where it turns them to
     /// (`NPCInfo->desiredPitch`, `desiredYaw`).
     view: [f32; 2],
+    /// Its yaw as its last movement frame left the view (`currentAngles`), which
+    /// its commands are built from (`G_UcmdMoveForDir`): `SET_ANGLES` sets the
+    /// view, not this.
+    current_yaw: f32,
     desired: [f32; 2],
     /// `stats.yawSpeed`.
     yaw_speed: f32,
@@ -703,7 +711,8 @@ fn move_trace_bodies(
 }
 
 /// `SV_Trace`: the world first, then, up to where it stops, each of `bodies` (an
-/// entity box, `SV_ClipMoveToEntities`), the nearest kept; the NPC hit.
+/// entity box, `SV_ClipMoveToEntities`, until one leaves it all in solid), the
+/// nearest kept; the NPC hit.
 fn trace_bodies(
     world: &Collision,
     bodies: &[Obstacle],
@@ -722,13 +731,14 @@ fn trace_bodies(
     tr.fraction = 1.0;
     let mut hit = None;
     for b in bodies {
+        if tr.all_solid {
+            break;
+        }
         let mut c = Collision::default();
         c.add_box(b.mins, b.maxs, CONTENTS_BODY);
         let t = c.trace(start, short, mins, maxs, mask);
         if t.all_solid {
-            if !tr.all_solid {
-                hit = Some(b.actor);
-            }
+            hit = Some(b.actor);
             tr.all_solid = true;
         } else if t.start_solid {
             if !tr.start_solid {
@@ -745,6 +755,19 @@ fn trace_bodies(
     }
     tr.fraction *= world_fraction;
     (tr, hit)
+}
+
+/// What an NPC's move meets (`pm->trace`): the world and the other NPCs' boxes.
+#[derive(Clone, Copy)]
+struct Space<'a> {
+    world: &'a Collision,
+    bodies: &'a [Obstacle],
+}
+
+impl Space<'_> {
+    fn trace(&self, start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, mask: i32) -> Trace {
+        trace_bodies(self.world, self.bodies, start, end, mins, maxs, mask).0
+    }
 }
 
 fn dot(a: Vec3, b: Vec3) -> f32 {
@@ -846,7 +869,7 @@ fn slide_move(
     time: f32,
     gravity: bool,
     ground: Ground,
-    world: &Collision,
+    world: Space,
     mins: Vec3,
     maxs: Vec3,
 ) -> bool {
@@ -1551,7 +1574,7 @@ impl<'a> Body<'a> {
         w.speed = speed as i32 as f32;
         if speed > 0.0 {
             // The command, from its current angles (AngleVectors' forward and right).
-            let yaw = self.view[1].to_radians();
+            let yaw = self.current_yaw.to_radians();
             let dot = |x: f32, y: f32| (x * w.dir[0] + y * w.dir[1]) * 127.0;
             w.forward = dot(yaw.cos(), yaw.sin()).clamp(-127.0, 127.0).floor() as i32;
             w.right = dot(yaw.sin(), -yaw.cos()).clamp(-127.0, 127.0).floor() as i32;
@@ -1562,13 +1585,13 @@ impl<'a> Body<'a> {
         }
     }
 
-    /// `Pmove` for `msec`, as an NPC moves (no jumps, water, ladders or knockback;
-    /// the other NPCs are not in the way): the ground found a quarter unit below
+    /// `Pmove` for `msec` through `world` and the other NPCs, as an NPC moves (no
+    /// jumps, water, ladders or knockback): the ground found a quarter unit below
     /// its box (`PM_GroundTrace`: walked on when no steeper than
     /// [`MIN_WALK_NORMAL`]; landing with no command stops its fall), then on the
     /// ground `PM_WalkMove`, else `PM_AirMove`, then the ground looked for again
     /// once it moved. Whether it moved.
-    fn pmove(&mut self, msec: i32, world: &Collision) -> bool {
+    fn pmove(&mut self, msec: i32, world: Space) -> bool {
         let time = msec as f32 * 0.001;
         let start = self.walk.origin;
         let ground = self.ground_trace(world);
@@ -1585,7 +1608,7 @@ impl<'a> Body<'a> {
 
     /// `PM_GroundTrace`: what its box stands on, which sets whether it is on the
     /// ground (`groundEntityNum`; `PM_CrashLand` is left out).
-    fn ground_trace(&mut self, world: &Collision) -> Ground {
+    fn ground_trace(&mut self, world: Space) -> Ground {
         let w = &mut self.walk;
         let o = w.origin;
         let tr = world.trace(
@@ -1631,7 +1654,7 @@ impl<'a> Body<'a> {
     /// out), acceleration along its move direction toward its speed
     /// (`PM_Accelerate`, [`ACCELERATE`]), the velocity turned along the ground's
     /// plane at the same speed, then `PM_StepSlideMove` without gravity.
-    fn walk_move(&mut self, time: f32, ground: Ground, world: &Collision) {
+    fn walk_move(&mut self, time: f32, ground: Ground, world: Space) {
         let w = &mut self.walk;
         let v = &mut w.velocity;
         let speed = (v[0] * v[0] + v[1] * v[1]).sqrt();
@@ -1659,7 +1682,7 @@ impl<'a> Body<'a> {
     /// NPC's command is 127 across, its speed not scaled), more strongly against
     /// its velocity ([`AIR_DECEL_RATE`]); clipped along a plane too steep to walk
     /// on; then `PM_StepSlideMove` with gravity.
-    fn air_move(&mut self, time: f32, ground: Ground, world: &Collision) {
+    fn air_move(&mut self, time: f32, ground: Ground, world: Space) {
         let yaw = self.view[1].to_radians();
         let w = &mut self.walk;
         let (f, r) = (w.forward as f32, w.right as f32);
@@ -1686,7 +1709,7 @@ impl<'a> Body<'a> {
     /// the ground) and drops back down onto what it finds, keeping whichever went
     /// further (`g_stepSlideFix`). It never steps down: walking off a step, it
     /// falls.
-    fn step_slide_move(&mut self, time: f32, gravity: bool, ground: Ground, world: &Collision) {
+    fn step_slide_move(&mut self, time: f32, gravity: bool, ground: Ground, world: Space) {
         let (mins, maxs) = (self.stance.mins, self.stance.maxs);
         let step = if maxs[2] <= 0.0 { 4.0 } else { STEPSIZE };
         let w = &mut self.walk;
@@ -1959,7 +1982,7 @@ impl<'a> Actor<'a> {
     /// modelled: it keeps its stance's); otherwise both parts return to the stance.
     /// The classes that walk or run otherwise (the ATST, rancor, wampa, jawa, Galak
     /// mech) and lit sabers are not modelled.
-    fn movement(&mut self, level: i32, msec: i32, world: &Collision) {
+    fn movement(&mut self, level: i32, msec: i32, world: Space) {
         if self.body.is_none() {
             return;
         }
@@ -1970,6 +1993,15 @@ impl<'a> Actor<'a> {
             }
         }
         let body = self.body.as_mut().unwrap();
+        // pm->tracemask, its clipmask.
+        let world = if body.meets_bodies {
+            world
+        } else {
+            Space {
+                bodies: &[],
+                ..world
+            }
+        };
         let w = &body.walk;
         let before = w.origin;
         if (w.velocity != [0.0; 3] || w.dir != [0.0; 3] || !w.on_ground) && body.pmove(msec, world)
@@ -1979,6 +2011,7 @@ impl<'a> Actor<'a> {
         }
         let moved = length(sub(body.walk.origin, before));
         body.walk.result_speed = moved / msec as f32 * 1000.0;
+        body.current_yaw = body.view[1];
         let moving =
             body.walk.velocity != [0.0; 3] || (body.walk.dir != [0.0; 3] && body.walk.speed > 0.0);
         let w = &mut body.walk;
@@ -2144,7 +2177,9 @@ impl<'a> Actor<'a> {
                 // Q3_SetSolid: "true" gives it CONTENTS_BODY (a spot it would
                 // telefrag waits for a solidifier: left out), else CONTENTS_CORPSE
                 // or none, which moves do not meet.
-                self.body.as_mut().unwrap().solid = text.eq_ignore_ascii_case("true");
+                let body = self.body.as_mut().unwrap();
+                body.solid = text.eq_ignore_ascii_case("true");
+                body.meets_bodies = body.solid;
                 false
             }
             "SET_DYAW" | "SET_DPITCH" => {
@@ -3033,6 +3068,23 @@ impl<'a> World<'a> {
         }
     }
 
+    /// The solid NPCs other than actor `i`, where they stand now.
+    fn bodies(&self, i: usize) -> Vec<Obstacle> {
+        (self.runners..self.actors.len())
+            .filter(|&j| j != i)
+            .filter_map(|j| {
+                let b = self.actors[j].body.as_ref().filter(|b| b.solid)?;
+                let at = b.walk.origin;
+                Some(Obstacle {
+                    actor: j,
+                    mins: [0, 1, 2].map(|k| at[k] + b.stance.mins[k]),
+                    maxs: [0, 1, 2].map(|k| at[k] + b.stance.maxs[k]),
+                    velocity: b.walk.velocity,
+                })
+            })
+            .collect()
+    }
+
     /// One level frame, each actor in [`World::order`]: a runner's script, started
     /// if due; an NPC's (or a mover's) movement frame (`msec` after the last) and
     /// script.
@@ -3053,22 +3105,14 @@ impl<'a> World<'a> {
             }
             self.check_voice(i, level);
             // The other NPCs where they stand now: those before it have moved.
-            let bodies: Vec<Obstacle> = (self.runners..self.actors.len())
-                .filter(|&j| j != i)
-                .filter_map(|j| {
-                    let b = self.actors[j].body.as_ref().filter(|b| b.solid)?;
-                    let at = b.walk.origin;
-                    Some(Obstacle {
-                        actor: j,
-                        mins: [0, 1, 2].map(|k| at[k] + b.stance.mins[k]),
-                        maxs: [0, 1, 2].map(|k| at[k] + b.stance.maxs[k]),
-                        velocity: b.walk.velocity,
-                    })
-                })
-                .collect();
+            let bodies = self.bodies(i);
             let (thought, unfrozen) = self.actors[i].think(level, world, nav, &bodies);
             self.actors[i].turn(level, thought || !unfrozen);
-            self.actors[i].movement(level, msec, world);
+            let space = Space {
+                world,
+                bodies: &bodies,
+            };
+            self.actors[i].movement(level, msec, space);
             self.actors[i].reach(level);
             self.script(i, level, 0);
         }
@@ -3161,11 +3205,13 @@ pub fn timelines(
                 Vec::new()
             },
             solid: !n.stance.not_solid,
+            meets_bodies: !n.stance.not_solid,
             idle_time: n.stance.still_since,
             slots: [None; 5],
             // Its first movement frame keeps the view in 65536ths of a turn
             // (`PM_UpdateViewAngles`).
             view: [0.0, short_angle(n.stance.yaw)],
+            current_yaw: n.stance.yaw,
             desired: [0.0, n.stance.yaw],
             yaw_speed: n.stance.yaw_speed,
             yaw: Vec::new(),
@@ -3227,7 +3273,12 @@ pub fn timelines(
             continue;
         }
         world.script(i, level_time, 0);
-        world.actors[i].movement(level_time, BEGIN_MSEC, &level.collision);
+        let bodies = world.bodies(i);
+        let space = Space {
+            world: &level.collision,
+            bodies: &bodies,
+        };
+        world.actors[i].movement(level_time, BEGIN_MSEC, space);
     }
     let mut begun = false;
     loop {
@@ -3254,8 +3305,13 @@ pub fn timelines(
         // the frame before the event would leave them.
         let skipped = (next - level_time) / FRAME_MS - 1;
         if skipped > 0 {
-            for a in &mut world.actors {
-                a.movement(next - FRAME_MS, skipped * FRAME_MS, &level.collision);
+            for i in 0..world.actors.len() {
+                let bodies = world.bodies(i);
+                let space = Space {
+                    world: &level.collision,
+                    bodies: &bodies,
+                };
+                world.actors[i].movement(next - FRAME_MS, skipped * FRAME_MS, space);
             }
         }
         level_time = next;
