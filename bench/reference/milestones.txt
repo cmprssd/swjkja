@@ -27,3 +27,4 @@ a037837  Specular, environment maps and rack goods as the original's
 44c6b86  Walking legs and the nav graph
 301a623  NPCs update by entity number
 d462964  Walks as fast as their NPC moves
+480bb18  Legs turn toward the move

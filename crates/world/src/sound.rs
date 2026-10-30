@@ -55,27 +55,34 @@ fn wav_length(b: &[u8]) -> Option<f32> {
     None
 }
 
-/// An MP3's layer III frames: after any ID3v2 tag, frame after frame while their
-/// headers hold; a first frame holding a Xing or Info header carries no sound.
+/// An MP3's layer III frames as the original counts them (`C_MP3_GetUnpackedSize`):
+/// from the first sync in the file's first half (past any ID3v2 tag), frame after
+/// frame while the bytes left before a rear ID3v1 tag hold the first frame's
+/// unpadded length and the frame fits. A first frame holding a Xing or Info
+/// header is decoded as sound too, 1152 samples of silence.
 fn mp3_length(b: &[u8]) -> Option<f32> {
-    let mut at = 0;
-    if b.starts_with(b"ID3") && b.len() >= 10 {
-        let size = b[6..10]
-            .iter()
-            .fold(0usize, |s, &x| (s << 7) | (x & 0x7f) as usize);
-        let footer = if b[5] & 0x10 != 0 { 10 } else { 0 };
-        at = 10 + size + footer;
-    }
-    let (mut samples, mut rate, mut first) = (0u64, 0u32, true);
-    while let Some((length, frame_samples, frame_rate)) = b.get(at..at + 4).and_then(header) {
-        let tagged = first
-            && b.get(at..(at + length).min(b.len()))
-                .is_some_and(|f| f.windows(4).any(|w| w == b"Xing" || w == b"Info"));
-        if !tagged {
-            samples += frame_samples as u64;
+    let mut at = (0..b.len() / 2)
+        .find(|&i| b[i] == 0xff && matches!(b.get(i + 1).map(|x| x & 0xf0), Some(0xf0 | 0xe0)))?;
+    let end = if b.len() >= 128 && b[b.len() - 128..].starts_with(b"TAG") {
+        b.len() - 128
+    } else {
+        b.len()
+    };
+    let unpadded = |at: usize| {
+        let h = b.get(at..at + 4)?;
+        header(h).map(|(length, ..)| length - ((h[2] >> 1) & 1) as usize)
+    };
+    let first = unpadded(at)?;
+    let (mut samples, mut rate) = (0u64, 0u32);
+    while end.saturating_sub(at) >= first.max(1) {
+        let Some((length, frame_samples, frame_rate)) = b.get(at..at + 4).and_then(header) else {
+            break;
+        };
+        if at + length > end {
+            break;
         }
+        samples += frame_samples as u64;
         rate = frame_rate;
-        first = false;
         at += length;
     }
     (samples > 0).then(|| samples as f32 / rate as f32 * 1000.0)
@@ -157,11 +164,16 @@ mod tests {
         b.extend(b"TAG");
         let ms = length_ms(&b).unwrap();
         assert!((ms - 10.0 * 1152.0 / 44.1).abs() < 1e-3, "{ms}");
-        // A first frame with a Xing header carries no sound.
+        // A first frame with a Xing header plays as silence.
         let mut tagged = frame(false, 0);
         tagged[36..40].copy_from_slice(b"Xing");
         tagged.extend(frame(false, 0));
         let ms = length_ms(&tagged).unwrap();
+        assert!((ms - 2.0 * 1152.0 / 44.1).abs() < 1e-3, "{ms}");
+        // A last frame cut short is not played.
+        let mut cut = frame(false, 0);
+        cut.extend(&frame(true, 0)[..400]);
+        let ms = length_ms(&cut).unwrap();
         assert!((ms - 1152.0 / 44.1).abs() < 1e-3, "{ms}");
         assert_eq!(length_ms(b"not a sound"), None);
     }

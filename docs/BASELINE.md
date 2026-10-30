@@ -2457,3 +2457,22 @@ and its spine turns the torso back (DECISIONS.md, 2026-10-29). t1_sour's stand-i
   wider than the reference's.
 - No other view changes: the 58 others render byte for byte as #114's renders
   (rendered offscreen on Windows).
+
+## Voice lines as the original counts them, 2026-10-30
+
+Voice MP3s now last as `C_MP3_GetUnpackedSize` counts them, a leading Xing frame
+included, and a line plays out 33 ms after its first frame, not 50 (DECISIONS.md,
+2026-10-30). academy3's Luke ends his first line on the frame the original does
+(13,750) and walks at the trace's own frames (14,850 to 18,700).
+
+| View | Lines counted as the original | Main |
+|------|------|------|
+| academy3_luke_walking | 0.07 (0.1%) | 1.11 (1.2%) |
+
+- academy4's first six lines start on the same frames as before: five as the first
+  trace has them, Kyle's at 44,750 against the original's 44,800 (Luke's fourth
+  line, 12.5 s, still ends a frame early here).
+- The scripted voice lines total 46 minutes and 1 second, 15 s more than before
+  (`every_scripted_voice_line_has_a_length`).
+- No other view changes: the 58 others render byte for byte as #115's renders.
+  Rendered offscreen on Windows.

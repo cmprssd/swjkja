@@ -576,8 +576,8 @@ fn every_scripted_voice_line_has_a_length() {
         ]
     );
     assert!(unread.is_empty(), "{unread:?}");
-    // 45 minutes and 46 seconds of lines.
-    assert_eq!((total / 1000.0).round(), 2746.0);
+    // 46 minutes and 1 second of lines.
+    assert_eq!((total / 1000.0).round(), 2761.0);
 }
 
 #[test]
@@ -1002,9 +1002,6 @@ fn walkers(
         .collect()
 }
 
-/// A level frame (ms).
-const FRAME_MS: i32 = 50;
-
 /// t1_sour's intro walkers as the original walks them, every traced frame (both
 /// from rest, their first think at 2100): the player's stand-in, thinking first,
 /// takes the nav graph toward bay_tre_13 and steers left of Kyle standing in its
@@ -1141,9 +1138,9 @@ fn t1_sours_intro_walkers_stride_as_in_the_original() {
 }
 
 /// academy3's Luke walks to lukeNav1 by the nav graph's first think as the
-/// original does (traced from 14,850), here a frame earlier: the voice line before
-/// ends a frame apart (DECISIONS.md, 2026-10-26; the intro's runner, entity 2,
-/// updates before Luke, 3, in both).
+/// original does, at the trace's own frames (from 14,850): his voice line before
+/// plays out as the original's does (its Xing frame counted; DECISIONS.md,
+/// 2026-10-30).
 #[test]
 #[allow(clippy::excessive_precision)]
 fn academy3s_luke_walks_as_in_the_original() {
@@ -1232,7 +1229,7 @@ fn academy3s_luke_walks_as_in_the_original() {
         (0, 18650, [-1296.9801, -1493.5278, 744.1250]),
         (0, 18700, [-1296.8065, -1494.1022, 744.1250]),
     ];
-    let off = walks_off_the_trace(&vfs, "maps/academy3.bsp", &["npc_luke1"], &traced, FRAME_MS);
+    let off = walks_off_the_trace(&vfs, "maps/academy3.bsp", &["npc_luke1"], &traced, 0);
     assert!(
         off.is_empty(),
         "{} frames off: {:?}",
