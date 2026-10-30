@@ -61,12 +61,14 @@ pub const FRAME_MS: i32 = 50;
 /// frames count 50 ms each (the AI frozen, as in the captures, its commands' times
 /// are 1000 ms behind the level's too).
 const BEGIN_MSEC: i32 = 200;
-/// How much later than the frame that starts it a voice line starts playing: the
-/// client plays it as it draws that frame, a frame behind the server, and the game
-/// sees it has stopped (`G_CheckTasksCompleted`: the mixer's `s_entityWavVol` back
-/// to 0) on the first frame after it has (academy4's intro, traced: five of its
-/// first six lines end then, the other a frame later still).
-const VOICE_LAG: i32 = FRAME_MS;
+/// How much later than the frame that starts it a voice line plays out, beyond its
+/// length (ms). The client plays a line on its own clock and the mixer runs in real
+/// time, so the original's lag varies from line to line; 32 to 35 ms ends five of
+/// academy4's first six traced lines and academy3's first on the frames the traces
+/// have them (DECISIONS.md, 2026-10-30): a server frame less a client frame at the
+/// captures' 60 fps. The game sees a line stopped (`G_CheckTasksCompleted`: the
+/// mixer's `s_entityWavVol` back to 0) on its first frame after.
+const VOICE_LAG: i32 = 33;
 /// Milliseconds a part blends from its previous animation into a new one
 /// (`SETANIM_BLEND_DEFAULT`, which `NPC_SetAnim` and the stance's `PM_SetAnim`
 /// pass).

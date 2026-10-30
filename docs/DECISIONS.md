@@ -1398,3 +1398,24 @@ and drawing such pipes some other way, would match no view held still.
   little wider than the reference's. Whether the original's legs had fully
   settled is not logged (the capture would need `renderInfo.legsYaw` traced, a
   GUI run).
+
+## 2026-10-30: Voice lines last as the original counts their MP3s (decided by Claude, pending review)
+
+- **Found: the original counts one frame more in 2,142 of the 3,531 voice MP3s.**
+  `C_MP3_GetUnpackedSize` decodes every frame, a leading Xing or Info frame too
+  (1152 samples of silence), which the scripts slice (#58) left out: those lines play
+  26 ms longer. It also stops when the bytes left before a rear ID3v1 tag are
+  fewer than the first frame's unpadded length, or a frame would run past them.
+  `sound::length_ms` now counts as it does, frame for frame on all 12,901 MP3s
+  in the game (checked against a port of the C code).
+- **Replaces the 50 ms of 2026-10-26 with 33** (`VOICE_LAG`). With the lengths
+  right, a line ends on the frame the traces have it when its lag is between 32
+  and 35 ms: academy4's first, second, third (as the first trace has it) and fifth
+  lines, and academy3's first, Luke's before his walk (13,750 in the original, at
+  13,700 here before). 33 ms is a server frame less a client frame at the
+  captures' 60 fps, but it is fitted, not derived: the mixer runs in real time, and
+  academy4's fourth line (12.5 s) still needs more than 39 ms, its third in the
+  second trace more than 42. No fixed lag fits every traced line; this one fits
+  the same academy4 lines as before and academy3's too.
+- academy3's Luke now walks at the trace's own frames (78 of them, 14,850 to
+  18,700; `academy3s_luke_walks_as_in_the_original`), no longer a frame early.
