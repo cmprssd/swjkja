@@ -66,8 +66,8 @@ that differs instead of being guessed at from pixels.
 ## Architecture
 
 <!-- progress:code -->
-10 crates in one Cargo workspace, 41,257 lines of Rust (sources, tests and examples)
-plus 630 lines of WGSL shaders, 360 tests. Each crate maps to one part of the
+10 crates in one Cargo workspace, 41,436 lines of Rust (sources, tests and examples)
+plus 630 lines of WGSL shaders, 361 tests. Each crate maps to one part of the
 original engine.
 <!-- /progress -->
 
@@ -102,7 +102,7 @@ flowchart BT
 | `icarus` | 307 | 1 | reads compiled ICARUS scripts | `icarus/` |
 | `shader` | 3,134 | 28 | `.shader` scripts and which material a surface draws | `tr_shader.cpp` |
 | `model` | 2,534 | 32 | MD3 and Ghoul2 (`.glm`/`.gla`) meshes, skins, animation | `tr_model.cpp`, `ghoul2/` |
-| `world` | 16,639 | 157 | patches, stitching, light grid, entities as they spawn, NPCs, scripts, box traces, shadows, the game's random numbers | `tr_curve.cpp`, `g_*.cpp`, `NPC_*.cpp`, `Q3_Interface.cpp` |
+| `world` | 16,818 | 158 | patches, stitching, light grid, entities as they spawn, NPCs, scripts, box traces, shadows, the game's random numbers | `tr_curve.cpp`, `g_*.cpp`, `NPC_*.cpp`, `Q3_Interface.cpp` |
 | `render` | 12,728 | 84 | Vulkan renderer: materials stage by stage, fog, sky, deforms, flares, culling, models skinned on the GPU, frames in flight | `tr_*.cpp` (the vanilla renderer) |
 | `swjkja` | 950 | 7 | the map viewer window and its loading screen | `cl_*.cpp` (a small part) |
 <!-- /progress -->
@@ -138,7 +138,7 @@ Rules that shape it:
   ones"), with a recommendation. Choices that come up mid-build are made by Claude,
   marked *decided by Claude, pending review* in DECISIONS.md, and listed in the PR.
   <!-- progress:process -->
-  So far: 80 decision entries, 15 chosen by the owner, 61 made by Claude for review.
+  So far: 81 decision entries, 15 chosen by the owner, 62 made by Claude for review.
   <!-- /progress -->
 - **$0 development.** No GitHub Actions: `.local-ci` runs on this machine (format,
   shell syntax, a build of exactly the committed tree, then clippy and tests on
@@ -200,13 +200,13 @@ timeline
 
 <!-- progress:views -->
 65 reference views, 1280x720, rendered by both engines and compared (mean absolute
-difference per channel, 0-255; measured 2026-10-30 at PR #119):
+difference per channel, 0-255; measured 2026-10-30 at PR #120):
 
 | Kind | Views | Mean difference |
 |------|------:|------|
 | Multiplayer world (sky, fog, fog volumes, flares, animated stages, curve LOD) | 19 | 0.00-0.03 |
 | Static and brush-entity models, rotating fans and drums | 18 | 0.00-3.73 |
-| Single-player NPCs (spawned, scripted, turned, walked) | 28 | 0.00-0.46 |
+| Single-player NPCs (spawned, scripted, turned, walked) | 28 | 0.00-0.41 |
 | **All** | **65** | **median 0.01; 63 under 0.5, 64 under 1.0** |
 
 ```mermaid
@@ -218,7 +218,7 @@ xychart-beta
 ```
 
 The largest: ffa5_pipes (3.73), hevil_fan_west (0.63), academy2_students_walking
-(0.46).
+(0.41).
 <!-- /progress -->
 
 Explained, and not renderer errors: ffa5_pipes has the original's first-person

@@ -924,7 +924,16 @@ fn walks_off_the_trace(
     traced: &[(usize, i32, [f32; 3])],
     early: i32,
 ) -> Vec<(usize, i32, Option<[f32; 3]>)> {
-    let walkers = walkers(vfs, map, names, &|_| None);
+    walks_off(&walkers(vfs, map, names, &|_| None), traced, early)
+}
+
+/// The frames of `traced` (walker, level time, position) that `walkers` are not
+/// at, `early` ms before.
+fn walks_off(
+    walkers: &[([f32; 3], script::Timeline)],
+    traced: &[(usize, i32, [f32; 3])],
+    early: i32,
+) -> Vec<(usize, i32, Option<[f32; 3]>)> {
     let mut off = Vec::new();
     for &(who, level, traced) in traced {
         let (start, timeline) = &walkers[who];
@@ -947,6 +956,18 @@ fn walkers(
     map: &str,
     names: &[&str],
     holds: script::Holds,
+) -> Vec<([f32; 3], script::Timeline)> {
+    walkers_voiced(vfs, map, names, holds, &|_| 0)
+}
+
+/// [`walkers`], each voice line `longer` (ms) than its file: the original plays
+/// them in real time, so a capture's clock drifts by line (2026-10-27).
+fn walkers_voiced(
+    vfs: &swjkja_fs::Vfs,
+    map: &str,
+    names: &[&str],
+    holds: script::Holds,
+    longer: &dyn Fn(&str) -> i32,
 ) -> Vec<([f32; 3], script::Timeline)> {
     let bsp = Bsp::parse(&vfs.read(map).unwrap()).unwrap();
     let rules = Rules::for_map(map);
@@ -992,7 +1013,7 @@ fn walkers(
         let bytes = swjkja_world::sound::files(name)
             .iter()
             .find_map(|f| vfs.read(f).ok())?;
-        swjkja_world::sound::length_ms(&bytes).map(|ms| ms.ceil() as i32)
+        swjkja_world::sound::length_ms(&bytes).map(|ms| ms.ceil() as i32 + longer(name))
     };
     let t = script::timelines(&npcs, &level, &voice);
     names
@@ -2023,6 +2044,108 @@ fn academy2s_students_walk_to_the_stairs_as_in_the_original() {
         (3, 66000, [-1443.3967, -801.3167, 672.1250]),
     ];
     let off = walks_off_the_trace(&vfs, "maps/academy2.bsp", &names, &traced, 0);
+    assert!(
+        off.is_empty(),
+        "{} frames off: {:?}",
+        off.len(),
+        &off[..off.len().min(4)]
+    );
+}
+
+/// After `npc_luke2`'s script drops jedi4 and jedi6 at their tags (77,450 in the
+/// original), their boxes overlapping, both walk on as the original walks them,
+/// every traced frame that moves one (a2-walked, to 80,000 ms): jedi6, spawned not
+/// solid, moves through jedi4, and its first command is built from the yaw it
+/// faced before the teleport. That capture logs every frame 100 ms later than
+/// ours, and its voice lines drifted 100 ms more by the teleport: here Kyle's
+/// third line is that much longer.
+#[test]
+#[allow(clippy::excessive_precision)]
+fn academy2s_students_walk_apart_after_their_teleport() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let names = ["npc_jedi4", "npc_jedi6"];
+    let longer = |name: &str| if name.contains("09kyk003") { 100 } else { 0 };
+    let walkers = walkers_voiced(&vfs, "maps/academy2.bsp", &names, &|_| None, &longer);
+    // The traced positions that differ from the frame before (a2-walked-npcs.txt).
+    let traced = [
+        (1, 77450, [-1325.9976, -99.5963, 672.1250]),
+        (0, 77450, [-1339.7704, -118.1118, 672.1250]),
+        (1, 77500, [-1325.8336, -99.4815, 672.1250]),
+        (0, 77500, [-1338.9314, -117.6656, 672.1250]),
+        (1, 77550, [-1324.8397, -100.7986, 672.1250]),
+        (0, 77550, [-1338.7344, -118.7275, 672.1250]),
+        (1, 77600, [-1323.7555, -102.2355, 672.1250]),
+        (0, 77600, [-1338.5653, -119.7637, 672.1250]),
+        (1, 77650, [-1323.1165, -103.0686, 672.1250]),
+        (0, 77650, [-1338.3962, -120.8000, 672.1250]),
+        (1, 77700, [-1322.6581, -103.6622, 672.1250]),
+        (0, 77700, [-1338.1788, -122.1324, 672.1250]),
+        (1, 77750, [-1322.2865, -104.1333, 672.1250]),
+        (0, 77750, [-1337.9614, -123.4648, 672.1250]),
+        (1, 77800, [-1321.9149, -104.6044, 672.1250]),
+        (0, 77800, [-1337.7585, -124.7084, 672.1250]),
+        (1, 77850, [-1321.5959, -105.0023, 672.1250]),
+        (0, 77850, [-1337.5557, -125.9519, 672.1250]),
+        (1, 77900, [-1321.2770, -105.4003, 672.1250]),
+        (0, 77900, [-1337.3672, -127.1066, 672.1250]),
+        (1, 77950, [-1320.9750, -105.7734, 672.1250]),
+        (0, 77950, [-1337.1787, -128.2614, 672.1250]),
+        (1, 78000, [-1320.6730, -106.1464, 672.1250]),
+        (0, 78000, [-1337.0048, -129.3273, 672.1250]),
+        (1, 78050, [-1320.3888, -106.4954, 672.1250]),
+        (0, 78050, [-1336.8308, -130.3932, 672.1250]),
+        (1, 78100, [-1320.1046, -106.8443, 672.1250]),
+        (0, 78100, [-1336.6665, -131.3999, 672.1250]),
+        (1, 78150, [-1319.8198, -107.1927, 672.1250]),
+        (0, 78150, [-1336.5022, -132.4065, 672.1250]),
+        (1, 78200, [-1319.5350, -107.5412, 672.1250]),
+        (0, 78200, [-1336.3477, -133.3540, 672.1250]),
+        (1, 78250, [-1319.2500, -107.8894, 672.1250]),
+        (0, 78250, [-1336.1931, -134.3015, 672.1250]),
+        (1, 78300, [-1318.9650, -108.2377, 672.1250]),
+        (0, 78300, [-1336.0530, -135.1601, 672.1250]),
+        (1, 78350, [-1318.6798, -108.5858, 672.1250]),
+        (0, 78350, [-1335.9128, -136.0188, 672.1250]),
+        (1, 78400, [-1318.3947, -108.9339, 672.1250]),
+        (0, 78400, [-1335.7823, -136.8182, 672.1250]),
+        (1, 78450, [-1318.1094, -109.2819, 672.1250]),
+        (0, 78450, [-1335.6519, -137.6176, 672.1250]),
+        (1, 78500, [-1317.8241, -109.6299, 672.1250]),
+        (0, 78500, [-1335.5311, -138.3578, 672.1250]),
+        (1, 78550, [-1317.5388, -109.9779, 672.1250]),
+        (0, 78550, [-1335.4104, -139.0980, 672.1250]),
+        (1, 78600, [-1317.2535, -110.3260, 672.1250]),
+        (0, 78600, [-1335.2944, -139.8086, 672.1250]),
+        (1, 78650, [-1316.9873, -110.6507, 672.1250]),
+        (0, 78650, [-1335.1785, -140.5192, 672.1250]),
+        (1, 78700, [-1316.7211, -110.9755, 672.1250]),
+        (0, 78700, [-1335.0721, -141.1706, 672.1250]),
+        (1, 78750, [-1316.4547, -111.3003, 672.1250]),
+        (0, 78750, [-1334.9658, -141.8220, 672.1250]),
+        (1, 78800, [-1316.1884, -111.6251, 672.1250]),
+        (0, 78800, [-1334.8644, -142.4438, 672.1250]),
+        (1, 78850, [-1315.9220, -111.9498, 672.1250]),
+        (0, 78850, [-1334.7629, -143.0656, 672.1250]),
+        (1, 78900, [-1315.6556, -112.2746, 672.1250]),
+        (1, 78950, [-1314.6094, -113.5505, 672.1250]),
+        (1, 79000, [-1313.4680, -114.9424, 672.1250]),
+        (1, 79050, [-1312.2316, -116.4502, 672.1250]),
+        (1, 79100, [-1310.9000, -118.0741, 672.1250]),
+        (1, 79150, [-1309.4923, -119.7907, 672.1250]),
+        (1, 79200, [-1308.0085, -121.6001, 672.1250]),
+        (1, 79250, [-1306.6389, -123.2703, 672.1250]),
+        (1, 79300, [-1305.3834, -124.8014, 672.1250]),
+        (1, 79350, [-1304.2040, -126.2397, 672.1250]),
+        (1, 79400, [-1303.1007, -127.5851, 672.1250]),
+        (1, 79450, [-1302.0544, -128.8610, 672.1250]),
+        (1, 79500, [-1301.0653, -130.0673, 672.1250]),
+        (1, 79550, [-1301.0272, -130.1137, 672.1250]),
+    ];
+    let off = walks_off(&walkers, &traced, 100);
     assert!(
         off.is_empty(),
         "{} frames off: {:?}",
