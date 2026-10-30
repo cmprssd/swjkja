@@ -14,8 +14,8 @@ use swjkja_bsp::{Bsp, Entity};
 
 use crate::Vec3;
 use crate::collision::{
-    CONTENTS_BOTCLIP, CONTENTS_MONSTERCLIP, CONTENTS_SOLID, CONTENTS_TERRAIN, Collision,
-    MASK_NPCSOLID,
+    CONTENTS_BOTCLIP, CONTENTS_MONSTERCLIP, CONTENTS_PLAYERCLIP, CONTENTS_SOLID, CONTENTS_TERRAIN,
+    Collision, MASK_NPCSOLID,
 };
 use crate::static_model::{atof, spawns_at, vector_prefix};
 use crate::style::atoi;
@@ -32,16 +32,20 @@ const AUTO_LEN: f32 = 500.0;
 const WAY_NEIGHBORS: usize = 4;
 const NONWP_NEIGHBORS: i32 = 1;
 const BIAS_NONWAYPOINT: f32 = 500.0;
-const Z_CULL_OFFSET: f32 = 60.0;
+pub const Z_CULL_OFFSET: f32 = 60.0;
 /// The two sizes an edge is tested at (`SC_LARGE_*`, `SC_MEDIUM_*`).
 const LARGE: (f32, f32) = (60.0, 120.0);
 const MEDIUM: (f32, f32) = (20.0, 60.0);
 /// `SAFE_NEIGHBORINGPOINT_DIST`.
 const SAFE_NEIGHBOR_DIST: f32 = 400.0;
-/// `MAX_RADIUS_CHECK`, `YAW_ITERATIONS`, `DEFAULT_MAXS_0`, `STEPSIZE`.
+/// `MAX_RADIUS_CHECK`, `YAW_ITERATIONS`, `DEFAULT_MAXS_0`, `DEFAULT_MINS_2`,
+/// `DEFAULT_MAXS_2`, `CROUCH_MAXS_2`, `STEPSIZE`.
 const RADIUS_CHECK: f32 = 1024.0;
 const YAW_ITERATIONS: usize = 16;
 const DEFAULT_MAXS_0: f32 = 16.0;
+const DEFAULT_MINS_2: f32 = -24.0;
+const DEFAULT_MAXS_2: f32 = 40.0;
+const CROUCH_MAXS_2: f32 = 16.0;
 const STEPSIZE: f32 = 18.0;
 
 /// What a point is (`EPointType`).
@@ -135,6 +139,9 @@ pub struct PathPoint {
     pub slowing_radius: f32,
     /// Squared.
     pub reached_radius: f32,
+    /// When the NPC should have reached it (`mETA`, level time in ms): a path
+    /// whose next point is overdue is found again.
+    pub eta: f32,
 }
 
 fn sub(a: Vec3, b: Vec3) -> Vec3 {
@@ -654,7 +661,10 @@ impl Graph {
     /// within three times the NPC's radius (at most 20) or 40% of the point's
     /// radius, the last within its radius and slowed to over 70; the path cut where
     /// it passes beside the NPC (an edge it stands within 10% to 90% along, near
-    /// enough or with a clear move to it), and sharp turns slowed through.
+    /// enough or with a clear move to it), and sharp turns slowed through. Each
+    /// point is due by level time `level` plus its distance along the path at
+    /// `speed` (units a second, taken at a quarter for speeding up and slowing).
+    #[allow(clippy::too_many_arguments)]
     pub fn find_path(
         &self,
         world: &Collision,
@@ -663,6 +673,8 @@ impl Graph {
         maxs: Vec3,
         start: usize,
         target: usize,
+        level: i32,
+        speed: f32,
     ) -> Option<Vec<PathPoint>> {
         if !self.same_region(start, target) {
             return None;
@@ -686,6 +698,7 @@ impl Graph {
                     point: node.point,
                     slowing_radius: 0.0,
                     reached_radius: reached * reached,
+                    eta: 0.0,
                 }
             })
             .collect();
@@ -712,7 +725,9 @@ impl Graph {
                 break;
             }
         }
+        let speed = speed * 0.001 * 0.25;
         let mut from = at;
+        let mut time = level as f32;
         for i in (0..path.len()).rev() {
             let mut to_next = sub(path[i].point, from);
             if to_next[2].abs() > Z_CULL_OFFSET {
@@ -722,6 +737,8 @@ impl Graph {
             if d > 1e-10 {
                 to_next = to_next.map(|x| x / d);
             }
+            path[i].eta = d / speed + time;
+            time = path[i].eta;
             if i != 0 && !self.nodes[path[i].node].floating {
                 let mut beyond = sub(path[i - 1].point, path[i].point);
                 if beyond[2].abs() > Z_CULL_OFFSET {
@@ -742,6 +759,32 @@ impl Graph {
     }
 }
 
+/// `G_CheckInSolid` with its fix, for a point at `origin` with the box
+/// `mins`..`maxs`: its box from its origin up (`MASK_DEADSOLID`) swept down to its
+/// feet; stopped on the way, the point is moved to where it stopped (resting a
+/// little above the floor it stands on: a point placed on the floor rises by
+/// [`crate::collision::SURFACE_CLIP_EPSILON`]) and checked again. Whether it is in
+/// solid.
+fn check_in_solid(world: &Collision, origin: &mut Vec3, mins: Vec3, maxs: Vec3) -> bool {
+    const MASK_DEADSOLID: i32 = CONTENTS_SOLID | CONTENTS_PLAYERCLIP | CONTENTS_TERRAIN;
+    let mut fix = true;
+    loop {
+        let feet = [origin[0], origin[1], origin[2] + mins[2]];
+        let tr = world.trace(*origin, feet, [mins[0], mins[1], 0.0], maxs, MASK_DEADSOLID);
+        if tr.all_solid || tr.start_solid {
+            return true;
+        }
+        if tr.fraction == 1.0 {
+            return false;
+        }
+        if !fix {
+            return true;
+        }
+        *origin = [tr.end[0], tr.end[1], tr.end[2] - mins[2]];
+        fix = false;
+    }
+}
+
 /// The point entity `e` spawns, if it is one and its box is clear where it stands
 /// (`NAV::SpawnedPoint`'s check).
 fn point(e: &Entity, world: &Collision) -> Option<Node> {
@@ -749,14 +792,34 @@ fn point(e: &Entity, world: &Collision) -> Option<Node> {
     let flags = e.get("spawnflags").map_or(0, atoi);
     let mut origin = e.get("origin").map_or([0.0; 3], vector_prefix);
     let spawn_radius = e.get("radius").map_or(0.0, atof);
+    // SP_waypoint and SP_waypoint_small set a box and check it is clear, with its
+    // fix, unless SOLID_OK; a point still in solid with a crouch's height is freed.
+    let checked = |origin: &mut Vec3, half: f32| {
+        if flags & 1 != 0 {
+            return true;
+        }
+        let mins = [-half, -half, DEFAULT_MINS_2];
+        if !check_in_solid(world, origin, mins, [half, half, DEFAULT_MAXS_2]) {
+            return true;
+        }
+        !check_in_solid(world, origin, mins, [half, half, CROUCH_MAXS_2])
+    };
     let (kind, radius) = match class.as_str() {
         "waypoint" => {
             if flags & 2 != 0 {
                 origin[2] += 128.0;
             }
+            if !checked(&mut origin, DEFAULT_MAXS_0) {
+                return None;
+            }
             (Kind::Way, waypoint_radius(world, origin))
         }
-        "waypoint_small" => (Kind::Way, 2.0),
+        "waypoint_small" => {
+            if !checked(&mut origin, 2.0) {
+                return None;
+            }
+            (Kind::Way, 2.0)
+        }
         // SP_waypoint_navgoal raises its tag, not its point.
         "waypoint_navgoal" => (Kind::Goal, spawn_radius),
         "point_combat" => {

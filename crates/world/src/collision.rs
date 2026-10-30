@@ -160,16 +160,27 @@ impl Collision {
             all_solid: false,
             normal: [0.0; 3],
         };
-        // The sweep's bounds, for skipping brushes it cannot touch.
-        let lo: Vec3 = [0, 1, 2].map(|i| start[i].min(end[i]) + mins[i] - 1.0);
-        let hi: Vec3 = [0, 1, 2].map(|i| start[i].max(end[i]) + maxs[i] + 1.0);
+        // CM_Trace makes the box symmetric about its centre, which it sweeps: the
+        // same planes, rounded as the original rounds them.
+        let offset: Vec3 = [0, 1, 2].map(|i| (mins[i] + maxs[i]) * 0.5);
+        let size = [
+            [0, 1, 2].map(|i| mins[i] - offset[i]),
+            [0, 1, 2].map(|i| maxs[i] - offset[i]),
+        ];
+        let from: Vec3 = [0, 1, 2].map(|i| start[i] + offset[i]);
+        let to: Vec3 = [0, 1, 2].map(|i| end[i] + offset[i]);
+        // The sweep's bounds: a brush outside them is skipped, with no epsilon
+        // (`CM_TraceThroughBrush`), so a box that ends within
+        // [`SURFACE_CLIP_EPSILON`] of a brush, short of it, misses it.
+        let lo: Vec3 = [0, 1, 2].map(|i| from[i].min(to[i]) + size[0][i]);
+        let hi: Vec3 = [0, 1, 2].map(|i| from[i].max(to[i]) + size[1][i]);
         for b in &self.brushes {
             if b.contents & mask == 0
                 || (0..3).any(|i| b.bounds[0][i] > hi[i] || b.bounds[1][i] < lo[i])
             {
                 continue;
             }
-            through_brush(&mut trace, b, start, end, mins, maxs);
+            through_brush(&mut trace, b, from, to, &size);
             if trace.all_solid {
                 break;
             }
@@ -203,14 +214,16 @@ fn dot(a: Vec3, b: Vec3) -> f32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
-/// `CM_TraceThroughBrush` with `CM_PlaneCollision`, for an axis-aligned box.
-fn through_brush(trace: &mut Trace, b: &Brush, start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3) {
+/// `CM_TraceThroughBrush` with `CM_PlaneCollision`, for a box of half-sizes
+/// `size` (`tw.size`) swept from `start` to `end` (its centre).
+fn through_brush(trace: &mut Trace, b: &Brush, start: Vec3, end: Vec3, size: &[Vec3; 2]) {
     let (mut enter, mut leave) = (-1.0f32, 1.0f32);
     let mut clip = [0.0; 3];
     let (mut start_out, mut get_out) = (false, false);
     for &(normal, plane_dist) in &b.planes {
-        // The plane pushed out to the box's corner that meets it first.
-        let corner = [0, 1, 2].map(|i| if normal[i] < 0.0 { maxs[i] } else { mins[i] });
+        // The plane pushed out to the box's corner that meets it first
+        // (`tw.offsets[signbits]`).
+        let corner = [0, 1, 2].map(|i| size[usize::from(normal[i] < 0.0)][i]);
         let dist = plane_dist - dot(corner, normal);
         let d1 = dot(start, normal) - dist;
         let d2 = dot(end, normal) - dist;
@@ -228,9 +241,14 @@ fn through_brush(trace: &mut Trace, b: &Brush, start: Vec3, end: Vec3, mins: Vec
             continue;
         }
         if d1 > d2 {
-            let f = (d1 - SURFACE_CLIP_EPSILON).max(0.0) / (d1 - d2);
-            if f > enter {
-                enter = f;
+            let f = d1 - SURFACE_CLIP_EPSILON;
+            if f < 0.0 {
+                if 0.0 > enter {
+                    enter = 0.0;
+                    clip = normal;
+                }
+            } else if f > enter * (d1 - d2) {
+                enter = f / (d1 - d2);
                 clip = normal;
             }
         } else {

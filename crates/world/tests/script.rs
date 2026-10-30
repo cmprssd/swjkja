@@ -1178,9 +1178,15 @@ fn walker() -> Pose {
 }
 
 /// A map with academy3's "lukeNav1" (radius 12, raised 0.125) and a "far" tag 500
-/// units east of Luke, nothing to bump into.
+/// units east of Luke, on academy3's floor (its top at 720, a box resting on it
+/// stands at 744.125), nothing else to bump into.
 fn navgoals() -> Level {
     let mut level = Level::default();
+    level.collision.add_box(
+        [-4096.0, -4096.0, 656.0],
+        [4096.0, 4096.0, 720.0],
+        swjkja_world::collision::CONTENTS_SOLID,
+    );
     for (name, at) in [
         ("lukenav1", [-1292.0, -1510.0, 744.125]),
         ("far", [-844.0, -1338.0, 744.125]),
@@ -1265,15 +1271,16 @@ fn a_script_walks_its_npc_straight_to_a_navgoal() {
     assert_eq!(walked_to(&t, 5500), None);
     assert_eq!(cin(&t), Some(5450));
     // His view turns 24 degrees ((60 + 3 * 140) / 20) toward where he heads, only
-    // on the frames his behavior thinks.
+    // on the frames his behavior thinks, in 65536ths of a turn from his first
+    // frame's 49.9988 toward 286.8201 (`AngleNormalize360`): as the trace logs it.
     assert_eq!(
         yaws(&t.yaw),
         [
-            (1600, 25.999),
-            (1700, 2.0),
-            (1800, -22.0),
-            (1900, -46.0),
-            (2000, -69.999),
+            (1600, 25.994),
+            (1700, 1.989),
+            (1800, -22.017),
+            (1900, -46.022),
+            (2000, -70.027),
             (2100, -73.18)
         ]
     );
