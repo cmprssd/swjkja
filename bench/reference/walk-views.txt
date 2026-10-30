@@ -12,3 +12,8 @@ academy3  academy3_luke_walking   -1180 -1440 780   10 175 0   16500   64
 # to introNav1 from the moment the player begins, their legs free: BOTH_WALK1
 # (PM_Footsteps), their torsos with them.
 t1_sour   t1_sour_intro_walking   6359 -2708 70   5 162 0   3500   64
+# yavin2_intro_walking looks west over the temple's garden as yavin2's intro walks
+# Kyle (npc_kyleintro1) and Rosh (npc_roshintro1) to kyleNav1 and roshNav1, 415
+# units off and down the stairs into the garden: Kyle has crossed it, Rosh is
+# halfway down the stairs.
+yavin2    yavin2_intro_walking    2650 -5450 150   12 165 0   19500   64

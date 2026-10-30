@@ -2,3 +2,5 @@
 # reference/walked-views.txt), once Luke has reached lukeNav1 and turned to 269
 # (SET_DYAW), in BOTH_STAND4.
 academy3  academy3_luke_walked    -1180 -1440 780   10 175 0   21000   64
+# yavin2_intro_walked: once Kyle and Rosh have reached their navgoals.
+yavin2    yavin2_intro_walked     2650 -5450 150   12 165 0   30000   64

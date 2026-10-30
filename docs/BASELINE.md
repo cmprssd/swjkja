@@ -2476,3 +2476,32 @@ included, and a line plays out 33 ms after its first frame, not 50 (DECISIONS.md
   (`every_scripted_voice_line_has_a_length`).
 - No other view changes: the 58 others render byte for byte as #115's renders.
   Rendered offscreen on Windows.
+
+## Walks down stairs, 2026-10-30
+
+yavin2's intro walks Kyle (`npc_kyleintro1`) and Rosh (`npc_roshintro1`) 415 units
+to kyleNav1 and roshNav1, down a flight of stairs into the temple's garden. The
+original, traced with their AI running (`WALK=1`), moves Kyle from 15,900 and Rosh
+from 16,900; on main Kyle never moves (his path's first point, 2.4 units off, is
+sought anew every think) and Rosh stops at the top of the stairs. Now both keep their
+paths (`NAV::UpdatePath`) and take the stairs as `Pmove` does (DECISIONS.md,
+2026-10-30): every traced frame of both (196, to four decimals) leaves them where the
+trace has them a frame later
+(`yavin2s_intro_walkers_walk_down_the_stairs_as_in_the_original`). Two views
+(`bench/reference/walk-views.txt`, `walked-views.txt`) look west over the garden at
+19,500 ms, Rosh halfway down the stairs, and at 30,000, both arrived.
+
+| View | Paths kept, stairs | Main |
+|------|------|------|
+| yavin2_intro_walking | 0.14 (0.4%) | 0.53 (1.2%) |
+| yavin2_intro_walked | 0.02 (0.0%) | 0.49 (1.1%) |
+
+- Mid-walk the two stand a frame behind the reference's (their walk starts a frame
+  later here); what also differs is their strides and Rosh's pose on the stairs.
+- t1_sour's and academy3's traced walks still match frame for frame, and academy3's
+  Luke's view yaws now match the trace's to four decimals (49.9988 at first).
+- Two kept views change: kor2_troopers (137 pixels) and vjun2_imp_stance (940
+  pixels), whose NPCs settle onto slopes 0.0002 lower with the original's plane
+  arithmetic; both score as before (0.00 and 0.01). The 57 others render byte for
+  byte as #116's renders. Main's yavin2 views were rendered by main's build in its
+  own worktree and target folder. Rendered offscreen on Windows.

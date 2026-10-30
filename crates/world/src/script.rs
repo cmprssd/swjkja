@@ -44,7 +44,7 @@ use swjkja_model::animation::Animation;
 use crate::Vec3;
 use crate::brush_entity::{Motion, Slide, slid};
 use crate::collision::{CONTENTS_BODY, CONTENTS_BOTCLIP, Collision, MASK_NPCSOLID, Trace};
-use crate::nav::{self, Graph, Nearest};
+use crate::nav::{self, Graph, Nearest, PathPoint};
 use crate::static_model::{Pose, angle_normalize180, atof, vectoangles};
 
 /// The level time (ms) of the server's first frame on a map: four settling frames
@@ -523,6 +523,10 @@ struct Walk {
     backwards: bool,
     /// The nav point it was last found nearest (`waypoint`).
     waypoint: Option<Nearest>,
+    /// Its path on the nav graph.
+    path: Option<PathUser>,
+    /// Whether it stands on something (`groundEntityNum`).
+    on_ground: bool,
     /// The side it steers around things by (`avoidSide`), the side it last
     /// steered by (`lastAvoidSteerSide`) and until when that side holds
     /// (`lastAvoidSteerSideDebouncer`).
@@ -598,6 +602,41 @@ impl Steer {
 /// in the original (`Q_irand(500, STEER::SIDE_LOCKED_TIMER)`), a draw not
 /// replayed here; t1_sour's traced stand-in needs at least 1300.
 const SIDE_LOCKED_MS: i32 = 2000;
+
+/// How long a path found stays found for the same target (`mLastAStarTime`): the
+/// original draws 3000 to 6000 ms (`Q_irand`), a draw not replayed here; the low
+/// end, as the captures pin scripts' draws (`g_swjkjaScriptRand`).
+const ASTAR_MS: i32 = 3000;
+
+/// An NPC's path on the nav graph (`SPathUser`), kept from one think that takes the
+/// graph to the next and dropped once it steers straight (`NAV::ClearPath`).
+#[derive(Debug, Default)]
+struct PathUser {
+    /// The point it leads to (`mEnd`; none while it is found again).
+    end: Option<usize>,
+    /// Whether the last search found one (`mSuccess`).
+    success: bool,
+    /// Until when a search to the same end is not run again (`mLastAStarTime`).
+    astar_until: i32,
+    /// Its points, the next last (`mPath`).
+    points: Vec<PathPoint>,
+}
+
+impl PathUser {
+    /// `NAV::HasPath` (to any target): found, with points left.
+    fn has_path(&self) -> bool {
+        self.success && !self.points.is_empty()
+    }
+}
+
+/// A nav point for nearest-point result `n`: an edge's first point, where the
+/// original draws one of the two (`Q_irand(0, 1)`).
+fn first_point(g: &Graph, n: Nearest) -> usize {
+    match n {
+        Nearest::Node(i) => i,
+        Nearest::Edge(e) => g.edges[e].a,
+    }
+}
 
 /// `MIN_WALK_NORMAL`: steeper planes cannot be walked on.
 const MIN_WALK_NORMAL: f32 = 0.7;
@@ -699,6 +738,173 @@ fn length(v: Vec3) -> f32 {
     (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
 }
 
+/// What an NPC stands on, as `PM_GroundTrace` leaves it for a movement frame: the
+/// plane under it (`pml.groundPlane`, `groundTrace.plane`) and whether it walks
+/// on it (`pml.walking`).
+#[derive(Debug, Clone, Copy)]
+struct Ground {
+    plane: Option<Vec3>,
+    walking: bool,
+}
+
+/// `pm_airaccelerate`.
+const AIR_ACCELERATE: f32 = 4.0;
+/// `pm_airDecelRate`: how much harder a fall's command pulls against its velocity.
+const AIR_DECEL_RATE: f32 = 1.35;
+/// `g_gravity`'s default, which `ps.gravity` takes.
+const GRAVITY: f32 = 800.0;
+
+/// `PM_Accelerate`: `v` gains, along `dir`, up to `scale` times `speed`, short of
+/// moving at `speed` that way.
+fn accelerate(v: &mut Vec3, dir: Vec3, speed: f32, scale: f32) {
+    let current = v[0] * dir[0] + v[1] * dir[1] + v[2] * dir[2];
+    let add = speed - current;
+    if add > 0.0 {
+        let accel = (scale * speed).min(add);
+        *v = [0, 1, 2].map(|k| v[k] + accel * dir[k]);
+    }
+}
+
+/// `PM_ClipVelocity`: `v` with its part into the plane of normal `n` taken off,
+/// `overbounce` times over.
+fn clip_velocity(v: Vec3, n: Vec3, overbounce: f32) -> Vec3 {
+    let mut backoff = v[0] * n[0] + v[1] * n[1] + v[2] * n[2];
+    backoff = if backoff < 0.0 {
+        backoff * overbounce
+    } else {
+        backoff / overbounce
+    };
+    [0, 1, 2].map(|k| v[k] - n[k] * backoff)
+}
+
+/// `VectorNormalize2`: `v` times the inverse of its length (not divided by it, a
+/// last bit apart), zero for zero.
+fn normalized(v: Vec3) -> Vec3 {
+    let len = length(v);
+    if len == 0.0 {
+        return [0.0; 3];
+    }
+    let inverse = 1.0 / len;
+    v.map(|x| x * inverse)
+}
+
+fn cross(a: Vec3, b: Vec3) -> Vec3 {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+fn dot3(a: Vec3, b: Vec3) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+/// `PM_SlideMove` of `w`'s box (`mins`..`maxs`) for `time` seconds on `ground`,
+/// with [`GRAVITY`] if `gravity` (its velocity averaged over the frame, the
+/// fall's end kept): up to four sweeps, each stopping at a plane and sliding
+/// along it and the planes met before, stopping dead in a corner of three. A
+/// walking NPC is kept out of botclip too, unless it starts in it or lands on
+/// top of it. Whether anything stopped it.
+fn slide_move(
+    w: &mut Walk,
+    time: f32,
+    gravity: bool,
+    ground: Ground,
+    world: &Collision,
+    mins: Vec3,
+    maxs: Vec3,
+) -> bool {
+    let mut botclip = ground.walking;
+    let mut end_velocity = w.velocity;
+    if gravity {
+        end_velocity[2] -= GRAVITY * time;
+        w.velocity[2] = (w.velocity[2] + end_velocity[2]) * 0.5;
+        if let Some(n) = ground.plane {
+            w.velocity = clip_velocity(w.velocity, n, OVERCLIP);
+        }
+    }
+    let mut time_left = time;
+    let mut planes: Vec<Vec3> = Vec::with_capacity(5);
+    if let Some(n) = ground.plane {
+        planes.push(n);
+    }
+    planes.push(normalized(w.velocity));
+    let mut bumps = 0;
+    while bumps < 4 {
+        let end = [0, 1, 2].map(|k| w.origin[k] + time_left * w.velocity[k]);
+        let mut tr = world.trace(w.origin, end, mins, maxs, MASK_NPCSOLID);
+        if botclip {
+            // A trace's contents are not kept: a trace that stops sooner with
+            // botclip than without it stopped at botclip.
+            let with = world.trace(w.origin, end, mins, maxs, MASK_NPCSOLID | CONTENTS_BOTCLIP);
+            let hit_botclip = with.fraction < tr.fraction || with.start_solid && !tr.start_solid;
+            if hit_botclip && (with.all_solid || with.start_solid) {
+                botclip = false;
+            } else if !(hit_botclip && with.normal[2] > 0.0) {
+                tr = with;
+            }
+        }
+        if tr.all_solid {
+            w.velocity[2] = 0.0;
+            return true;
+        }
+        if tr.fraction > 0.0 {
+            w.origin = tr.end;
+        }
+        if tr.fraction == 1.0 {
+            break;
+        }
+        time_left -= time_left * tr.fraction;
+        if planes.len() >= 5 {
+            w.velocity = [0.0; 3];
+            return true;
+        }
+        let normal = tr.normal;
+        if planes.iter().any(|p| dot3(normal, *p) > 0.99) {
+            w.velocity = [0, 1, 2].map(|k| normal[k] + w.velocity[k]);
+            bumps += 1;
+            continue;
+        }
+        planes.push(normal);
+        for i in 0..planes.len() {
+            if dot3(w.velocity, planes[i]) >= 0.1 {
+                continue;
+            }
+            let mut clip = clip_velocity(w.velocity, planes[i], OVERCLIP);
+            let mut end_clip = clip_velocity(end_velocity, planes[i], OVERCLIP);
+            for j in 0..planes.len() {
+                if j == i || dot3(clip, planes[j]) >= 0.1 {
+                    continue;
+                }
+                clip = clip_velocity(clip, planes[j], OVERCLIP);
+                end_clip = clip_velocity(end_clip, planes[j], OVERCLIP);
+                if dot3(clip, planes[i]) >= 0.0 {
+                    continue;
+                }
+                let dir = normalized(cross(planes[i], planes[j]));
+                clip = dir.map(|x| x * dot3(dir, w.velocity));
+                end_clip = dir.map(|x| x * dot3(dir, end_velocity));
+                for k in 0..planes.len() {
+                    if k == i || k == j || dot3(clip, planes[k]) >= 0.1 {
+                        continue;
+                    }
+                    w.velocity = [0.0; 3];
+                    return true;
+                }
+            }
+            w.velocity = clip;
+            end_velocity = end_clip;
+            break;
+        }
+        bumps += 1;
+    }
+    if gravity {
+        w.velocity = end_velocity;
+    }
+    bumps != 0
+}
+
 /// `CVec3::Truncate`: `v` cut to `max` long; its length after.
 fn truncate(v: &mut Vec3, max: f32) -> f32 {
     let len = length(*v);
@@ -757,11 +963,22 @@ fn angle_subtract(a1: f32, a2: f32) -> f32 {
     a
 }
 
+/// `SHORT2ANGLE(ANGLE2SHORT(angle))`: `angle` as a command keeps it, in 65536ths
+/// of a turn (-180..180).
+fn short_angle(angle: f32) -> f32 {
+    let short = (angle * 65536.0 / 360.0) as i32 as i16;
+    short as f32 * (360.0 / 65536.0)
+}
+
+/// `AngleNormalize360`: `angle` in 0..360, in 65536ths of a turn.
+fn angle_normalize360(angle: f32) -> f32 {
+    (360.0f32 / 65536.0) * ((angle * (65536.0f32 / 360.0)) as i32 & 65535) as f32
+}
+
 /// `AngleDelta`: `angle1 - angle2` normalized to -180..=180 in 65536ths of a turn
 /// (`AngleNormalize180`).
 fn angle_delta(angle1: f32, angle2: f32) -> f32 {
-    let a =
-        (360.0f32 / 65536.0) * (((angle1 - angle2) * (65536.0f32 / 360.0)) as i32 & 65535) as f32;
+    let a = angle_normalize360(angle1 - angle2);
     if a > 180.0 { a - 360.0 } else { a }
 }
 
@@ -845,9 +1062,7 @@ impl<'a> Body<'a> {
                     (error - decay).max(0.0)
                 };
             }
-            // ANGLE2SHORT, then SHORT2ANGLE of the short.
-            let short = ((target + error) * 65536.0 / 360.0) as i32 as i16;
-            self.view[k] = short as f32 * (360.0 / 65536.0);
+            self.view[k] = short_angle(target + error);
         }
         if !exact && self.view[1] != yaw {
             self.yaw.push((level, self.view[1]));
@@ -955,12 +1170,11 @@ impl<'a> Body<'a> {
     }
 
     /// `NAV::GoTo` toward `goal` on the graph `g` at level time `level`: the
-    /// shortest path from its nearest point to the goal's (`NAV::FindPath`; on an
-    /// edge, its first point, where the original draws one of the two), its next
-    /// point sought (`STEER::Path`, slowing within that point's radius), then
-    /// collisions avoided. Whether it has a path. The path is found anew on each
-    /// think that takes the graph (`NAV::UpdatePath` is left out): the thinks
-    /// between go straight.
+    /// goal's nearest point (on an edge, its first point, where the original draws
+    /// one of the two); the path it has, its reached points dropped
+    /// (`NAV::UpdatePath`), else one found (`NAV::FindPath`); its next point sought
+    /// (`STEER::Path`, slowing within that point's radius), then collisions
+    /// avoided. Whether it has a path to follow.
     fn nav_go_to(
         &mut self,
         s: &mut Steer,
@@ -970,19 +1184,25 @@ impl<'a> Body<'a> {
         world: &Collision,
         bodies: &[Obstacle],
     ) -> bool {
-        let first = |n: Nearest| match n {
-            Nearest::Node(i) => i,
-            Nearest::Edge(e) => g.edges[e].a,
-        };
-        let Some(target) = g.nearest(world, goal, None, None).map(first) else {
+        let Some(target) = g
+            .nearest(world, goal, None, None)
+            .map(|n| first_point(g, n))
+        else {
             return false;
         };
-        let Some(start) = self.nearest_point(g, world, Some(target)).map(first) else {
+        let has = self.walk.path.as_ref().is_some_and(PathUser::has_path);
+        if !(has && self.update_path(g, world, target, level))
+            && !self.find_path(g, world, target, level)
+        {
             return false;
-        };
-        let (mins, maxs) = (self.stance.mins, self.stance.maxs);
-        let path = g.find_path(world, self.walk.origin, mins, maxs, start, target);
-        let Some(next) = path.as_ref().and_then(|p| p.last()) else {
+        }
+        let Some(next) = self
+            .walk
+            .path
+            .as_ref()
+            .filter(|p| p.has_path())
+            .and_then(|p| p.points.last())
+        else {
             return false;
         };
         s.next = Some(next.point);
@@ -991,6 +1211,86 @@ impl<'a> Body<'a> {
         }
         self.avoid_collisions(s, level, world, bodies);
         true
+    }
+
+    /// `NAV::UpdatePath` toward point `target` at level time `level`: the points
+    /// it has reached dropped (within each one's reached radius, heights apart by
+    /// less than [`nav::Z_CULL_OFFSET`] left out); none left, or a reached point on a
+    /// path to another target, leaves it without one; a next point overdue finds
+    /// the path to the same end again. Whether it has one.
+    fn update_path(&mut self, g: &Graph, world: &Collision, target: usize, level: i32) -> bool {
+        let at = self.walk.origin;
+        let user = self.walk.path.as_mut().unwrap();
+        let mut reached = false;
+        while let Some(p) = user.points.last() {
+            let mut d = sub(p.point, at);
+            if (at[2] - p.point[2]).abs() < nav::Z_CULL_OFFSET {
+                d[2] = 0.0;
+            }
+            if d[0] * d[0] + d[1] * d[1] + d[2] * d[2] >= p.reached_radius {
+                break;
+            }
+            reached = true;
+            user.points.pop();
+        }
+        let Some(next) = user.points.last() else {
+            return false;
+        };
+        if reached && user.end != Some(target) {
+            return false;
+        }
+        if next.eta < level as f32 {
+            let Some(end) = user.end.take() else {
+                self.walk.path = None;
+                return false;
+            };
+            if !self.find_path(g, world, end, level) {
+                self.walk.path.as_mut().unwrap().end = Some(end);
+                return false;
+            }
+        }
+        true
+    }
+
+    /// `NAV::FindPath` to point `target` at level time `level`: from its nearest
+    /// point toward it, the shortest path, timed at its walking or running speed
+    /// ([`Graph::find_path`]); one found to the same target less than
+    /// [`ASTAR_MS`] ago is kept as it is. Whether it found one.
+    fn find_path(&mut self, g: &Graph, world: &Collision, target: usize, level: i32) -> bool {
+        let Some(start) = self
+            .nearest_point(g, world, Some(target))
+            .map(|n| first_point(g, n))
+        else {
+            return false;
+        };
+        let user = self.walk.path.get_or_insert_with(PathUser::default);
+        if user.end == Some(target) && level < user.astar_until {
+            return user.success;
+        }
+        user.end = Some(target);
+        let speed = if self.walk.running {
+            self.stance.run_speed
+        } else {
+            self.stance.walk_speed
+        };
+        let (mins, maxs) = (self.stance.mins, self.stance.maxs);
+        let path = g.find_path(
+            world,
+            self.walk.origin,
+            mins,
+            maxs,
+            start,
+            target,
+            level,
+            speed,
+        );
+        let user = self.walk.path.as_mut().unwrap();
+        user.astar_until = level + ASTAR_MS;
+        user.success = path.is_some();
+        if let Some(points) = path {
+            user.points = points;
+        }
+        user.success
     }
 
     /// `STEER::AvoidCollisions` at level time `level` (none ignored: no NPC here
@@ -1163,6 +1463,7 @@ impl<'a> Body<'a> {
             ignore: None,
         };
         if self.safe_to_go(goal, level, world, nav) {
+            self.walk.path = None;
             s.seek(goal, radius * 4.0, 1.0);
             self.avoid_collisions(&mut s, level, world, bodies);
         } else if !nav.is_some_and(|g| self.nav_go_to(&mut s, g, goal, level, world, bodies)) {
@@ -1186,7 +1487,7 @@ impl<'a> Body<'a> {
             w.dir = velocity.map(|x| x / len);
             w.path_yaw = vectoangles(velocity)[1];
         }
-        self.desired = [0.0, w.path_yaw];
+        self.desired = [0.0, angle_normalize360(w.path_yaw)];
         // ps.speed is a whole number.
         w.speed = speed as i32 as f32;
         if speed > 0.0 {
@@ -1202,14 +1503,77 @@ impl<'a> Body<'a> {
         }
     }
 
-    /// `PM_WalkMove` on level ground for `msec`: friction (`PM_Friction`: at least
-    /// [`STOP_SPEED`] slows by [`FRICTION`] a second), then acceleration along its
-    /// move direction toward its speed (`PM_Accelerate`, [`ACCELERATE`]); its box
-    /// then sweeps as far as it can go (`PM_StepSlideMove`: a wall stops it there,
-    /// its velocity clipped along it). Whether it moved.
-    fn walk_move(&mut self, msec: i32, world: &Collision) -> bool {
-        let w = &mut self.walk;
+    /// `Pmove` for `msec`, as an NPC moves (no jumps, water, ladders or knockback;
+    /// the other NPCs are not in the way): the ground found a quarter unit below
+    /// its box (`PM_GroundTrace`: walked on when no steeper than
+    /// [`MIN_WALK_NORMAL`]; landing with no command stops its fall), then on the
+    /// ground `PM_WalkMove`, else `PM_AirMove`, then the ground looked for again
+    /// once it moved. Whether it moved.
+    fn pmove(&mut self, msec: i32, world: &Collision) -> bool {
         let time = msec as f32 * 0.001;
+        let start = self.walk.origin;
+        let ground = self.ground_trace(world);
+        if ground.walking {
+            self.walk_move(time, ground, world);
+        } else {
+            self.air_move(time, ground, world);
+        }
+        if self.walk.origin != start {
+            self.ground_trace(world);
+        }
+        self.walk.origin != start
+    }
+
+    /// `PM_GroundTrace`: what its box stands on, which sets whether it is on the
+    /// ground (`groundEntityNum`; `PM_CrashLand` is left out).
+    fn ground_trace(&mut self, world: &Collision) -> Ground {
+        let w = &mut self.walk;
+        let o = w.origin;
+        let tr = world.trace(
+            o,
+            [o[0], o[1], o[2] - 0.25],
+            self.stance.mins,
+            self.stance.maxs,
+            MASK_NPCSOLID,
+        );
+        let none = Ground {
+            plane: None,
+            walking: false,
+        };
+        // PM_CorrectAllSolid's nudges are left out.
+        if tr.all_solid || tr.fraction == 1.0 {
+            w.on_ground = false;
+            return none;
+        }
+        let v = w.velocity;
+        if v[2] > 100.0 && v[0] * tr.normal[0] + v[1] * tr.normal[1] + v[2] * tr.normal[2] > 10.0 {
+            w.on_ground = false;
+            return none;
+        }
+        if tr.normal[2] < MIN_WALK_NORMAL {
+            w.on_ground = false;
+            return Ground {
+                plane: Some(tr.normal),
+                walking: false,
+            };
+        }
+        if !w.on_ground && w.forward == 0 && w.right == 0 {
+            w.velocity[2] = 0.0;
+        }
+        w.on_ground = true;
+        Ground {
+            plane: Some(tr.normal),
+            walking: true,
+        }
+    }
+
+    /// `PM_WalkMove` for `time` seconds on `ground`: friction (`PM_Friction`: at
+    /// least [`STOP_SPEED`] slows by [`FRICTION`] a second, the slope's part left
+    /// out), acceleration along its move direction toward its speed
+    /// (`PM_Accelerate`, [`ACCELERATE`]), the velocity turned along the ground's
+    /// plane at the same speed, then `PM_StepSlideMove` without gravity.
+    fn walk_move(&mut self, time: f32, ground: Ground, world: &Collision) {
+        let w = &mut self.walk;
         let v = &mut w.velocity;
         let speed = (v[0] * v[0] + v[1] * v[1]).sqrt();
         if speed < 1.0 {
@@ -1220,37 +1584,92 @@ impl<'a> Body<'a> {
             let scale = (speed - drop).max(0.0) / speed;
             *v = v.map(|x| x * scale);
         }
-        let current = v[0] * w.dir[0] + v[1] * w.dir[1] + v[2] * w.dir[2];
-        let add = w.speed - current;
-        if add > 0.0 {
-            let accel = (ACCELERATE * time * w.speed).min(add);
-            *v = [0, 1, 2].map(|k| v[k] + accel * w.dir[k]);
-        }
+        accelerate(v, w.dir, w.speed, ACCELERATE * time);
+        let normal = ground.plane.unwrap();
+        let speed = length(*v);
+        *v = clip_velocity(*v, normal, OVERCLIP);
+        *v = normalized(*v).map(|x| x * speed);
         if v[0] == 0.0 && v[1] == 0.0 {
-            return false;
+            return;
         }
-        let end = [0, 1, 2].map(|k| w.origin[k] + v[k] * time);
-        let tr = world.trace(
-            w.origin,
-            end,
-            self.stance.mins,
-            self.stance.maxs,
-            MASK_NPCSOLID,
-        );
-        if tr.fraction < 1.0 {
-            // PM_ClipVelocity.
-            let n = tr.normal;
-            let mut backoff = v[0] * n[0] + v[1] * n[1] + v[2] * n[2];
-            backoff = if backoff < 0.0 {
-                backoff * OVERCLIP
-            } else {
-                backoff / OVERCLIP
-            };
-            *v = [0, 1, 2].map(|k| v[k] - n[k] * backoff);
+        self.step_slide_move(time, false, ground, world);
+    }
+
+    /// `PM_AirMove` for `time` seconds: no friction; acceleration
+    /// ([`AIR_ACCELERATE`]) along its command, level (from its view's yaw: an
+    /// NPC's command is 127 across, its speed not scaled), more strongly against
+    /// its velocity ([`AIR_DECEL_RATE`]); clipped along a plane too steep to walk
+    /// on; then `PM_StepSlideMove` with gravity.
+    fn air_move(&mut self, time: f32, ground: Ground, world: &Collision) {
+        let yaw = self.view[1].to_radians();
+        let w = &mut self.walk;
+        let (f, r) = (w.forward as f32, w.right as f32);
+        let dir = [
+            yaw.cos() * f + yaw.sin() * r,
+            yaw.sin() * f - yaw.cos() * r,
+            0.0,
+        ];
+        let mut wish = length(dir);
+        let dir = normalized(dir);
+        let v = &mut w.velocity;
+        if v[0] * dir[0] + v[1] * dir[1] + v[2] * dir[2] < 0.0 {
+            wish *= AIR_DECEL_RATE;
         }
-        let moved = tr.end != w.origin;
+        accelerate(v, dir, wish, AIR_ACCELERATE * time);
+        if let Some(n) = ground.plane {
+            *v = clip_velocity(*v, n, OVERCLIP);
+        }
+        self.step_slide_move(time, true, ground, world);
+    }
+
+    /// `PM_StepSlideMove` for `time` seconds: a slide (`PM_SlideMove`) that is
+    /// stopped tries again from [`STEPSIZE`] higher (unless rising off the edge of
+    /// the ground) and drops back down onto what it finds, keeping whichever went
+    /// further (`g_stepSlideFix`). It never steps down: walking off a step, it
+    /// falls.
+    fn step_slide_move(&mut self, time: f32, gravity: bool, ground: Ground, world: &Collision) {
+        let (mins, maxs) = (self.stance.mins, self.stance.maxs);
+        let step = if maxs[2] <= 0.0 { 4.0 } else { STEPSIZE };
+        let w = &mut self.walk;
+        let (start_o, start_v) = (w.origin, w.velocity);
+        if !slide_move(w, time, gravity, ground, world, mins, maxs) {
+            return;
+        }
+        let below = |at: Vec3| [at[0], at[1], at[2] - step];
+        let tr = world.trace(start_o, below(start_o), mins, maxs, MASK_NPCSOLID);
+        if w.velocity[2] > 0.0 && (tr.fraction == 1.0 || tr.normal[2] < 0.7) {
+            return;
+        }
+        if w.velocity[0] == 0.0 && w.velocity[1] == 0.0 {
+            return;
+        }
+        let (down_o, down_v) = (w.origin, w.velocity);
+        let up = [start_o[0], start_o[1], start_o[2] + step];
+        let tr = world.trace(start_o, up, mins, maxs, MASK_NPCSOLID);
+        if tr.all_solid || tr.start_solid || tr.fraction == 0.0 {
+            return;
+        }
         w.origin = tr.end;
-        moved
+        w.velocity = start_v;
+        slide_move(w, time, gravity, ground, world, mins, maxs);
+        let slid = sub(down_o, start_o);
+        let stepped = sub(tr.end, w.origin);
+        let len2 = |v: Vec3| v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+        if stepped[0].abs() < 0.1 && stepped[1].abs() < 0.1 && len2(slid) > len2(stepped) {
+            w.origin = down_o;
+            w.velocity = down_v;
+            return;
+        }
+        let tr = world.trace(w.origin, below(w.origin), mins, maxs, MASK_NPCSOLID);
+        if tr.all_solid {
+            w.origin = down_o;
+            w.velocity = down_v;
+        } else {
+            w.origin = tr.end;
+            if tr.fraction < 1.0 {
+                w.velocity = clip_velocity(w.velocity, tr.normal, OVERCLIP);
+            }
+        }
     }
 
     /// `PM_SetAnimFinal` for part `part` (0 the legs, 1 the torso) in level frame
@@ -1470,7 +1889,7 @@ impl<'a> Actor<'a> {
     }
 
     /// The movement frame of level frame `level`, `msec` after the last: the timers
-    /// count down (`PM_DropTimers`), it walks ([`Body::walk_move`]), parts no longer
+    /// count down (`PM_DropTimers`), it moves ([`Body::pmove`]), parts no longer
     /// held play what its command asks (`PM_Footsteps`, `PM_TorsoAnimation`, which
     /// play an animation the skeleton has, without restarting it), then
     /// `G_CheckClientIdle`. Nothing for an actor without a body.
@@ -1494,7 +1913,8 @@ impl<'a> Actor<'a> {
         let body = self.body.as_mut().unwrap();
         let w = &body.walk;
         let before = w.origin;
-        if (w.velocity != [0.0; 3] || w.dir != [0.0; 3]) && body.walk_move(msec, world) {
+        if (w.velocity != [0.0; 3] || w.dir != [0.0; 3] || !w.on_ground) && body.pmove(msec, world)
+        {
             let offset = sub(body.walk.origin, body.stance.origin);
             body.moves.push((level, offset));
         }
@@ -2633,12 +3053,15 @@ pub fn timelines(
             unarmed: Vec::new(),
             idle_time: n.stance.still_since,
             slots: [None; 5],
-            view: [0.0, n.stance.yaw],
+            // Its first movement frame keeps the view in 65536ths of a turn
+            // (`PM_UpdateViewAngles`).
+            view: [0.0, short_angle(n.stance.yaw)],
             desired: [0.0, n.stance.yaw],
             yaw_speed: n.stance.yaw_speed,
             yaw: Vec::new(),
             walk: Walk {
                 origin: n.stance.origin,
+                on_ground: true,
                 ..Walk::default()
             },
             moves: Vec::new(),

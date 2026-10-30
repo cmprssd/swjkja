@@ -1419,3 +1419,51 @@ and drawing such pipes some other way, would match no view held still.
   the same academy4 lines as before and academy3's too.
 - academy3's Luke now walks at the trace's own frames (78 of them, 14,850 to
   18,700; `academy3s_luke_walks_as_in_the_original`), no longer a frame early.
+
+## 2026-10-30: How NPCs keep their paths and take stairs (decided by Claude, pending review)
+
+- **Traced scene: yavin2's intro** (Kyle and Rosh to kyleNav1 and roshNav1, 415
+  units off, down a flight of stairs into the garden; `WALK=1`, 200 frames), over
+  academy4's Luke, whose walk from the stage turned out to start with a teleport
+  (`SET_ORIGIN putlukehere`, not modelled) and never takes the stairs, and over
+  academy2's four 800-unit walks (no stairs).
+- **A path is kept from one think that takes the graph to the next**
+  (`NAV::UpdatePath`): the points reached (within their reached radius, heights
+  closer than 60 left out) are dropped; a next point overdue (its ETA, from the
+  path's length at a quarter of the walking speed) finds the path again; steering
+  straight drops it (`NAV::ClearPath`). A search to the same end is not run again
+  for 3000 ms (`mLastAStarTime`: the original draws 3000 to 6000, not replayed; the
+  low end). Found: Kyle's first think seeks the point where his path passes beside
+  him, 2.4 units off; the next heads for the stairs. Found anew each think, as
+  before, he sought that point forever.
+- **`Pmove` as an NPC takes it**: `PM_GroundTrace` (a quarter unit down; steeper
+  than 0.7 is not walked on; landing with no command stops the fall), then
+  `PM_WalkMove` (along the ground's plane at the same speed: down a ramp the move
+  direction's height counts) or `PM_AirMove` (the command, from the view's yaw,
+  steers at 4; gravity 800), each through `PM_StepSlideMove` (`PM_SlideMove`'s four
+  bumps and clip planes, a step up of 18, `g_stepSlideFix`). It never steps down:
+  walking off a step, an NPC falls, as the trace shows (40 units a second faster
+  each frame). Left out: other NPCs in the way of the move (`pm->trace` hits their
+  boxes; avoidance keeps them apart here), `PM_CrashLand` and the falling and
+  landing animations, `pm_time`'s landing lock (falls faster than 200), jumps,
+  water, ladders.
+- **Found: the original's trace skips a brush outside the sweep's bounds with no
+  epsilon** (`CM_TraceThroughBrush`), so a box ending within 0.125 of a floor, short
+  of it, misses it: Kyle, 0.19 above the garden's floor, falls one more frame
+  instead of walking. Our trace had a unit's margin; it now has none, and sweeps the
+  box about its centre as `CM_Trace` does (a sloped plane's distances round as the
+  original's: a 0.0003 difference on the stairs' ramp had tipped a think's speed
+  from 90 to 89).
+  Two NPCs that settle onto slopes (kor2's st1, a vjun2 imp) rest 0.0002 lower.
+- **Found: waypoints standing on the floor are lifted clear of it**
+  (`G_CheckInSolid`'s fix, from `SP_waypoint` and `SP_waypoint_small`): yavin2's at
+  88 rest at 88.125, and a path's point beside an NPC is then reached by a clear
+  trace. A point still in solid at a crouch's height is not spawned.
+- **Angles as the original rounds them**: the yaw steering turns to is kept in
+  65536ths of a turn (`AngleNormalize360`, `STEER::DeActivate`), and so is an NPC's
+  view from its first movement frame (academy3's Luke begins at 49.9988, as the
+  trace logs). His traced view yaws now match to the trace's four decimals.
+  Normalizing multiplies by the inverse length (`VectorNormalize`).
+- **Every traced frame of both walkers matches** (Kyle 100, Rosh 96, to four
+  decimals), a frame later than the original: Kyle's navgoal is set a frame later
+  here, when the voice line before it ends (that line's end is not traced).
