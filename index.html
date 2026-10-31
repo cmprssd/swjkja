@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>swjkja Progress</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,500..800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; the comparison viewer runs wide at the top, the views as a grid, numbers last. */
+:root {
+  --bg: #eef0f3; --panel: #ffffff; --fg: #15191f; --muted: #5a6370; --rule: #d5d9e0;
+  --accent: #2f5fd0; --accent-soft: #dfe7fa; --good: #1f8a5b; --warn: #b7791f; --bad: #c2413a;
+  --display: "Archivo", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1216; --panel: #171b21; --fg: #e6e9ee; --muted: #9aa3b0; --rule: #2a313b;
+  --accent: #7fa3ff; --accent-soft: #1d2840; --good: #4cc38a; --warn: #e0a548; --bad: #ef6b63; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f1216; --panel: #171b21; --fg: #e6e9ee; --muted: #9aa3b0; --rule: #2a313b;
+  --accent: #7fa3ff; --accent-soft: #1d2840; --good: #4cc38a; --warn: #e0a548; --bad: #ef6b63; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font: 15px/1.55 var(--body); }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 28px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 56px; }
+h1, h2, h3 { font-family: var(--display); font-stretch: 75%; text-wrap: balance; margin: 0; line-height: 1.05; }
+h1 { font-size: clamp(40px, 7vw, 72px); font-weight: 800; letter-spacing: -0.01em; }
+h2 { font-size: 30px; font-weight: 700; }
+h3 { font-size: 18px; font-weight: 700; font-stretch: 90%; }
+p { margin: 0; max-width: 68ch; }
+.muted { color: var(--muted); }
+.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+section { display: grid; gap: 18px; min-width: 0; }
+.num { font-variant-numeric: tabular-nums; }
+header { display: grid; gap: 18px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+.tile { background: var(--panel); padding: 14px 16px; display: grid; gap: 4px; align-content: start; }
+.tile b { font: 700 30px/1 var(--display); font-stretch: 80%; font-variant-numeric: tabular-nums; }
+.tile span { font-size: 13px; color: var(--muted); }
+
+/* The comparison viewer */
+.viewer { display: grid; gap: 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 500 13px/1 var(--mono); padding: 7px 10px; border: 1px solid var(--rule); background: var(--panel); color: var(--fg); cursor: pointer; border-radius: 3px; }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--panel); }
+.chip:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.stage { position: relative; aspect-ratio: 16 / 9; max-width: 100%; background: #000; overflow: hidden; user-select: none; touch-action: pan-y; cursor: ew-resize; }
+.stage img { pointer-events: none; -webkit-user-drag: none; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.stage .top { clip-path: inset(0 0 0 var(--cut, 50%)); }
+.stage .bar, .stage .tag { pointer-events: none; }
+.stage .bar { position: absolute; top: 0; bottom: 0; left: var(--cut, 50%); width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.4); }
+.stage .tag { position: absolute; top: 10px; font: 500 12px/1 var(--mono); color: #fff; background: rgba(0,0,0,.6); padding: 6px 8px; }
+.stage .tag.l { left: 10px; } .stage .tag.r { right: 10px; }
+.controls { display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: center; }
+.controls input[type=range] { width: 100%; accent-color: var(--accent); }
+button.play { font: 600 13px/1 var(--body); padding: 9px 14px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--fg); cursor: pointer; border-radius: 3px; min-width: 76px; }
+.caption { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline; }
+.caption .pr { font: 500 13px var(--mono); color: var(--accent); }
+.caption .label { font: 700 20px/1.2 var(--display); font-stretch: 85%; }
+.score { font: 500 13px var(--mono); padding: 3px 7px; border-radius: 3px; white-space: nowrap; }
+.s0 { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+.s1 { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.s2 { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+.ticks { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; }
+.ticks button { height: 26px; border: 0; padding: 0; cursor: pointer; background: var(--rule); position: relative; }
+.ticks button i { position: absolute; left: 0; right: 0; bottom: 0; background: var(--accent); opacity: .55; }
+.ticks button[aria-current="true"] i { opacity: 1; }
+
+.chart { overflow-x: auto; }
+.chart svg { display: block; min-width: 560px; width: 100%; height: auto; }
+.chart text { fill: var(--muted); font: 11px var(--mono); }
+.chart .grid { stroke: var(--rule); }
+
+.videos { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+figure { margin: 0; display: grid; gap: 8px; min-width: 0; }
+video { width: 100%; max-width: 100%; aspect-ratio: 16 / 9; background: #000; display: block; }
+figcaption { font-size: 13px; color: var(--muted); }
+
+.filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.views { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px; }
+.card { background: var(--panel); border: 1px solid var(--rule); display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; min-width: 0; }
+.card .pic { aspect-ratio: 16 / 9; background: #000; overflow: hidden; }
+.card .pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.card .meta { display: grid; gap: 8px; padding: 10px 12px 12px; }
+.card .row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 10px; align-items: center; }
+.card .name { font: 500 14px var(--mono); overflow-wrap: anywhere; }
+.seg { display: flex; border: 1px solid var(--rule); border-radius: 3px; overflow: hidden; max-width: 100%; }
+.seg button { font: 500 12px var(--body); padding: 5px 9px; white-space: nowrap; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--fg); }
+
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font: 500 12px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+.tablewrap { overflow-x: auto; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 28px; }
+.two > * { min-width: 0; }
+footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; border-top: 1px solid var(--rule); padding-top: 18px; }
+code { font: 13px var(--mono); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">STAR WARS Jedi Knight: Jedi Academy · new engine in Rust</div>
+    <h1>swjkja Progress</h1>
+    <p id="lede" class="muted"></p>
+    <div class="tiles" id="tiles"></div>
+  </header>
+
+  <section aria-labelledby="h-before">
+    <div class="eyebrow">Before and after</div>
+    <h2 id="h-before">The same view, built by each milestone</h2>
+    <p class="muted">Each milestone's commit is rebuilt and renders the same view at the same game time.
+      Drag across the picture: the original game (OpenJK) is on the left, swjkja at the chosen milestone on the right.
+      The score is the mean difference per channel (0 to 255) over every pixel, against today's reference screenshot.</p>
+    <div class="viewer">
+      <div class="chips" id="hviews" role="group" aria-label="View"></div>
+      <div class="stage" id="stage">
+        <img id="imgRef" draggable="false" alt="The original game's screenshot">
+        <img id="imgOurs" class="top" draggable="false" alt="swjkja's render at the chosen milestone">
+        <div class="bar"></div>
+        <span class="tag l">Original</span><span class="tag r" id="tagR">swjkja</span>
+      </div>
+      <div class="caption" id="cap"></div>
+      <div class="controls">
+        <button class="play" id="play" type="button">Play</button>
+        <input type="range" id="step" min="0" max="0" value="0" aria-label="Milestone">
+      </div>
+      <div class="ticks" id="ticks" aria-label="Score at each milestone (bar height: closer to the original is taller)"></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-curve">
+    <div class="eyebrow">Distance from the original</div>
+    <h2 id="h-curve">Every history view, milestone by milestone</h2>
+    <p class="muted">Mean difference of each view (log scale), one line per view. A view missing at a milestone
+      was not drawn by that build. PR #12's flat preview (18.07 on the worst multiplayer view) cannot be rebuilt:
+      its shader was never committed.</p>
+    <div class="chart" id="curve"></div>
+  </section>
+
+  <section aria-labelledby="h-vid" id="vidsec">
+    <div class="eyebrow">In motion</div>
+    <h2 id="h-vid">Videos</h2>
+    <div class="videos" id="videos"></div>
+  </section>
+
+  <section aria-labelledby="h-views">
+    <div class="eyebrow">Every reference view</div>
+    <h2 id="h-views">The original, swjkja, and the difference</h2>
+    <p class="muted" id="viewsNote"></p>
+    <div class="filters" id="filters" role="group" aria-label="Filter views"></div>
+    <div class="views" id="views"></div>
+  </section>
+
+  <section aria-labelledby="h-num">
+    <div class="eyebrow">The numbers</div>
+    <h2 id="h-num">How the work went</h2>
+    <div class="two">
+      <div><h3>PRs merged per working day</h3><div class="chart" id="perday"></div></div>
+      <div><h3>Lines of Rust and tests, after each PR</h3><div class="chart" id="growth"></div></div>
+    </div>
+    <div class="two">
+      <div class="tablewrap"><h3>Crates</h3><table id="crates"></table></div>
+      <div class="tablewrap"><h3>How fast</h3>
+        <table>
+          <thead><tr><th>ffa3 demo path, 1,182 frames, 1280x720, Intel HD 630</th><th class="n">OpenJK</th><th class="n">swjkja</th></tr></thead>
+          <tbody>
+            <tr><td>Idle PC, window</td><td class="n">265-271 FPS</td><td class="n">281-285 FPS</td></tr>
+            <tr><td>Idle PC, exclusive fullscreen</td><td class="n">279-290 FPS</td><td class="n">306-329 FPS</td></tr>
+            <tr><td>Busy PC, window</td><td class="n">108-137 FPS</td><td class="n">158-159 FPS</td></tr>
+            <tr><td>Busy PC, fullscreen</td><td class="n">143-159 FPS</td><td class="n">192-209 FPS</td></tr>
+            <tr><td>Offscreen (no presenting)</td><td class="n">233-242 FPS</td><td class="n">399-404 FPS</td></tr>
+          </tbody>
+        </table>
+        <p class="muted" style="font-size:13px;margin-top:8px">World only, three alternating runs each, measured 2026-10-10 (BASELINE.md).
+          Worst frames 8-23 ms against the original's 27-31 ms on the idle PC.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div id="foot"></div>
+    <div>Built by <code>scripts/progress_page.py</code> from <code>scripts/progress.py</code>'s counts,
+      <code>bench/history.sh</code>'s milestone renders and <code>bench/progress-media.sh</code>'s videos.
+      Served from the <code>gh-pages</code> branch, so the game's imagery stays off main.</div>
+  </footer>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const el = (tag, attrs = {}, kids = []) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "text") e.textContent = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v);
+  }
+  for (const k of [].concat(kids)) if (k) e.append(k);
+  return e;
+};
+const fmt = (n) => Number(n).toLocaleString("en-US");
+const cls = (m) => (m < 0.5 ? "s0" : m < 2 ? "s1" : "s2");
+const SVG = "http://www.w3.org/2000/svg";
+const svg = (tag, attrs) => { const e = document.createElementNS(SVG, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
+const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const day = (d) => `${months[+d.slice(5, 7) - 1]} ${+d.slice(8)}`;
+
+fetch("data.json").then((r) => r.json()).then(render);
+
+function render(d) {
+  const views = d.views.filter((v) => !v.missing);
+  const means = views.map((v) => v.mean).sort((a, b) => a - b);
+  const median = means.length ? (means[(means.length - 1) >> 1] + means[means.length >> 1]) / 2 : 0;
+  $("#lede").textContent = `A port of the 2003 game to Rust and Vulkan, checked view by view against the original engine. ` +
+    `As of ${d.as_of}, through PR #${d.last_pr}.`;
+  const tiles = [
+    [fmt(d.prs), `PRs merged in ${Object.keys(d.prs_per_day).length} working days`],
+    [median.toFixed(2), `median difference over ${views.length} reference views (0-255)`],
+    [`${views.filter((v) => v.mean < 0.5).length}/${views.length}`, "views under 0.5"],
+    [fmt(d.rust_lines), `lines of Rust in ${Object.keys(d.crates).length} crates`],
+    [fmt(d.tests), "tests"],
+    ["1.4-1.7x", "the original's frame rate, offscreen"],
+  ];
+  for (const [b, s] of tiles) $("#tiles").append(el("div", { class: "tile" }, [el("b", { text: b }), el("span", { text: s })]));
+  viewer(d.milestones);
+  curve(d.milestones);
+  videos(d.videos);
+  gallery(views, d.views_measured);
+  perDay(d.prs_per_day);
+  growth(d.growth);
+  crates(d.crates);
+  $("#foot").textContent = `${fmt(d.commits)} commits, ${fmt(d.prs)} PRs: ` +
+    Object.entries(d.pr_types).map(([t, n]) => `${n} ${t}`).join(", ") +
+    `. ${d.decisions.entries} decisions recorded, ${d.decisions.owner} chosen by the owner, ${d.decisions.claude} by Claude pending review.`;
+}
+
+function viewer(ms) {
+  if (!ms.length) return;
+  const names = [...new Set(ms.flatMap((m) => Object.keys(m.shots)))];
+  let view = names.includes("academy1_class") ? "academy1_class" : names[0];
+  let i = ms.length - 1, timer = null;
+  const stage = $("#stage"), range = $("#step");
+  range.max = ms.length - 1;
+  for (const n of names) $("#hviews").append(el("button", { class: "chip", type: "button", "aria-pressed": n === view, text: n,
+    onclick: (e) => { view = n; document.querySelectorAll("#hviews .chip").forEach((c) => c.setAttribute("aria-pressed", c === e.target)); show(); } }));
+  const show = () => {
+    const m = ms[i], shot = m.shots[view];
+    $("#imgRef").src = `img/ref/${view}.webp`;
+    $("#imgOurs").src = shot ? `img/h/${m.dir}/${view}.webp` : `img/ref/${view}.webp`;
+    $("#imgOurs").style.visibility = shot ? "visible" : "hidden";
+    $("#tagR").textContent = `swjkja at #${m.pr}`;
+    range.value = i;
+    $("#cap").replaceChildren(
+      el("span", { class: "pr", text: `#${m.pr} · ${m.date}` }),
+      el("span", { class: "label", text: m.label }),
+      shot ? el("span", { class: `score ${cls(shot.mean)}`, text: `${shot.mean.toFixed(2)} mean · ${shot.off}% off by >16` })
+           : el("span", { class: "score s2", text: "not drawn by this build" }));
+    const ticks = $("#ticks"); ticks.replaceChildren();
+    const top = Math.max(...ms.map((x) => x.shots[view]?.mean ?? 0), 1);
+    ms.forEach((x, j) => {
+      const s = x.shots[view];
+      const h = s ? 100 - 92 * Math.log1p(s.mean) / Math.log1p(top) : 0;
+      ticks.append(el("button", { type: "button", title: `#${x.pr} ${x.label}${s ? `: ${s.mean.toFixed(2)}` : ""}`, "aria-current": j === i,
+        "aria-label": `#${x.pr} ${x.label}`, onclick: () => { i = j; show(); } }, [el("i", { style: `height:${h}%` })]));
+    });
+  };
+  range.addEventListener("input", () => { i = +range.value; show(); });
+  const setCut = (x) => { const r = stage.getBoundingClientRect(); stage.style.setProperty("--cut", `${Math.min(100, Math.max(0, (x - r.left) / r.width * 100))}%`); };
+  stage.addEventListener("pointerdown", (e) => { e.preventDefault(); setCut(e.clientX); stage.setPointerCapture(e.pointerId); });
+  stage.addEventListener("pointermove", (e) => { if (e.buttons) setCut(e.clientX); });
+  $("#play").addEventListener("click", () => {
+    if (timer) { clearInterval(timer); timer = null; $("#play").textContent = "Play"; return; }
+    $("#play").textContent = "Pause";
+    if (i === ms.length - 1) { i = 0; show(); }
+    timer = setInterval(() => { if (i >= ms.length - 1) { $("#play").click(); return; } i++; show(); }, 1100);
+  });
+  // Preload the chosen view's milestones so playing does not flicker.
+  ms.forEach((m) => names.forEach((n) => { if (m.shots[n]) new Image().src = `img/h/${m.dir}/${n}.webp`; }));
+  show();
+}
+
+function curve(ms) {
+  if (!ms.length) return;
+  const names = [...new Set(ms.flatMap((m) => Object.keys(m.shots)))];
+  const W = 1000, H = 300, L = 48, R = 150, T = 14, B = 64;
+  const all = ms.flatMap((m) => Object.values(m.shots).map((s) => s.mean));
+  const lo = 0.005, hi = Math.max(...all, 1);
+  const y = (v) => T + (H - T - B) * (1 - (Math.log10(Math.max(v, lo)) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo)));
+  const x = (j) => L + (W - L - R) * (ms.length === 1 ? 0.5 : j / (ms.length - 1));
+  const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Mean difference per view at each milestone" });
+  for (const v of [0.01, 0.1, 1, 10, 100].filter((v) => v <= hi * 1.01)) {
+    s.append(svg("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "grid" }));
+    const t = svg("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }); t.textContent = v; s.append(t);
+  }
+  ms.forEach((m, j) => { const t = svg("text", { x: x(j), y: H - B + 16, "text-anchor": "end", transform: `rotate(-40 ${x(j)} ${H - B + 16})` }); t.textContent = `#${m.pr}`; s.append(t); });
+  const hues = ["--accent", "--good", "--warn", "--bad", "--muted"];
+  names.forEach((n, k) => {
+    const pts = ms.map((m, j) => m.shots[n] ? [x(j), y(m.shots[n].mean)] : null);
+    let dpath = "", pen = false;
+    for (const p of pts) { if (!p) { pen = false; continue; } dpath += `${pen ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`; pen = true; }
+    const color = `var(${hues[k % hues.length]})`;
+    s.append(svg("path", { d: dpath, fill: "none", stroke: color, "stroke-width": 1.6, "stroke-dasharray": k >= hues.length ? "4 3" : "none", opacity: 0.9 }));
+    const last = pts.filter(Boolean).pop();
+    if (last) {
+      const t = svg("text", { x: W - R + 8, y: T + 12 + k * ((H - T - B) / names.length), fill: color });
+      t.style.fill = color; t.textContent = `${n} ${ms[ms.length - 1].shots[n]?.mean.toFixed(2) ?? ""}`; s.append(t);
+    }
+  });
+  $("#curve").append(s);
+}
+
+function videos(vs) {
+  if (!vs.length) { $("#vidsec").hidden = true; return; }
+  // Always moving: muted, looped, no controls. Browsers only autoplay a muted video, and a created
+  // one's muted attribute doesn't mute it, so the property is set and play() asked for explicitly.
+  for (const v of vs) {
+    const video = Object.assign(el("video", { src: v.file, muted: "", autoplay: "", loop: "", playsinline: "", preload: "auto", disablepictureinpicture: "" }), { muted: true });
+    $("#videos").append(el("figure", {}, [video, el("figcaption", { text: v.caption })]));
+    video.play().catch(() => {});
+  }
+}
+
+function gallery(views, measured) {
+  $("#viewsNote").textContent = `${views.length} views at 1280x720, ${measured}. Scores are compare.py's: the mean difference per channel and the share of pixels off by more than 16. ` +
+    `The difference image is scaled up 4 times, so black is a match.`;
+  const kinds = [...new Set(views.map((v) => v.kind.split(" (")[0]))];
+  let kind = "All", sort = "worst";
+  const draw = () => {
+    const list = views.filter((v) => kind === "All" || v.kind.startsWith(kind))
+      .sort((a, b) => sort === "worst" ? b.mean - a.mean : a.view.localeCompare(b.view));
+    $("#views").replaceChildren(...list.map(card));
+  };
+  const chip = (label, group, on) => el("button", { class: "chip", type: "button", "aria-pressed": on, text: label, "data-g": group,
+    onclick: (e) => { if (group === "k") kind = label; else sort = label === "Worst first" ? "worst" : "name";
+      document.querySelectorAll(`#filters [data-g="${group}"]`).forEach((c) => c.setAttribute("aria-pressed", c === e.target)); draw(); } });
+  $("#filters").append(...["All", ...kinds].map((k) => chip(k, "k", k === "All")), el("span", { style: "width:12px" }),
+    chip("Worst first", "s", true), chip("By name", "s", false));
+  draw();
+}
+
+function card(v) {
+  const img = el("img", { src: `img/now/${v.view}.webp`, alt: `${v.view}, swjkja's render`, loading: "lazy" });
+  const modes = [["Original", "ref"], ["swjkja", "now"], ["Difference x4", "diff"]];
+  const seg = el("div", { class: "seg", role: "group", "aria-label": `${v.view} image` });
+  for (const [label, dir] of modes) seg.append(el("button", { type: "button", "aria-pressed": dir === "now", text: label,
+    onclick: (e) => { img.src = `img/${dir}/${v.view}.webp`; img.alt = `${v.view}, ${label}`; seg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", b === e.target)); } }));
+  return el("div", { class: "card" }, [el("div", { class: "pic" }, [img]), el("div", { class: "meta" }, [
+    el("div", { class: "row" }, [el("span", { class: "name", text: v.view }), el("span", { class: `score ${cls(v.mean)}`, text: `${v.mean.toFixed(2)} · ${v.off}%` })]),
+    el("div", { class: "row" }, [seg, el("span", { class: "muted", style: "font-size:12px", text: v.kind.split(" (")[0] })])])]);
+}
+
+function perDay(pd) {
+  const days = Object.entries(pd), W = 520, H = 220, L = 30, B = 40, T = 10;
+  const top = Math.max(...days.map(([, n]) => n)), bw = (W - L - 6) / days.length;
+  const y = (v) => T + (H - T - B) * (1 - v / top);
+  const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "PRs merged per working day" });
+  for (let v = 0; v <= top; v += 5) { s.append(svg("line", { x1: L, x2: W, y1: y(v), y2: y(v), class: "grid" })); const t = svg("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }); t.textContent = v; s.append(t); }
+  days.forEach(([d, n], j) => {
+    const r = svg("rect", { x: L + 3 + j * bw, y: y(n), width: bw - 4, height: y(0) - y(n), rx: 1 }); r.style.fill = "var(--accent)"; s.append(r);
+    const t = svg("text", { x: L + 3 + j * bw + (bw - 4) / 2, y: H - B + 14, "text-anchor": "middle" }); t.textContent = day(d).replace("Oct ", ""); s.append(t);
+    const c = svg("text", { x: L + 3 + j * bw + (bw - 4) / 2, y: y(n) - 4, "text-anchor": "middle" }); c.textContent = n; s.append(c);
+  });
+  const t = svg("text", { x: L, y: H - 6 }); t.textContent = "October 2026"; s.append(t);
+  $("#perday").append(s);
+}
+
+function growth(g) {
+  const W = 520, H = 220, L = 50, R = 40, T = 10, B = 40;
+  const topL = Math.ceil(Math.max(...g.map((p) => p.rust_lines)) / 10000) * 10000, topT = Math.ceil(Math.max(...g.map((p) => p.tests)) / 100) * 100;
+  const x = (j) => L + (W - L - R) * j / (g.length - 1);
+  const y = (v, top) => T + (H - T - B) * (1 - v / top);
+  const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Lines of Rust and tests after each PR" });
+  for (let v = 0; v <= topL; v += 10000) { s.append(svg("line", { x1: L, x2: W - R, y1: y(v, topL), y2: y(v, topL), class: "grid" })); const t = svg("text", { x: L - 6, y: y(v, topL) + 4, "text-anchor": "end" }); t.textContent = `${v / 1000}k`; s.append(t); }
+  for (let v = 0; v <= topT; v += 100) { const t = svg("text", { x: W - R + 6, y: y(v, topT) + 4 }); t.textContent = v; t.style.fill = "var(--good)"; s.append(t); }
+  const line = (key, top, color) => { const p = svg("path", { d: g.map((pt, j) => `${j ? "L" : "M"}${x(j).toFixed(1)},${y(pt[key], top).toFixed(1)}`).join(""), fill: "none", "stroke-width": 2 }); p.style.stroke = color; s.append(p); };
+  line("rust_lines", topL, "var(--accent)"); line("tests", topT, "var(--good)");
+  let lastDay = "";
+  g.forEach((p, j) => { if (p.date !== lastDay && j % 1 === 0) { lastDay = p.date; if (["07","10","14","17","21","26"].includes(p.date.slice(8))) { const t = svg("text", { x: x(j), y: H - B + 16, "text-anchor": "middle" }); t.textContent = day(p.date); s.append(t); } } });
+  const k1 = svg("text", { x: L, y: H - 6 }); k1.textContent = "Rust lines (left)"; k1.style.fill = "var(--accent)"; s.append(k1);
+  const k2 = svg("text", { x: L + 150, y: H - 6 }); k2.textContent = "tests (right)"; k2.style.fill = "var(--good)"; s.append(k2);
+  $("#growth").append(s);
+}
+
+function crates(cs) {
+  const rows = Object.entries(cs).sort((a, b) => b[1].lines - a[1].lines);
+  $("#crates").append(el("thead", {}, [el("tr", {}, [el("th", { text: "Crate" }), el("th", { class: "n", text: "Rust lines" }), el("th", { class: "n", text: "Tests" })])]),
+    el("tbody", {}, rows.map(([n, c]) => el("tr", {}, [el("td", {}, [el("code", { text: n })]), el("td", { class: "n", text: fmt(c.lines) }), el("td", { class: "n", text: c.tests })]))));
+}
+</script>
