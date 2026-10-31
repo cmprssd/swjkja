@@ -32,3 +32,4 @@ d2a38ca  Voice lines as the original counts them
 f6887d0  NPCs keep their paths and take stairs
 f905f64  Scripts put NPCs at tags
 012bcc4  Invisible NPCs run their scripts
+5a9b527  Other NPCs in Pmove's traces

@@ -2571,3 +2571,22 @@ every traced frame after the teleport (72, to four decimals;
   difference is not traced. In the walked view jedi6, at the right edge, moved.
 - The 63 other views render byte for byte as #119's renders (`cmp` against #119's
   renders of all 65). Rendered offscreen on Windows.
+
+## Idles broken by walks, and longer strides, 2026-10-31
+
+academy2's intro sends jedi1, jedi2, jedi4 and jedi6 off while they play their
+idle: they now break out of it as `G_CheckClientIdle` has them, rather than sliding
+along in it for up to 7.45 s. JediTrainer and JediMaster (dual and staff saber
+styles) walk a stride of 100, playing their walks at 0.55 where they played them at
+1.10 (DECISIONS.md, 2026-10-31).
+
+| View | This PR | Main |
+|------|------|------|
+| academy2_students_walking | 0.05 (0.1%) | 0.41 (0.8%) |
+
+- The Kel Dor at the left edge (jedi2) now stands as the reference's: he had walked
+  in his idle and stopped in it; the two walkers in the middle are in step with the
+  reference.
+- What is left: jedi4's walk runs an animation frame behind the original's.
+- The 64 other views render byte for byte as #120's renders (`cmp` against #120's
+  renders of all 65). Rendered offscreen on Windows.

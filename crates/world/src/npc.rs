@@ -604,6 +604,9 @@ pub struct NpcLook {
     /// unless the block gives 0 or more.
     pub walk_speed: f32,
     pub run_speed: f32,
+    /// "saberStyle" (`ps.saberAnimLevel`, from 1 to 7: the last line given), or 0
+    /// for none.
+    pub saber_style: i32,
 }
 
 /// "playerTeam" (`team_t`): any other name is no team the game knows, which acts
@@ -650,6 +653,7 @@ pub fn npc_look(
     let mut yaw_speed = 90.0;
     let (mut walk_speed, mut run_speed) = (90.0, 300.0);
     let mut two_handed = false;
+    let mut saber_style = 0;
     loop {
         let token = p.token(true);
         if token.is_empty() {
@@ -732,6 +736,11 @@ pub fn npc_look(
             "weapon" if !value.is_empty() => {
                 if let Some(w) = weapon_id(&value) {
                     weapon = w;
+                }
+            }
+            "saberstyle" => {
+                if let Some(n) = number() {
+                    saber_style = n.clamp(SS_FAST.into(), SS_STAFF.into()) as i32;
                 }
             }
             "saber" if !value.is_empty() => {
@@ -839,6 +848,7 @@ pub fn npc_look(
         yaw_speed,
         walk_speed,
         run_speed,
+        saber_style,
     })
 }
 
@@ -1169,24 +1179,39 @@ pub fn npc_gear(
             script: None,
             bad_bones: bad_bones(class),
             still_legs: matches!(class, "class_gonk" | "class_interrogator" | "class_sentry"),
-            strides: strides(class),
+            strides: strides(class, look.saber_style),
             ..Pose::default()
         },
         attached,
     )
 }
 
+/// `saberAnimLevel`'s dual and staff styles (`SS_DUAL`, `SS_STAFF`), and the
+/// first (`SS_FAST`).
+const SS_FAST: i32 = 1;
+const SS_DUAL: i32 = 6;
+const SS_STAFF: i32 = 7;
+
 /// How fast class `class`'s walks and runs carry it at their own speed
-/// (`PM_SetAnimFinal`'s `moveSpeedOfAnim`), `None` for the classes it leaves at
-/// their own speed (the howler, wampa, gonk, mouse, probe, protocol droid, R2 and
-/// R5 droids and the seeker).
-fn strides(class: &str) -> Option<[f32; 2]> {
+/// (`PM_SetAnimFinal`'s `moveSpeedOfAnim`) in saber style `style`, `None` for the
+/// classes it leaves at their own speed (the howler, wampa, gonk, mouse, probe,
+/// protocol droid, R2 and R5 droids and the seeker). A dual or staff style walks
+/// a longer stride, a staff one runs a longer one; with its sabers off, an NPC
+/// keeps its block's style (`PM_WeaponLightsaber`'s overrides need a lit blade).
+fn strides(class: &str, style: i32) -> Option<[f32; 2]> {
     match class {
         "class_howler" | "class_wampa" | "class_gonk" | "class_mouse" | "class_probe"
         | "class_protocol" | "class_r2d2" | "class_r5d2" | "class_seeker" => None,
         "class_hazard_trooper" => Some([50.0, 50.0]),
         "class_rancor" => Some([173.0, 173.0]),
-        _ => Some([50.0, 150.0]),
+        _ => Some([
+            if matches!(style, SS_DUAL | SS_STAFF) {
+                100.0
+            } else {
+                50.0
+            },
+            if style == SS_STAFF { 250.0 } else { 150.0 },
+        ]),
     }
 }
 
