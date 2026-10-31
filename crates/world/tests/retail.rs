@@ -2052,6 +2052,74 @@ fn academy2s_students_walk_to_the_stairs_as_in_the_original() {
     );
 }
 
+/// academy2's students at the walking capture's last frame (66,000 ms, a2-walk), as
+/// the original's clocks give them: jedi1 and jedi2 (the Kel Dor) have stopped,
+/// blending from the walk's frame at the time they arrived, which they had begun
+/// in their idle (`G_CheckClientIdle` breaks them out of it); JediTrainer (jedi3)
+/// and JediMaster (jedi6), dual and staff saber styles, walk a stride of 100, the
+/// others 50. Our client's clock runs about 10 ms behind the trace's, and jedi4's
+/// walk an animation frame behind (48 ms at 1.08: not traced further).
+#[test]
+fn academy2s_students_stride_and_stop_as_in_the_original() {
+    let Some(gamedata) = std::env::var_os("SWJKJA_GAMEDATA").map(PathBuf::from) else {
+        eprintln!("SWJKJA_GAMEDATA is not set; skipping the retail-data test");
+        return;
+    };
+    let vfs = swjkja_fs::Vfs::mount_game(&[gamedata], &["base"]).unwrap();
+    let map = "maps/academy2.bsp";
+    let text = |skeleton: &str| {
+        let file = animation::config_file(&vfs, skeleton)?;
+        Some(String::from_utf8_lossy(&vfs.read(&file).ok()?).into_owned())
+    };
+    let humanoid = text(animation::HUMANOID).unwrap();
+    let cinematic = text(&animation::cinematic_skeleton(map));
+    let holds = |name: &str| {
+        let cinematic = cinematic.as_deref().and_then(|c| animation::find(c, name));
+        cinematic.or_else(|| animation::find(&humanoid, name))
+    };
+    let names = [
+        "npc_jedi1",
+        "npc_jedi2",
+        "npc_jedi3",
+        "npc_jedi4",
+        "npc_jedi5",
+        "npc_jedi6",
+    ];
+    let walkers = walkers(&vfs, map, &names, &holds);
+    let walk = holds("BOTH_WALK1").unwrap();
+    // Stopped: when, and the walk's frame it blends from (a2-walk's "blend").
+    for (who, stopped, frame) in [(0, 63542, 20442.01), (1, 64440, 20449.58)] {
+        for part in [0, 1] {
+            let c = walkers[who].1.at(part, 66000);
+            assert_eq!(c.anim, "BOTH_STAND1", "{who}");
+            assert!((c.start - stopped).abs() <= 10, "{who}: {}", c.start);
+            let (from, clock) = c.from.as_ref().unwrap();
+            assert_eq!(from, "BOTH_WALK1");
+            let reached = walk.frame_reached(c.start - clock.begun, clock.speed.unwrap());
+            assert!((reached - frame).abs() < 0.2, "{who}: {reached}");
+        }
+    }
+    // Walking: since when, and how fast (the walks alternate 1.08 and 1.10 frame by
+    // frame, the longer strides 0.54 and 0.55).
+    for (who, begun, speed) in [
+        (2, 64045, 0.55),
+        (3, 65275, 1.08),
+        (4, 65209, 1.08),
+        (5, 64837, 0.55),
+    ] {
+        for part in [0, 1] {
+            let c = walkers[who].1.at(part, 66000);
+            assert_eq!(c.anim, "BOTH_WALK1", "{who}");
+            assert!((c.clock.begun - begun).abs() <= 50, "{who}: {:?}", c.clock);
+            assert!(
+                (c.clock.speed.unwrap() - speed).abs() < 0.011,
+                "{who}: {:?}",
+                c.clock
+            );
+        }
+    }
+}
+
 /// After `npc_luke2`'s script drops jedi4 and jedi6 at their tags (77,450 in the
 /// original), their boxes overlapping, both walk on as the original walks them,
 /// every traced frame that moves one (a2-walked, to 80,000 ms): jedi6, spawned not

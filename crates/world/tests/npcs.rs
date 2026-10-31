@@ -572,3 +572,26 @@ fn weapon_models_become_their_ghoul2_models() {
         "models/weapons2/saber_reborn/saber_w.glm"
     );
 }
+
+#[test]
+fn dual_and_staff_saber_styles_walk_a_longer_stride() {
+    // JediTrainer's and JediMaster's blocks (saberStyle 6 and 7, SS_DUAL and
+    // SS_STAFF): their walks carry them 100 a second, a staff's runs 250. The last
+    // line given wins, as each sets saberAnimLevel; out of range is capped.
+    const STYLES: &[u8] = b"
+trainer { playerModel jeditrainer class CLASS_JEDI saberStyle 6 }
+master { playerModel jedimaster class CLASS_JEDI saberStyle 7 }
+student { playerModel jedi_hm class CLASS_JEDI saberStyle 7 saberStyle 2 }
+capped { playerModel jedi_hm class CLASS_JEDI saberStyle 9 }
+none { playerModel jedi_hm class CLASS_JEDI }
+";
+    let strides = |npc_type: &str| {
+        let look = npc_look(STYLES, b"", npc_type, false, &mut Rand::default()).unwrap();
+        npc_gear(&look, npc_type, 0, b"").0.strides
+    };
+    assert_eq!(strides("trainer"), Some([100.0, 150.0]));
+    assert_eq!(strides("master"), Some([100.0, 250.0]));
+    assert_eq!(strides("student"), Some([50.0, 150.0]));
+    assert_eq!(strides("capped"), Some([100.0, 250.0]));
+    assert_eq!(strides("none"), Some([50.0, 150.0]));
+}

@@ -1384,6 +1384,29 @@ fn a_script_puts_its_npc_at_a_tag() {
 }
 
 #[test]
+fn a_walk_breaks_an_npc_out_of_its_idle() {
+    // Luke's idle starts at 5000 (client clock), held 1950 ms; his script then
+    // sends him off. His first movement frame (5650) moves him in the idle, and
+    // G_CheckClientIdle clears its timers after Pmove: the next frame walks his
+    // legs (5650 on the client's clock), not the idle's end (6950).
+    let mut script = vec![wait(4000.0)];
+    script.extend(walk_then_play("lukeNav1"));
+    let t = walked(script);
+    assert_eq!(t.moves[0].0, 5650);
+    // Armed, his torso keeps its stance while he backs up.
+    for (part, back) in [(&t.legs, "BOTH_WALKBACK1"), (&t.torso, "BOTH_STAND1")] {
+        assert_eq!(
+            changes(part)[1..4],
+            [
+                ("BOTH_STAND1IDLE1", 5000),
+                (back, 5650),
+                ("BOTH_WALK1", 5800)
+            ]
+        );
+    }
+}
+
+#[test]
 fn walking_npcs_walk_or_run_their_legs_forward_or_back() {
     // Luke backs off toward lukeNav1 at first (forwardmove < 0: PMF_BACKWARDS_RUN),
     // and walks forward once he has turned (his speed under 55 + 5: BUTTON_WALKING).

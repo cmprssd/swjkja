@@ -1554,3 +1554,28 @@ and drawing such pipes some other way, would match no view held still.
   it starts inside. The capture logs every frame 100 ms later than ours, and the
   original's voice lines drift 100 ms more by the teleport (real time,
   2026-10-27); the test plays Kyle's third line 100 ms longer.
+
+## 2026-10-31: Walks break idles, and dual and staff styles stride longer (decided by Claude, pending review)
+
+- **A moving NPC breaks out of its idle** (`G_CheckClientIdle`, after `Pmove`):
+  a velocity or a command that moves it clears the timers of the parts playing
+  `BOTH_STAND1IDLE1`, `BOTH_STAND2IDLE1`, `BOTH_STAND2IDLE2`, `BOTH_STAND3IDLE1` or
+  `BOTH_STAND5IDLE1`, so its next movement frame walks its legs. Before, an NPC sent
+  off during its idle slid along in it until the idle's hold ran out (7.45 s for
+  `BOTH_STAND1IDLE1`): academy2's jedi1, jedi2, jedi4 and jedi6 walked to their
+  navgoals standing.
+- **A dual or staff saber style walks a stride of 100, a staff style runs one of
+  250** (`PM_SetAnimFinal`'s `moveSpeedOfAnim`), from the NPC block's last
+  "saberStyle" line (`ps.saberAnimLevel`, capped from 1 to 7). JediTrainer
+  (`saberStyle 6`) and JediMaster (7) walk at 0.55 where the others walk at 1.08,
+  as the trace logs them. `PM_WeaponLightsaber`'s overrides of the style (a staff
+  with one blade lit, a second saber lit, a style the saber does not allow) need a
+  lit blade or apply to the player, and are left out. This replaces 2026-10-29's
+  "left out" of the dual and staff strides (Walks play as fast as their NPC moves).
+- **Found: what was left of academy2_students_walking was these two.** Every
+  traced position was already exact. At 66,000 ms the students' clocks are within
+  10 ms of the trace's (our client clock), the stopped ones blending from the
+  walk's frame it gives (20449.55 for 20449.58), but jedi4's walk runs an
+  animation frame behind the original's (65,323 for 65,275 at 1.08). The trace
+  logs its clock at that frame alone, so where it drifts is not traced
+  (`academy2s_students_stride_and_stop_as_in_the_original`).

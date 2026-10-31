@@ -319,6 +319,19 @@ fn idle_for(anim: &str) -> Option<&'static str> {
     }
 }
 
+/// Whether `anim` is one of the idles `G_CheckClientIdle` breaks a moving NPC out
+/// of (its timer cleared).
+fn is_idle(anim: &str) -> bool {
+    matches!(
+        anim,
+        "BOTH_STAND1IDLE1"
+            | "BOTH_STAND2IDLE1"
+            | "BOTH_STAND2IDLE2"
+            | "BOTH_STAND3IDLE1"
+            | "BOTH_STAND5IDLE1"
+    )
+}
+
 /// The `set` commands whose task the game completes later (those `Set` returns from
 /// without calling back) and that nothing here completes: they move the NPC or
 /// wait on its AI.
@@ -1799,8 +1812,7 @@ impl<'a> Body<'a> {
     /// `g_noFootSlide`, a walk or run played forward goes as much faster or slower
     /// than its own as the body's last movement frame went than the animation's
     /// stride ([`Pose::strides`]; 75 for a crouched walk), from 0.01 to 1.5. Not for
-    /// the classes without strides, nor for dual and staff saber styles' strides
-    /// (left out).
+    /// the classes without strides.
     fn anim_speed(&self, anim: &str, a: &Animation) -> Option<f32> {
         let walking = matches!(
             anim,
@@ -1974,7 +1986,8 @@ impl<'a> Actor<'a> {
     /// count down (`PM_DropTimers`), it moves ([`Body::pmove`]), parts no longer
     /// held play what its command asks (`PM_Footsteps`, `PM_TorsoAnimation`, which
     /// play an animation the skeleton has, without restarting it), then
-    /// `G_CheckClientIdle`. Nothing for an actor without a body.
+    /// `G_CheckClientIdle`, which breaks a moving NPC out of its idle. Nothing for an
+    /// actor without a body.
     ///
     /// A command that moves it walks or runs its legs, forward or back
     /// (`BOTH_WALK1`, `BOTH_RUN1`, `BOTH_WALKBACK1`, `BOTH_RUNBACK1`), its torso
@@ -2051,6 +2064,14 @@ impl<'a> Actor<'a> {
             let torso = torso.to_owned();
             body.play(1, &torso, level, false);
         }
+        // A moving NPC breaks out of its idle: the next frame's walk can play.
+        let idling: Vec<usize> = (0..2)
+            .filter(|&p| moving && is_idle(&body.parts[p].anim))
+            .collect();
+        for p in idling {
+            self.set_timer(p, 0);
+        }
+        let body = self.body.as_mut().unwrap();
         let [legs, torso] = &body.parts;
         let mut idle = None;
         if moving || !standing(&legs.anim) || legs.timer != 0 || torso.timer != 0 {
