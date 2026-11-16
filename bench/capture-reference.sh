@@ -123,6 +123,10 @@ for map in $maps; do
 	esac
 	uses=$(grep -v '^#' "$views" | awk -v m="$map" '$1 == m {if (NF >= 11) {gsub(/,/, " ", $11); gsub(/@/, " ", $11); print $11}; exit}')
 	[ -n "$uses" ] && game+=(+set g_swjkjaUse "$uses")
+	# SOUNDCLOCK=1: the sound clock counts the server's time (s_swjkjaClock, a patch
+	# addition), so voice lines end on the same frame in every run; the original's
+	# counts the sound card's, and its lag drifts from run to run.
+	[ "${SOUNDCLOCK:-0}" = 1 ] && game+=(+set s_swjkjaClock 1)
 	# Extra engine arguments for a debugging run (e.g. "+set g_ICARUSDebug 3").
 	read -ra extra <<<"${CAPTURE_ARGS:-}"
 	game+=("${extra[@]}")

@@ -1631,3 +1631,17 @@ and drawing such pipes some other way, would match no view held still.
 - `bench/lib.sh`'s `require_idle` passes inside a nightq job (`NIGHTQ_JOB` set): nightq
   already waits for 5 idle minutes and stops a job on the owner's input, and Windows'
   last-input time counts input a job's own windows inject.
+
+## 2026-11-16: A patch pins the original's sound clock (decided by Claude, pending review)
+
+- **Cause of the drift**: the original ends a voice line when its mixer has painted the
+  last sample (`S_PaintChannels`, then `S_DoLipSynchs`), and the mixer's clock
+  (`S_GetSoundtime`) is the sound card's DMA position, real time. A client frame at
+  ~60 fps may or may not have painted past the line's end, so its lag varies by run.
+- **`s_swjkjaClock 1`** (a patch addition, `SOUNDCLOCK=1 bench/capture-reference.sh`):
+  the sound clock counts `cl.serverTime` from the first frame instead, so a line ends
+  on the same frame in every run. Off by default; no other reference changes.
+- **Not yet measured**: `bench/soundclock-capture.sh` (night queue job
+  2026-11-16-010) rebuilds the reference and captures academy2_students_walking twice
+  held. Next: compare both runs' jedi4 walk start, fit `VOICE_LAG` to that
+  deterministic clock, and recapture the view.
