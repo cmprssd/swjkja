@@ -795,3 +795,23 @@ index f52e45d..da090d8 100644
  
  ///////////////////////////////////////////////////////////////////////////
  //
+diff --git a/code/client/snd_dma.cpp b/code/client/snd_dma.cpp
+--- a/code/client/snd_dma.cpp
++++ b/code/client/snd_dma.cpp
+@@ -2762,6 +2762,16 @@
+ 	oldsamplepos = samplepos;
+ 
+ 	s_soundtime = buffers*fullsamples + samplepos/dma.channels;
++	// swjkja reference capture: with s_swjkjaClock set, the sound clock counts the
++	// server's time, not the sound card's, so a voice line ends on the same frame in
++	// every run (cl.serverTime is the 50 ms server frame the client has).
++	if ( Cvar_VariableIntegerValue( "s_swjkjaClock" ) ) {
++		static int swjkjaFirst = -1;
++		if ( swjkjaFirst < 0 || cl.serverTime < swjkjaFirst ) {
++			swjkjaFirst = cl.serverTime;
++		}
++		s_soundtime = (int)( (long long)( cl.serverTime - swjkjaFirst ) * dma.speed / 1000 );
++	}
+ 
+ #if 0
+ // check to make sure that we haven't overshot
