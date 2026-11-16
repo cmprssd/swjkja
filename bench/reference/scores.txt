@@ -1,4 +1,4 @@
-# measured 2026-10-31 at PR #122
+# measured 2026-11-16 at PR #123 (walk and walked views captured again; the others as at #122)
 # Every reference view's score: compare.py's output (reference-shots against a render of
 # all of them), updated by the PR that renders them all; scripts/progress.py reads it.
 view             mean diff  >16 off  undrawn
@@ -7,7 +7,7 @@ academy2_class        0.04     0.0%     0.1%
 academy2_students_walked      0.03     0.1%     0.0%
 academy2_students_walking      0.05     0.1%     0.0%
 academy3_luke_walked      0.01     0.0%     0.0%
-academy3_luke_walking      0.07     0.1%     0.0%
+academy3_luke_walking      0.03     0.0%     0.0%
 academy4_class        0.06     0.1%     0.1%
 academy4_jaden_turned      0.03     0.0%     0.2%
 academy4_luke_walked      0.01     0.0%     0.0%
@@ -60,10 +60,10 @@ rift_statues          0.06     0.1%     0.0%
 stamp_barrels         0.00     0.0%     0.0%
 stamp_cranes          0.01     0.0%     0.8%
 stamp_crates          0.00     0.0%     0.0%
-t1_sour_intro_walking      0.31     0.5%     0.1%
+t1_sour_intro_walking      0.04     0.1%     0.1%
 vjun1_hall            0.00     0.0%     0.0%
 vjun2_imp_stance      0.01     0.0%     0.8%
 vjun2_officer         0.02     0.0%     0.0%
 yavin1_students       0.03     0.0%     0.1%
 yavin2_intro_walked      0.02     0.0%     0.2%
-yavin2_intro_walking      0.14     0.4%     0.2%
+yavin2_intro_walking      0.03     0.0%     0.2%

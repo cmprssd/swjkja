@@ -15,7 +15,8 @@
 # With WALK=1 too, an NPC walking to a script's navgoal thinks unfrozen until it
 # gets there (d_npcfreeze 3, a patch addition), and each of its frames is logged
 # ("swjkja walk") to <map>-npcs.txt, with the signals its scripts send and receive
-# ("swjkja signal").
+# ("swjkja signal"), and each NPC's legs and spine turns once the view's time is
+# pinned ("swjkja legs", "swjkja bone").
 # A map's first view may give, in an eleventh column, names the game uses as it
 # runs, as "name@ms" separated by commas: each is used in the first frame at or
 # after its time (g_swjkjaUse, a patch addition), as the use command uses it.
@@ -53,11 +54,14 @@ for map in $maps; do
 		# floor). One capture without it found t3_stamp's crates already broken.
 		# With SCRIPTS=1 the AI alone is frozen (d_npcfreeze 2, a patch addition)
 		# and the game runs no frame the client would draw after the view's time
-		# (it draws one frame behind). With WALK=1 it stops at the view's time:
-		# cgame places NPCs from the last snapshot, not at the pinned time, so
-		# one more frame would draw walkers a frame on.
+		# (it draws one frame behind). cgame places NPCs from the last snapshot,
+		# not at the pinned time, so with WALK=1 that last frame keeps their
+		# entity states as of the view's time (g_swjkjaHold, a patch addition):
+		# walkers stand where the client draws them then, while their velocities
+		# (which way their legs turn) and animation clocks are the next frame's,
+		# as the game has run it.
 		if [ "$sp" = 1 ] && [ "$scripts" = 1 ]; then
-			grep -v '^#' "$views" | awk -v m="$map" -v f="$freeze" -v w="${WALK:-0}" '$1 == m {print "set d_npcfreeze " f "; set g_swjkjaStop " $9 + (w == 1 ? 0 : 50); exit}'
+			grep -v '^#' "$views" | awk -v m="$map" -v f="$freeze" -v w="${WALK:-0}" '$1 == m {print "set d_npcfreeze " f "; set g_swjkjaStop " $9 + 50 (w == 1 ? "; set g_swjkjaHold 1" : ""); exit}'
 		elif [ "$sp" = 1 ]; then
 			echo "set d_npcfreeze 1"
 		fi
@@ -134,7 +138,7 @@ for map in $maps; do
 	# The patched cgame logs each NPC's animation timing once per view time, and
 	# its look ("swjkja look") once the view's time is pinned.
 	if [ "$sp" = 1 ]; then
-		get qconsole.log | grep -a "swjkja npc\|swjkja walk\|swjkja signal\|swjkja look\|swjkja begin\|swjkja rand\|swjkja use" >"$out/$map-npcs.txt" || true
+		get qconsole.log | grep -a "swjkja npc\|swjkja walk\|swjkja signal\|swjkja look\|swjkja legs\|swjkja bone\|swjkja hold\|swjkja begin\|swjkja rand\|swjkja use" >"$out/$map-npcs.txt" || true
 	fi
 done
 ls -l "$out"

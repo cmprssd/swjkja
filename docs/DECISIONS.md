@@ -1579,3 +1579,43 @@ and drawing such pipes some other way, would match no view held still.
   animation frame behind the original's (65,323 for 65,275 at 1.08). The trace
   logs its clock at that frame alone, so where it drifts is not traced
   (`academy2s_students_stride_and_stop_as_in_the_original`).
+
+## 2026-11-16: Walk captures hold walkers where the client draws them (decided by Claude, pending review)
+
+- **Found: t1_sour_intro_walking's stand-in was drawn a frame on in its reference,
+  not wider-legged.** At full resolution her pose matches ours; her whole body and
+  shadow sit 7 pixels left of ours, her 3550 origin against our 3500. The reference
+  had been captured before #113 moved walk captures to stop at the view's time
+  (the game ran to 3550), and was never captured again.
+- **Neither stop shows what a player sees.** The client draws the time T from
+  snapshot T (`CG_CalcEntityLerpPositions` lerps NPCs between snapshots) while the
+  game has run T + 50, whose memory cgame reads for an NPC's velocity (which way its
+  legs turn) and its ghoul2 animation clocks. Stopping at T + 50 draws walkers a
+  frame on; stopping at T (#113) draws them in place but with the frame before's
+  velocity and clocks: the stand-in's legs 41.9 degrees left of her view, not
+  27.1, and her walk begun at 2878 at 1.3972, not about 2754 at 1.1684.
+- **Walk captures now run to T + 50 and hold the NPCs' entity states**
+  (`g_swjkjaHold`, a patch addition, set with WALK=1): the last frame run keeps each
+  NPC's `entityState_t`, what snapshots carry, as of the frame before. The client
+  then draws walkers where snapshot T has them while the game is at T + 50, as in
+  play. This replaces #113's stop at the view's time; every walk and walked view
+  was captured again.
+- **Measured, not assumed: the original's legs settle on the velocity.** The patch
+  now logs each NPC's `renderInfo.legsYaw`, its drawn view, velocity and the angle
+  overrides of its spine and neck bones ("swjkja legs", "swjkja bone"). The
+  stand-in's legs end at -74.570, the velocity's yaw, 27.109 left of her view's
+  -101.684 (ours 27.114); her lower lumbar turns 0.45 of it, her upper lumbar 0.35,
+  her thoracic 0.2 halved by the neck's average, as `Spine::turn` and
+  `Head::overrides` share it. 2026-10-29's legs and spine stand as they were.
+- The capture's animation clocks drift a few milliseconds from run to run (the
+  stand-in's walk begun at 2750, 2754 and 2756 on three captures), as they are
+  counted from the first frame drawn.
+- **academy2_students_walking keeps its 2026-10-30 reference**, captured with the
+  stop at the view's time: academy2's intro waits on voice lines, whose lag in the
+  original is real time, and three hold captures started jedi4's walk 200 ms later
+  than that capture did (62,950 against 62,750), the run the tests check our frames
+  against. Held, it scored 0.21 against a different run of the script, not a
+  different model. It is captured again once the voice timing is understood.
+- Scores: t1_sour_intro_walking 0.31 to 0.04, yavin2_intro_walking 0.14 to 0.03,
+  academy3_luke_walking 0.07 to 0.03; the other walk and walked views as before. No
+  code changed: every render is #122's, byte for byte.

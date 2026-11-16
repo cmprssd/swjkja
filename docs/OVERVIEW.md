@@ -56,11 +56,12 @@ flowchart LR
 ```
 
 The reference build carries a test-only patch (`bench/reference/openjk-view.patch`,
-523 lines) that makes its screenshots reproducible: the camera placed exactly
+797 lines) that makes its screenshots reproducible: the camera placed exactly
 (`cg_swjkjaView`), the game time stopped at the view's time (`cg_swjkjaTime`), the
-NPCs' AI frozen while their scripts run, and script random numbers pinned
-(`g_swjkjaScriptRand`). It can also log what the original computes (random draws,
-animation frames, look angles), so a difference can be traced to the exact number
+NPCs' AI frozen while their scripts run, walkers held where the client draws them
+(`g_swjkjaHold`), and script random numbers pinned (`g_swjkjaScriptRand`). It can
+also log what the original computes (random draws, animation frames, look angles,
+legs and spine turns), so a difference can be traced to the exact number
 that differs instead of being guessed at from pixels.
 
 ## Architecture
@@ -138,7 +139,7 @@ Rules that shape it:
   ones"), with a recommendation. Choices that come up mid-build are made by Claude,
   marked *decided by Claude, pending review* in DECISIONS.md, and listed in the PR.
   <!-- progress:process -->
-  So far: 82 decision entries, 15 chosen by the owner, 63 made by Claude for review.
+  So far: 83 decision entries, 15 chosen by the owner, 64 made by Claude for review.
   <!-- /progress -->
 - **$0 development.** No GitHub Actions: `.local-ci` runs on this machine (format,
   shell syntax, a build of exactly the committed tree, then clippy and tests on
@@ -200,24 +201,25 @@ timeline
 
 <!-- progress:views -->
 65 reference views, 1280x720, rendered by both engines and compared (mean absolute
-difference per channel, 0-255; measured 2026-10-31 at PR #122):
+difference per channel, 0-255; measured 2026-11-16 at PR #123 (walk and walked views
+captured again; the others as at #122)):
 
 | Kind | Views | Mean difference |
 |------|------:|------|
 | Multiplayer world (sky, fog, fog volumes, flares, animated stages, curve LOD) | 19 | 0.00-0.03 |
 | Static and brush-entity models, rotating fans and drums | 18 | 0.00-3.73 |
-| Single-player NPCs (spawned, scripted, turned, walked) | 28 | 0.00-0.31 |
+| Single-player NPCs (spawned, scripted, turned, walked) | 28 | 0.00-0.09 |
 | **All** | **65** | **median 0.01; 63 under 0.5, 64 under 1.0** |
 
 ```mermaid
 xychart-beta
     title "Views by mean difference (65 views)"
     x-axis ["< 0.25", "0.25-0.5", "0.5-1", "1-2", "> 2"]
-    y-axis "views" 0 --> 65
-    bar [62, 1, 1, 0, 1]
+    y-axis "views" 0 --> 66
+    bar [63, 0, 1, 0, 1]
 ```
 
-The largest: ffa5_pipes (3.73), hevil_fan_west (0.63), t1_sour_intro_walking (0.31).
+The largest: ffa5_pipes (3.73), hevil_fan_west (0.63), hevil_fan_low (0.15).
 <!-- /progress -->
 
 Explained, and not renderer errors: ffa5_pipes has the original's first-person
