@@ -2590,3 +2590,30 @@ styles) walk a stride of 100, playing their walks at 0.55 where they played them
 - What is left: jedi4's walk runs an animation frame behind the original's.
 - The 64 other views render byte for byte as #120's renders (`cmp` against #120's
   renders of all 65). Rendered offscreen on Windows.
+
+## Walkers held where the client draws them, 2026-11-16
+
+Walk captures now run a frame past the view's time and hold the NPCs' entity states
+as of the view's time (`g_swjkjaHold`; DECISIONS.md, 2026-11-16): walkers stand
+where snapshot T has them, with frame T + 50's velocities and animation clocks, as in
+play. t1_sour's reference had been captured a frame on, its stand-in 7 pixels left of
+ours.
+
+| View | Held reference | Before |
+|------|------|------|
+| t1_sour_intro_walking | 0.04 (0.1%) | 0.31 (0.5%) |
+| yavin2_intro_walking | 0.03 (0.0%) | 0.14 (0.4%) |
+| academy3_luke_walking | 0.03 (0.0%) | 0.07 (0.1%) |
+| academy3_luke_walked | 0.01 (0.0%) | 0.01 (0.0%) |
+| academy4_luke_walking | 0.01 (0.0%) | 0.01 (0.0%) |
+| academy4_luke_walked | 0.01 (0.0%) | 0.01 (0.0%) |
+| yavin2_intro_walked | 0.02 (0.0%) | 0.02 (0.0%) |
+| academy2_students_walked | 0.03 (0.1%) | 0.03 (0.1%) |
+
+- The original's stand-in, traced: legs at -74.570 (the velocity's yaw), 27.109
+  left of her view; her lumbar and thoracic overrides turn 12.2, 9.5 and 2.7 degrees
+  (0.45, 0.35 and 0.2 of it, the thoracic halved by the neck's average). Ours: 27.114.
+- academy2_students_walking (0.05) keeps its 2026-10-30 reference: held, its script
+  ran 200 ms later than the run the tests check (0.21).
+- Our renders are #122's, byte for byte (`cmp`, all nine). Rendered offscreen on
+  Windows; captured with the reference build at 260c59c plus the patch.

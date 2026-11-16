@@ -7,7 +7,7 @@ change is proven against the original game, and how the work itself is run.
 of the same story, before and after, are on the [progress page](#progress-page).
 
 <!-- progress:asof -->
-Numbers in the generated parts below are as of 2026-10-31 (121 merged PRs), counted
+Numbers in the generated parts below are as of 2026-11-16 (122 merged PRs), counted
 by `scripts/progress.py`.
 <!-- /progress -->
 The hand-written parts (speed, the retail files read) give their own dates.
@@ -56,11 +56,12 @@ flowchart LR
 ```
 
 The reference build carries a test-only patch (`bench/reference/openjk-view.patch`,
-523 lines) that makes its screenshots reproducible: the camera placed exactly
+797 lines) that makes its screenshots reproducible: the camera placed exactly
 (`cg_swjkjaView`), the game time stopped at the view's time (`cg_swjkjaTime`), the
-NPCs' AI frozen while their scripts run, and script random numbers pinned
-(`g_swjkjaScriptRand`). It can also log what the original computes (random draws,
-animation frames, look angles), so a difference can be traced to the exact number
+NPCs' AI frozen while their scripts run, walkers held where the client draws them
+(`g_swjkjaHold`), and script random numbers pinned (`g_swjkjaScriptRand`). It can
+also log what the original computes (random draws, animation frames, look angles,
+legs and spine turns), so a difference can be traced to the exact number
 that differs instead of being guessed at from pixels.
 
 ## Architecture
@@ -138,7 +139,7 @@ Rules that shape it:
   ones"), with a recommendation. Choices that come up mid-build are made by Claude,
   marked *decided by Claude, pending review* in DECISIONS.md, and listed in the PR.
   <!-- progress:process -->
-  So far: 82 decision entries, 15 chosen by the owner, 63 made by Claude for review.
+  So far: 83 decision entries, 15 chosen by the owner, 64 made by Claude for review.
   <!-- /progress -->
 - **$0 development.** No GitHub Actions: `.local-ci` runs on this machine (format,
   shell syntax, a build of exactly the committed tree, then clippy and tests on
@@ -159,16 +160,16 @@ Rules that shape it:
 ### History
 
 <!-- progress:history -->
-136 commits, 121 merged PRs from 2026-10-07 to 2026-10-31, on 16 working days: 69
-feat, 35 fix, 10 docs, 4 bench, 2 chore, 1 ci. About 57,785 lines added and 4,529
+137 commits, 122 merged PRs from 2026-10-07 to 2026-11-16, on 17 working days: 69
+feat, 36 fix, 10 docs, 4 bench, 2 chore, 1 ci. About 57,935 lines added and 4,548
 removed; 158 tracked files.
 
 ```mermaid
 xychart-beta
     title "PRs merged per working day"
-    x-axis ["Oct 7", "Oct 10", "Oct 11", "Oct 14", "Oct 15", "Oct 16", "Oct 17", "Oct 18", "Oct 19", "Oct 21", "Oct 26", "Oct 27", "Oct 28", "Oct 29", "Oct 30", "Oct 31"]
+    x-axis ["Oct 7", "Oct 10", "Oct 11", "Oct 14", "Oct 15", "Oct 16", "Oct 17", "Oct 18", "Oct 19", "Oct 21", "Oct 26", "Oct 27", "Oct 28", "Oct 29", "Oct 30", "Oct 31", "Nov 16"]
     y-axis "PRs" 0 --> 25
-    bar [23, 19, 9, 1, 2, 8, 10, 10, 8, 9, 8, 4, 2, 2, 4, 2]
+    bar [23, 19, 9, 1, 2, 8, 10, 10, 8, 9, 8, 4, 2, 2, 4, 2, 1]
 ```
 <!-- /progress -->
 
@@ -200,24 +201,25 @@ timeline
 
 <!-- progress:views -->
 65 reference views, 1280x720, rendered by both engines and compared (mean absolute
-difference per channel, 0-255; measured 2026-10-31 at PR #122):
+difference per channel, 0-255; measured 2026-11-16 at PR #123 (walk and walked views
+captured again; the others as at #122)):
 
 | Kind | Views | Mean difference |
 |------|------:|------|
 | Multiplayer world (sky, fog, fog volumes, flares, animated stages, curve LOD) | 19 | 0.00-0.03 |
 | Static and brush-entity models, rotating fans and drums | 18 | 0.00-3.73 |
-| Single-player NPCs (spawned, scripted, turned, walked) | 28 | 0.00-0.31 |
+| Single-player NPCs (spawned, scripted, turned, walked) | 28 | 0.00-0.09 |
 | **All** | **65** | **median 0.01; 63 under 0.5, 64 under 1.0** |
 
 ```mermaid
 xychart-beta
     title "Views by mean difference (65 views)"
     x-axis ["< 0.25", "0.25-0.5", "0.5-1", "1-2", "> 2"]
-    y-axis "views" 0 --> 65
-    bar [62, 1, 1, 0, 1]
+    y-axis "views" 0 --> 66
+    bar [63, 0, 1, 0, 1]
 ```
 
-The largest: ffa5_pipes (3.73), hevil_fan_west (0.63), t1_sour_intro_walking (0.31).
+The largest: ffa5_pipes (3.73), hevil_fan_west (0.63), hevil_fan_low (0.15).
 <!-- /progress -->
 
 Explained, and not renderer errors: ffa5_pipes has the original's first-person
