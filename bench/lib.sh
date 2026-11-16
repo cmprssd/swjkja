@@ -43,8 +43,11 @@ get() { # relative path
 # Benchmarks open a game window, which takes over the screen. Refuse to start while
 # the owner is using the PC: keyboard or mouse input within SWJKJA_IDLE_SECONDS
 # (default 120). Set SWJKJA_ALLOW_WINDOW=1 once they have said a run may start now.
+# A nightq job (NIGHTQ_JOB set) passes: nightq starts it only after 5 idle minutes and
+# stops it on the owner's input, and a job's own windows would otherwise look like use.
 require_idle() {
 	[ "${SWJKJA_ALLOW_WINDOW:-}" = 1 ] && return 0
+	[ -n "${NIGHTQ_JOB:-}" ] && return 0
 	local need=${SWJKJA_IDLE_SECONDS:-120} idle
 	idle=$(ps "Add-Type -Namespace W -Name U -MemberDefinition '[StructLayout(LayoutKind.Sequential)] public struct L { public uint cb; public uint t; } [DllImport(\"user32.dll\")] public static extern bool GetLastInputInfo(ref L l);'
 \$l=New-Object W.U+L; \$l.cb=8; [void][W.U]::GetLastInputInfo([ref]\$l)
