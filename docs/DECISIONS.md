@@ -1619,3 +1619,15 @@ and drawing such pipes some other way, would match no view held still.
 - Scores: t1_sour_intro_walking 0.31 to 0.04, yavin2_intro_walking 0.14 to 0.03,
   academy3_luke_walking 0.07 to 0.03; the other walk and walked views as before. No
   code changed: every render is #122's, byte for byte.
+
+## 2026-11-16: Windows on the desktop go on the night queue
+
+- The owner asked for runs that need the PC to be scheduled for the night, as nfsh does:
+  reference captures, benchmarks, timings and recordings are queued with claude-toolkit's
+  `nightq` and run after `nightq go`, one at a time, only while nobody uses the PC. This
+  replaces the 2026-10-30 standing go-ahead to run captures during the day.
+- A job runs a copy of the exe made when it was queued, so a later build can't change
+  what it measures, and leaves its results in `$NIGHTQ_OUT`.
+- `bench/lib.sh`'s `require_idle` passes inside a nightq job (`NIGHTQ_JOB` set): nightq
+  already waits for 5 idle minutes and stops a job on the owner's input, and Windows'
+  last-input time counts input a job's own windows inject.
